@@ -1,0 +1,20 @@
+{
+  "$schema": "https://turborepo.dev/schema.v2.json",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+    "test": {
+      "dependsOn": ["^build"]
+    },
+    "//#lint": {
+      "outputs": []
+    },
+    "dev": {
+      "persistent": true,
+      "cache": false,
+      "env": ["GAGGIUINO_URL", "PORT", "HOST"]
+    }
+  }
+}

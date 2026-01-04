@@ -1,0 +1,8 @@
+{
+  "extends": "@gaggiuino/tsconfig/base.json",
+  "compilerOptions": {
+    "types": ["bun"]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

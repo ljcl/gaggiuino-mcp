@@ -1,0 +1,84 @@
+/* Design tokens from MCP Apps for Claude community Figma spec */
+/* Light theme defaults — overridden by host via useHostStyles() at runtime */
+
+:root {
+  /* Colors — Background */
+  --color-background-primary: #ffffff;
+  --color-background-secondary: #f5f4ed;
+  --color-background-tertiary: #faf9f5;
+  --color-background-inverse: #141413;
+
+  /* Colors — Text */
+  --color-text-primary: #14141a;
+  --color-text-secondary: #3d3d3a;
+  --color-text-tertiary: #73726c;
+  --color-text-inverse: #ffffff;
+
+  /* Colors — Accent */
+  --color-text-danger: #7f2c28;
+  --color-text-success: #275b19;
+  --color-text-info: #3266ad;
+
+  /* Colors — Border */
+  --color-border-primary: rgba(31, 30, 29, 0.4);
+  --color-border-secondary: rgba(31, 30, 29, 0.3);
+  --color-border-tertiary: rgba(31, 30, 29, 0.15);
+
+  /* Typography — Fonts */
+  --font-sans: system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, monospace;
+
+  /* Typography — Weights */
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* Typography — Text sizes */
+  --font-text-xs-size: 12px;
+  --font-text-sm-size: 14px;
+  --font-text-md-size: 16px;
+
+  /* Typography — Text line-heights */
+  --font-text-xs-line-height: 1.5;
+  --font-text-sm-line-height: 1.5;
+  --font-text-md-line-height: 1.5;
+
+  /* Typography — Heading sizes */
+  --font-heading-sm-size: 16px;
+  --font-heading-md-size: 20px;
+
+  /* Border */
+  --border-radius-xs: 2px;
+  --border-radius-sm: 4px;
+  --border-radius-md: 8px;
+  --border-radius-lg: 12px;
+  --border-width-regular: 1px;
+
+  /* Chart colors (Gaggiuino-specific) */
+  --chart-pressure: #2ca02c;
+  --chart-flow: #1f77b4;
+  --chart-weight-flow: #b5832a;
+  --chart-weight: rgba(107, 66, 38, 0.5);
+}
+
+/* Dark theme — applied via .dark class on container */
+.dark {
+  --color-background-primary: #30302e;
+  --color-background-secondary: #262624;
+  --color-background-tertiary: #141413;
+  --color-background-inverse: #faf9f5;
+
+  --color-text-primary: #faf9f5;
+  --color-text-secondary: #c2c0b6;
+  --color-text-tertiary: #9c9a92;
+  --color-text-inverse: #141413;
+
+  --color-text-danger: #ee8884;
+  --color-text-success: #7ab948;
+  --color-text-info: #80aadd;
+
+  --color-border-primary: rgba(222, 220, 209, 0.4);
+  --color-border-secondary: rgba(222, 220, 209, 0.3);
+  --color-border-tertiary: rgba(222, 220, 209, 0.15);
+}

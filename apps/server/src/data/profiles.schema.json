@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "propertyNames": {
+    "type": "string"
+  },
+  "additionalProperties": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string"
+      },
+      "type": {
+        "type": "string"
+      },
+      "roast_level": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "target_ratio": {
+        "type": "string"
+      },
+      "target_time": {
+        "type": "string"
+      },
+      "recommended_dose": {
+        "type": "string"
+      },
+      "basket_notes": {
+        "type": "string"
+      },
+      "description": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "type",
+      "roast_level",
+      "target_ratio",
+      "target_time",
+      "description"
+    ],
+    "additionalProperties": false
+  }
+}

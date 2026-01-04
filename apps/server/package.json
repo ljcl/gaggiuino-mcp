@@ -1,0 +1,26 @@
+{
+  "name": "@gaggiuino/server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "echo 'server ready'",
+    "dev": "bun --watch run src/index.ts",
+    "start": "bun run src/index.ts",
+    "test": "vitest run",
+
+    "generate-schemas": "bun run scripts/generate-schemas.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.3",
+    "yaml": "^2.8.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@gaggiuino/tsconfig": "workspace:*",
+    "@types/bun": "^1.1.0",
+    "@vitest/coverage-v8": "4.0.18",
+    "msw": "^2.7.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.18"
+  }
+}

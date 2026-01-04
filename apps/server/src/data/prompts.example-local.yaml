@@ -1,0 +1,9 @@
+# Copy to prompts.local.yaml and customize for your setup.
+# These overrides are merged on top of the default prompts.
+espresso_shot_analyst:
+  user_context: |
+    ## My Equipment
+
+    - **Grinder**: DF64 with SSP MP burrs. Steps range from 0 (finest) to 90 (very coarse).
+    - **Basket**: Default is 18g IMS Nanotech. HE basket (Pesado HE Large) is for 19g-21g doses.
+    - **Machine mods**: Silicone group gasket, IMS precision shower screen.

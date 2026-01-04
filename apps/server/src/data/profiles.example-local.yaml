@@ -1,0 +1,48 @@
+# Copy to profiles.local.yaml and customize.
+# Add new profiles or override existing ones.
+# Set a profile ID to null to remove it from the defaults.
+
+# Example: add a custom profile
+my-custom-profile:
+  name: "My Custom Profile"
+  type: flow
+  roast_level:
+    - medium
+  target_ratio: "1:2.5"
+  target_time: "25-35s"
+  description: |
+    My personal go-to profile for medium roasts.
+
+filter3-special-basket:
+  name: "Filter3 (Special Basket)"
+  type: filter
+  roast_level:
+    - light
+    - medium
+  target_ratio: "1:10 to 1:15"
+  target_time: "3-5 minutes"
+  recommended_dose: "22g"
+  basket_notes: "Requires Filter3 special basket (not compatible with standard espresso baskets)"
+  description: |
+    A filter coffee profile that produces V60-style brews using the Gaggiuino—completely different from espresso extraction.
+
+    ## How It Works
+    This profile uses the Filter3 special basket to create an immersion/percolation hybrid similar to pour-over methods. The long brew time (3-5 minutes) and high ratio (1:10 to 1:15) produce filter-strength coffee with pour-over clarity.
+
+    ## Setup Instructions
+    1. Center filter paper in the bottom of the Filter3 basket and wet it with flush water
+    2. Add 22g of coffee and shake to level (start with your grinder's coarsest setting)
+    3. Gently lock the portafilter in place
+    4. Place cup and start the brew
+
+    **Optional:** 30 seconds into extraction, unlatch and gently swirl the basket. Check for 2-4cm of water above the grounds.
+
+    ## What To Expect
+    Clean, clear filter coffee with the convenience of your espresso machine. Expect brew times of 3-5 minutes and yields of 220-330g depending on your target ratio.
+
+    ## Dial-In Tips
+    - Start with the coarsest grind setting and adjust from there
+    - Not enough water pooling during bloom: grind finer
+    - Too much water pooling: grind coarser
+    - Water escaping from basket top holes: grind is far too fine
+    - This is NOT espresso—do not use espresso grind settings

@@ -1,0 +1,288 @@
+# yaml-language-server: $schema=./profiles.schema.json
+
+zer0:
+  name: "Zer0"
+  type: flow
+  roast_level:
+    - light
+    - medium-light
+    - medium
+  target_ratio: "1:3"
+  target_time: "30-40s"
+  recommended_dose: "18-20g"
+  description: |
+    A versatile flow profile that works well across a wide range of beans and roasts.
+
+    ## How It Works
+    Phase 1 uses flow control to build pressure gradually, with a 6 bar limit and 15-second hard stop. Phase 2 continues the extraction with adjustable duration based on roast level.
+
+    ## What To Expect
+    Balanced extraction with good clarity. Shot times typically range 30-40 seconds, with darker roasts finishing faster.
+
+    ## Dial-In Tips
+    - First phase pressure may not reach 6 bar—this is normal; the time limit ensures consistency
+    - Adjust Phase 2 duration: shorter for darker roasts, longer for lighter roasts
+    - Target a 1:3 ratio as your starting point
+    - If shots run fast, grind finer; if slow and bitter, grind coarser
+
+lmd-9-8-v1.5-milk:
+  name: "LMD 9-8 v1.5 (Milk)"
+  type: pressure-to-flow
+  roast_level:
+    - medium
+    - medium-dark
+  target_ratio: "1:2"
+  target_time: "25-35s"
+  recommended_dose: "18-20g"
+  basket_notes: "Standard 20g basket (not high-extraction)"
+  description: |
+    Optimized for milk drinks with medium to medium-dark roasts, using a pressure-to-flow transition to prevent overextraction.
+
+    ## How It Works
+    1. **Pre-infusion**: Flow-driven until reaching 2 bar
+    2. **Soak**: Brief 6-second soak; transitions early if weight or pressure indicates saturation
+    3. **Extraction**: Pressure climbs to 9 bar over 5 seconds, drops to 8 bar over 4 seconds, then transitions to flow control as the puck opens up. Flow increases after 10 seconds or a 3 bar pressure drop to finish the shot.
+
+    The profile includes "save the shot" parameters that skip phases if early drips appear, preventing stalls.
+
+    ## What To Expect
+    Rich, full-bodied shots with pronounced crema. The pressure-to-flow transition creates a smooth finish that pairs well with milk.
+
+    ## Dial-In Tips
+    - Start with 19g dose and 38g yield (1:2 ratio)
+    - If phases are skipping unexpectedly, grind finer—early drips trigger safety transitions
+    - Excessive crema or harsh flavors: reduce extraction pressure by 1 bar (8-7 bar instead of 9-8)
+    - This profile is specifically tuned for milk drinks; for straight espresso, consider other profiles
+
+extractamundo-dos:
+  name: "Extractamundo Dos!"
+  type: flow
+  roast_level:
+    - light
+  target_ratio: "1:2 to 1:3"
+  target_time: "15-20s"
+  recommended_dose: "18-20g"
+  basket_notes: "Use bottom paper filter with standard baskets (VST, IMS, Pullman)"
+  description: |
+    A turbo shot profile designed to maximize extraction from light roasts with a fast, high-flow approach.
+
+    ## How It Works
+    1. **Fill**: Fast 8 ml/s flow until reaching 4.5 bar
+    2. **Soak**: Brief hold until 6 grams appear in the cup
+    3. **Extraction**: 3 ml/s flow with a 6 bar pressure ceiling
+
+    The high initial flow saturates the puck quickly, while the pressure limit prevents channeling during the fast extraction.
+
+    ## What To Expect
+    Bright, tea-like shots with high extraction yields. The fast shot time (15-20 seconds) preserves delicate aromatics while the turbo approach extracts efficiently.
+
+    ## Dial-In Tips
+    - A bottom paper filter is essential with standard baskets to prevent fines migration
+    - Grind significantly coarser than traditional espresso—closer to filter grind
+    - If shots taste hollow or watery, grind finer or increase dose
+    - If shots are harsh or astringent, grind coarser
+    - Ratio between 1:2 and 1:3 works well; go longer for more clarity, shorter for more body
+
+adaptive:
+  name: "Adaptive"
+  type: flow
+  roast_level:
+    - light
+  target_ratio: "1:2 to 1:2.5"
+  target_time: "25-45s"
+  recommended_dose: "18-20g"
+  description: |
+    A forgiving flow profile that automatically adjusts to your grind size, making it ideal for dialing in new beans.
+
+    ## How It Works
+    The profile measures flow at peak pressure during extraction and uses this to set the steady-state flow rate. A pressurized bloom phase maintains puck integrity, resulting in more consistent resistance throughout the shot regardless of grind variations.
+
+    ## What To Expect
+    Well-balanced shots with good clarity. The adaptive behavior means you'll get drinkable results across a wider grind range than traditional profiles, with shot times typically between 25-45 seconds.
+
+    ## Dial-In Tips
+    - This profile is forgiving, but still benefits from proper grind adjustment
+    - For darker roasts: reduce temperature and shorten the bloom phase
+    - Target 1:2 to 1:2.5 ratio depending on bean origin and preference
+    - Longer shots (closer to 45s) typically indicate you can grind coarser
+    - If shots taste underextracted despite good timing, try a finer grind
+
+blooming-espresso:
+  name: "Blooming Espresso"
+  type: flow
+  roast_level:
+    - light
+  target_ratio: "1:2 to 1:3"
+  target_time: "45-60s"
+  recommended_dose: "18-20g"
+  description: |
+    A long-extraction profile with an extended bloom phase, designed to maximize extraction from complex light roasts.
+
+    ## How It Works
+    The profile uses flow-controlled pre-infusion followed by an extended "blooming" phase where the puck becomes fully saturated without active extraction. This degassing period allows CO2 to escape before the main extraction begins, resulting in more even water distribution through the coffee bed.
+
+    ## What To Expect
+    Pour-over-like clarity with espresso body. Complex flavor notes become more distinct, and the extended extraction time draws out sweetness while avoiding the sourness common in underextracted light roasts.
+
+    ## Dial-In Tips
+    - Expect longer shot times (45-60 seconds)—this is normal for bloom profiles
+    - If shots taste sour, extend the bloom phase or grind finer
+    - If shots taste flat or overextracted, shorten the bloom or grind coarser
+    - Works exceptionally well with single-origin, complex beans
+    - Ratio between 1:2 and 1:3 depending on desired intensity
+
+londinium:
+  name: "Londinium"
+  type: lever
+  roast_level:
+    - light
+    - medium
+    - dark
+  target_ratio: "1:2"
+  target_time: "30-40s"
+  recommended_dose: "18-20g"
+  description: |
+    Emulates the extraction profile of a Londinium R spring lever machine, known for producing smooth, syrupy shots.
+
+    ## How It Works
+    The profile replicates the characteristic pressure curve of a spring lever: a gradual pressure build during pre-infusion, peak pressure at the start of extraction, followed by a natural decline as the "spring" releases. This declining pressure profile extracts less bitterness in the later stages of the shot.
+
+    ## What To Expect
+    Smooth shots with pronounced body and a syrupy mouthfeel. The lever-style extraction tends to emphasize sweetness and reduce harshness, making it versatile across all roast levels.
+
+    ## Dial-In Tips
+    - This is a versatile profile—use standard espresso dial-in principles
+    - Target 1:2 ratio as a starting point
+    - Grind slightly coarser than you would for a flat 9-bar profile
+    - Works well across all roast levels; adjust temperature for roast (higher for light, lower for dark)
+    - If shots taste thin, grind finer; if bitter or harsh, grind coarser
+
+lpd-fiso-v2:
+  name: "LPD - FISO v2"
+  type: pressure
+  roast_level:
+    - dark
+  target_ratio: "2:1 to 2.5:1"
+  target_time: "25-35s"
+  recommended_dose: "19g"
+  description: |
+    A La Pavoni Dark (LPD) pressure profile using a Fast In, Slow Out (FISO) pressure curve.
+
+    ## How It Works
+    The FISO approach ramps pressure quickly to 7-9 bar at the start of extraction, then gradually declines. This front-loads the extraction, pulling more from the coffee early when the puck is most intact. The high peak pressure creates the thick mouthfeel characteristic of lever machines.
+
+    ## What To Expect
+    Intense, full-bodied shots with thick mouthfeel and syrupy texture. Optimized for dark roasts to maximize body while managing the bitterness that can come with extended extraction of darker beans.
+
+    ## Dial-In Tips
+    - Start with 19g dose and 2:1 to 2.5:1 ratio (38-48g yield)
+    - The shorter ratio prevents overextraction of dark roast compounds
+    - Good puck prep is essential—the fast pressure ramp can expose distribution issues
+    - If shots taste harsh or ashy, grind coarser or reduce ratio
+    - For lighter roasts, use the LPL variant instead
+
+lpl-fiso-v2.2:
+  name: "LPL - FISO v2.2"
+  type: pressure
+  roast_level:
+    - light
+  target_ratio: "2.3:1"
+  target_time: "25-35s"
+  recommended_dose: "19g"
+  description: |
+    A La Pavoni Light (LPL) pressure profile using a Fast In, Slow Out (FISO) pressure curve.
+
+    ## How It Works
+    The FISO approach ramps pressure quickly to 7-9 bar at the start of extraction, then gradually declines. This front-loads the extraction, pulling more from the coffee early when the puck is most intact. The high peak pressure creates the thick mouthfeel characteristic of lever machines.
+
+    ## What To Expect
+    Intense, full-bodied shots with thick mouthfeel and syrupy texture. The FISO curve emphasizes sweetness and body over brightness.
+
+    ## Dial-In Tips
+    - Start with 19g dose and 2.3:1 ratio (approximately 44g yield)
+    - Ratios between 2:1 and 3:1 work depending on the bean
+    - The fast pressure ramp requires good puck prep—distribution and tamping matter
+    - If shots channel early, improve puck prep or grind slightly coarser
+    - Compare with SISO variant to see which suits your beans better
+
+lpl-siso-v2.2:
+  name: "LPL - SISO v2.2"
+  type: pressure
+  roast_level:
+    - light
+  target_ratio: "2.3:1"
+  target_time: "25-35s"
+  recommended_dose: "19g"
+  description: |
+    A La Pavoni Light (LPL) pressure profile using a Slow In, Slow Out (SISO) pressure curve.
+
+    ## How It Works
+    The SISO approach ramps pressure gradually to 7-9 bar, holds at peak, then slowly declines. This centers extraction in the middle phase when the puck is optimally saturated. The gentler ramp is more forgiving of puck prep variations.
+
+    ## What To Expect
+    Balanced shots with thick mouthfeel and good clarity. The SISO curve tends to produce more even extraction than FISO, with a balance of sweetness and brightness.
+
+    ## Dial-In Tips
+    - Start with 19g dose and 2.3:1 ratio (approximately 44g yield)
+    - Ratios between 2:1 and 3:1 work depending on the bean
+    - More forgiving than FISO—a good starting point if new to La Pavoni-style profiles
+    - If shots taste uneven, the slow ramp usually isn't the issue—check grind consistency
+    - Compare with FISO variant: FISO for more body, SISO for more balance
+
+leva-6-v0.9:
+  name: "Leva 6 v0.9"
+  type: lever
+  roast_level:
+    - medium
+    - dark
+  target_ratio: "1:2 to 1:3"
+  target_time: "35-50s"
+  recommended_dose: "18-20g"
+  description: |
+    Emulates a 6 bar spring lever machine with volume-based pressure decline, optimized for medium to dark roasts.
+
+    ## How It Works
+    Unlike time-based profiles, this uses "water pumped" as transition triggers—mimicking how real spring levers decline based on displaced water volume, not elapsed time.
+
+    **Pre-infusion (Phases 1-3):** Fast initial flow slowing as pressure builds, ending with a 3 bar hold until 10 seconds pass or 10 grams appear in the cup. The puck should be fully saturated before extraction begins.
+
+    **Extraction (Phases 4+):** Pressure rises to 6 bar then progressively declines. Flow is capped at 4 ml/s to prevent gushers. Target approximately 60 grams of output by the time pressure drops to 4 bar.
+
+    ## What To Expect
+    Smooth, sweet shots with reduced bitterness from the declining pressure. The lower 6 bar peak suits medium and dark roasts that can become harsh at higher pressures.
+
+    ## Dial-In Tips
+    - Ensure full puck saturation during pre-infusion—this is critical for the profile to work correctly
+    - If the shot gushes despite the flow limit, grind finer
+    - For lighter roasts, consider the Leva 9 variant instead
+    - The 35-50 second shot time is normal for this profile
+    - Ratio between 1:2 and 1:3 depending on desired intensity
+
+leva-9-v0.9:
+  name: "Leva 9 v0.9"
+  type: lever
+  roast_level:
+    - light
+    - medium
+  target_ratio: "1:2 to 1:2.5"
+  target_time: "30-45s"
+  recommended_dose: "18-20g"
+  description: |
+    Emulates a 9 bar spring lever machine with volume-based pressure decline, optimized for light to medium roasts.
+
+    ## How It Works
+    Unlike time-based profiles, this uses "water pumped" as transition triggers—mimicking how real spring levers decline based on displaced water volume, not elapsed time.
+
+    **Pre-infusion (Phases 1-3):** Fast initial flow slowing as pressure builds, ending with a 3 bar hold until 7 seconds pass or 10 grams appear in the cup. The puck should be fully saturated before extraction begins.
+
+    **Extraction (Phases 4+):** Pressure rises to 9 bar then progressively declines. Flow is capped at 3 ml/s to prevent gushers. Target approximately 40 grams of output by the time pressure drops to 6 bar.
+
+    ## What To Expect
+    Full-bodied shots with good extraction from the higher pressure peak. The 9 bar peak provides more extraction power for light roasts while the declining curve prevents overextraction.
+
+    ## Dial-In Tips
+    - Ensure full puck saturation during pre-infusion—this is critical for the profile to work correctly
+    - If the shot gushes despite the flow limit, grind finer
+    - For darker roasts, consider the Leva 6 variant to avoid harshness
+    - The 30-45 second shot time is normal for this profile
+    - Ratio between 1:2 and 1:2.5 depending on desired intensity

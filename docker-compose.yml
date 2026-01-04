@@ -1,0 +1,11 @@
+services:
+  gaggiuino-mcp:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    container_name: gaggiuino-mcp
+    network_mode: host
+    restart: unless-stopped
+    env_file:
+      - path: apps/server/.env
+        required: false

@@ -1,0 +1,57 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build Docker image (gaggiuino-mcp)",
+      "type": "shell",
+      "command": "docker build -t gaggiuino-mcp .",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Biome - Full Lint",
+      "type": "shell",
+      "command": "bunx",
+      "args": [
+        "biome",
+        "check",
+        "--write",
+        "--reporter=github",
+        "--max-diagnostics=10000"
+      ],
+      "problemMatcher": [
+        {
+          "owner": "biome",
+          "fileLocation": ["absolute"],
+          "pattern": {
+            "regexp": "::(\\w+) title=(.+?),file=(.+?),line=(\\d+),endLine=(\\d+),col=(\\d+),endColumn=(\\d+)::(.*?)((?=::)|$)",
+            "file": 3,
+            "line": 4,
+            "column": 6,
+            "severity": 1,
+            "code": 2,
+            "message": 8
+          }
+        }
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "echo": false,
+        "reveal": "never",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": false,
+        "close": true,
+        "revealProblems": "onProblem"
+      },
+      "isBackground": false
+    }
+  ]
+}

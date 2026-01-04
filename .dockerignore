@@ -1,0 +1,16 @@
+# Dependencies (installed inside container)
+**/node_modules/
+
+# Build artifacts (built inside container)
+dist/
+
+# Development files
+.git/
+docs/
+coverage/
+*.md
+!README.md
+.env
+
+# Storybook
+ui/shot-graph/storybook-static/

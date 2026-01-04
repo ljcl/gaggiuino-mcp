@@ -1,0 +1,8 @@
+{
+  "name": "@gaggiuino/tsconfig",
+  "private": true,
+  "exports": {
+    "./base.json": "./base.json",
+    "./react.json": "./react.json"
+  }
+}
