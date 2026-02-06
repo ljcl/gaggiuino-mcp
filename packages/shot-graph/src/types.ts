@@ -48,6 +48,15 @@ export interface ChartDataPoint {
   shotWeightCmp?: number;
 }
 
+/** A key-metric annotation rendered as a ReferenceDot on the chart */
+export interface Annotation {
+  time: number;
+  value: number;
+  yAxisId: "left" | "right";
+  label: string;
+  color: string;
+}
+
 /** Metadata displayed in the header above the chart */
 export interface ShotMeta {
   id: string;

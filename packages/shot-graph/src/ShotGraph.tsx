@@ -5,13 +5,14 @@ import {
   ComposedChart,
   Legend,
   Line,
+  ReferenceDot,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
-import type { ChartDataPoint, ShotMeta } from "./types";
+import type { Annotation, ChartDataPoint, ShotMeta } from "./types";
 
 /** Chart colors via CSS variables — theme-aware (light/dark overrides in tokens.css) */
 const COLORS = {
@@ -56,24 +57,84 @@ function MetaSummary({ meta }: { meta: ShotMeta }) {
 interface ShotHeaderProps {
   primary: ShotMeta;
   comparison?: ShotMeta;
+  onRequestCompare?: () => void;
+  onDismissCompare?: () => void;
+  compareLoading?: boolean;
 }
 
-function ShotHeader({ primary, comparison }: ShotHeaderProps) {
+function ShotHeader({
+  primary,
+  comparison,
+  onRequestCompare,
+  onDismissCompare,
+  compareLoading,
+}: ShotHeaderProps) {
+  const buttonStyle: React.CSSProperties = {
+    background: "none",
+    border: "1px solid var(--color-border-secondary)",
+    borderRadius: "var(--border-radius-sm)",
+    padding: "2px 8px",
+    fontSize: "var(--font-text-xs-size)",
+    color: "var(--color-text-tertiary)",
+    cursor: "pointer",
+    font: "inherit",
+    whiteSpace: "nowrap",
+  };
+
   return (
     <div
       style={{
         display: "flex",
         justifyContent: comparison ? "space-between" : "flex-start",
+        alignItems: "flex-start",
         gap: "24px",
         padding: "0 8px",
         marginBottom: "8px",
         fontFamily: "var(--font-sans)",
       }}
     >
-      <MetaSummary meta={primary} />
+      <div style={{ display: "flex", alignItems: "flex-start", gap: "12px" }}>
+        <MetaSummary meta={primary} />
+        {!comparison && onRequestCompare && (
+          <button
+            type="button"
+            onClick={onRequestCompare}
+            disabled={compareLoading}
+            style={{
+              ...buttonStyle,
+              marginTop: "2px",
+              opacity: compareLoading ? 0.5 : 1,
+            }}
+          >
+            {compareLoading ? "Loading..." : "Compare previous"}
+          </button>
+        )}
+      </div>
       {comparison && (
-        <div style={{ textAlign: "right", opacity: 0.6 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: "8px",
+            textAlign: "right",
+            opacity: 0.6,
+          }}
+        >
           <MetaSummary meta={comparison} />
+          {onDismissCompare && (
+            <button
+              type="button"
+              onClick={onDismissCompare}
+              style={{
+                ...buttonStyle,
+                marginTop: "2px",
+                padding: "2px 6px",
+                lineHeight: 1,
+              }}
+            >
+              ✕
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -251,6 +312,10 @@ interface ShotGraphProps {
   primaryMeta: ShotMeta;
   comparisonMeta?: ShotMeta;
   phaseBoundaries?: number[];
+  annotations?: Annotation[];
+  onRequestCompare?: () => void;
+  onDismissCompare?: () => void;
+  compareLoading?: boolean;
 }
 
 export function ShotGraph({
@@ -258,6 +323,10 @@ export function ShotGraph({
   primaryMeta,
   comparisonMeta,
   phaseBoundaries,
+  annotations,
+  onRequestCompare,
+  onDismissCompare,
+  compareLoading,
 }: ShotGraphProps) {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
 
@@ -309,7 +378,13 @@ export function ShotGraph({
 
   return (
     <div style={{ padding: "0" }}>
-      <ShotHeader primary={primaryMeta} comparison={comparisonMeta} />
+      <ShotHeader
+        primary={primaryMeta}
+        comparison={comparisonMeta}
+        onRequestCompare={onRequestCompare}
+        onDismissCompare={onDismissCompare}
+        compareLoading={compareLoading}
+      />
       <ResponsiveContainer width="100%" aspect={1.8}>
         <ComposedChart
           data={data}
@@ -582,6 +657,33 @@ export function ShotGraph({
               legendType="none"
             />
           )}
+          {/* Metric annotations */}
+          {annotations?.map((a) => {
+            // Only render if the corresponding series is visible
+            const visibleKey =
+              a.yAxisId === "right" ? "shotWeight" : "pressure";
+            if (!show(visibleKey)) return null;
+            return (
+              <ReferenceDot
+                key={a.label}
+                x={a.time}
+                y={a.value}
+                yAxisId={a.yAxisId}
+                r={4}
+                fill={a.color}
+                stroke="var(--color-background-primary)"
+                strokeWidth={2}
+                label={{
+                  value: a.label,
+                  position: a.yAxisId === "right" ? "bottom" : "top",
+                  fill: a.color,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  offset: 8,
+                }}
+              />
+            );
+          })}
         </ComposedChart>
       </ResponsiveContainer>
     </div>

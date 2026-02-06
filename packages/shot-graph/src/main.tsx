@@ -1,7 +1,7 @@
 import { useApp, useHostStyles } from "@modelcontextprotocol/ext-apps/react";
 import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { extractMeta, toChartData } from "./normalize";
+import { extractAnnotations, extractMeta, toChartData } from "./normalize";
 import { ShotGraph } from "./ShotGraph";
 import type {
   App as McpApp,
@@ -62,6 +62,8 @@ function AppContent({ app, toolArgs, safeAreaInsets }: AppContentProps) {
   const [comparisonShot, setComparisonShot] = useState<ShotData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [compareError, setCompareError] = useState<string | null>(null);
 
   const fetchShot = useCallback(
     async (shotId: string): Promise<ShotData | null> => {
@@ -105,6 +107,30 @@ function AppContent({ app, toolArgs, safeAreaInsets }: AppContentProps) {
     };
   }, [toolArgs.shot_id, toolArgs.compare_shot_id, fetchShot]);
 
+  const handleRequestCompare = useCallback(async () => {
+    if (!primaryShot) return;
+    setCompareLoading(true);
+    setCompareError(null);
+    try {
+      const prevId = String(Number(primaryShot.id) - 1);
+      const shot = await fetchShot(prevId);
+      if (shot) {
+        setComparisonShot(shot);
+      } else {
+        setCompareError("No previous shot found");
+      }
+    } catch (err) {
+      setCompareError(String(err));
+    } finally {
+      setCompareLoading(false);
+    }
+  }, [primaryShot, fetchShot]);
+
+  const handleDismissCompare = useCallback(() => {
+    setComparisonShot(null);
+    setCompareError(null);
+  }, []);
+
   if (loading) {
     return (
       <div style={{ padding: "24px", color: "var(--color-text-secondary)" }}>
@@ -127,6 +153,10 @@ function AppContent({ app, toolArgs, safeAreaInsets }: AppContentProps) {
     ? extractMeta(comparisonShot)
     : undefined;
   const phaseBoundaries = extractPhaseBoundaries(primaryShot);
+  const annotations = extractAnnotations(primaryShot);
+
+  // Host-initiated comparison: allow dismiss but not "compare previous"
+  const hostInitiatedCompare = !!toolArgs.compare_shot_id;
 
   return (
     <div
@@ -137,11 +167,28 @@ function AppContent({ app, toolArgs, safeAreaInsets }: AppContentProps) {
         paddingLeft: safeAreaInsets?.left,
       }}
     >
+      {compareError && (
+        <div
+          style={{
+            padding: "4px 8px",
+            fontSize: "var(--font-text-xs-size)",
+            color: "var(--color-text-danger, #c00)",
+          }}
+        >
+          {compareError}
+        </div>
+      )}
       <ShotGraph
         data={chartData}
         primaryMeta={primaryMeta}
         comparisonMeta={comparisonMeta}
         phaseBoundaries={phaseBoundaries}
+        annotations={annotations}
+        onRequestCompare={
+          hostInitiatedCompare ? undefined : handleRequestCompare
+        }
+        onDismissCompare={comparisonShot ? handleDismissCompare : undefined}
+        compareLoading={compareLoading}
       />
     </div>
   );

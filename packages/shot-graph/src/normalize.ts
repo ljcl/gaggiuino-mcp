@@ -1,4 +1,5 @@
 import type {
+  Annotation,
   ChartDataPoint,
   ShotData,
   ShotDatapoints,
@@ -78,4 +79,45 @@ export function toChartData(
   }
 
   return Array.from(points.values()).sort((a, b) => a.time - b.time);
+}
+
+export function extractAnnotations(shot: ShotData): Annotation[] {
+  const annotations: Annotation[] = [];
+  const { shotWeight, pressure, timeInShot } = shot.datapoints;
+
+  // First drip: first index where shotWeight > 5 (raw units, = 0.5g)
+  const firstDripIdx = shotWeight?.findIndex((w) => w > 5) ?? -1;
+  if (firstDripIdx >= 0 && timeInShot[firstDripIdx] !== undefined) {
+    annotations.push({
+      time: norm(timeInShot[firstDripIdx]),
+      value: norm(shotWeight[firstDripIdx]),
+      yAxisId: "right",
+      label: "First drip",
+      color: "var(--chart-weight)",
+    });
+  }
+
+  // Peak pressure: index of max pressure value
+  if (pressure?.length) {
+    let maxVal = -1;
+    let maxIdx = 0;
+    for (let i = 0; i < pressure.length; i++) {
+      if (pressure[i] > maxVal) {
+        maxVal = pressure[i];
+        maxIdx = i;
+      }
+    }
+    if (timeInShot[maxIdx] !== undefined) {
+      const normalizedPressure = norm(maxVal);
+      annotations.push({
+        time: norm(timeInShot[maxIdx]),
+        value: normalizedPressure,
+        yAxisId: "left",
+        label: `${normalizedPressure.toFixed(1)} bar`,
+        color: "var(--chart-pressure)",
+      });
+    }
+  }
+
+  return annotations;
 }
