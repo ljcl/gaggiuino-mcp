@@ -55,6 +55,8 @@ export interface Annotation {
   yAxisId: "left" | "right";
   label: string;
   color: string;
+  /** Used to pair primary/comparison annotations for the same metric */
+  metric: string;
 }
 
 /** Metadata displayed in the header above the chart */

@@ -154,6 +154,9 @@ function AppContent({ app, toolArgs, safeAreaInsets }: AppContentProps) {
     : undefined;
   const phaseBoundaries = extractPhaseBoundaries(primaryShot);
   const annotations = extractAnnotations(primaryShot);
+  const comparisonAnnotations = comparisonShot
+    ? extractAnnotations(comparisonShot)
+    : undefined;
 
   // Host-initiated comparison: allow dismiss but not "compare previous"
   const hostInitiatedCompare = !!toolArgs.compare_shot_id;
@@ -184,6 +187,7 @@ function AppContent({ app, toolArgs, safeAreaInsets }: AppContentProps) {
         comparisonMeta={comparisonMeta}
         phaseBoundaries={phaseBoundaries}
         annotations={annotations}
+        comparisonAnnotations={comparisonAnnotations}
         onRequestCompare={
           hostInitiatedCompare ? undefined : handleRequestCompare
         }

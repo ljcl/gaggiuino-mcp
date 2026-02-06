@@ -22,18 +22,20 @@ Remote MCP server for integrating a Gaggiuino espresso machine with AI tools.
 
 ## MCP Tools
 
-| Tool | Purpose |
-|------|---------|
-| `get_status` | Machine status (temp, pressure, weight) |
-| `get_latest_shot_id` | Most recent shot ID |
-| `get_shot_data` | Structured shot summary (default for analysis) |
-| `get_shot_raw_data` | Complete time-series datapoints |
-| `view_shot_graph` | Interactive chart (MCP App with UI resource) |
-| `list_profiles` | Available brew profiles |
-| `get_profile_info` | Detailed profile documentation |
-| `get_dial_in_guidance` | Expert dial-in system prompt |
+| Tool                   | Purpose                                        |
+| ---------------------- | ---------------------------------------------- |
+| `get_status`           | Machine status (temp, pressure, weight)        |
+| `get_latest_shot_id`   | Most recent shot ID                            |
+| `get_shot_data`        | Structured shot summary (default for analysis) |
+| `get_shot_raw_data`    | Complete time-series datapoints                |
+| `view_shot_graph`      | Interactive chart (MCP App with UI resource)   |
+| `list_profiles`        | Available brew profiles                        |
+| `get_profile_info`     | Detailed profile documentation                 |
+| `get_dial_in_guidance` | Expert dial-in system prompt                   |
 
 ## MCP App (Shot Graph)
+
+https://modelcontextprotocol.io/docs/extensions/apps
 
 The `view_shot_graph` tool renders an interactive Recharts chart in MCP-compatible hosts.
 
@@ -94,8 +96,8 @@ curl -X POST http://localhost:8000/mcp \
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable        | Default                  | Description           |
+| --------------- | ------------------------ | --------------------- |
 | `GAGGIUINO_URL` | `http://gaggiuino.local` | Gaggiuino machine URL |
-| `PORT` | `8000` | Server port |
-| `HOST` | `0.0.0.0` | Bind address |
+| `PORT`          | `8000`                   | Server port           |
+| `HOST`          | `0.0.0.0`                | Bind address          |

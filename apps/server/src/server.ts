@@ -86,7 +86,7 @@ const TOOLS = [
   {
     name: "view_shot_graph",
     description:
-      "Renders an interactive espresso shot graph. Shows pressure, flow, weight flow, and weight over time with target profiles overlaid. Optionally compares two shots side by side.",
+      "Renders an interactive espresso shot graph. Shows pressure, flow, weight flow, and weight over time with target profiles overlaid. Automatically annotates key metrics (peak pressure, first drip) on the chart. Optionally compares two shots side by side — the user can also click 'Compare previous' in the graph to load the prior shot without a new tool call.",
     inputSchema: {
       type: "object",
       properties: {

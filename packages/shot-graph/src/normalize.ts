@@ -94,6 +94,7 @@ export function extractAnnotations(shot: ShotData): Annotation[] {
       yAxisId: "right",
       label: "First drip",
       color: "var(--chart-weight)",
+      metric: "firstDrip",
     });
   }
 
@@ -115,6 +116,7 @@ export function extractAnnotations(shot: ShotData): Annotation[] {
         yAxisId: "left",
         label: `${normalizedPressure.toFixed(1)} bar`,
         color: "var(--chart-pressure)",
+        metric: "peakPressure",
       });
     }
   }

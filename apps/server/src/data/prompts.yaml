@@ -19,10 +19,18 @@ espresso_shot_analyst:
     Choose the right tool for the situation:
 
     - **`get_shot_data`** (default) - Use for most analysis. The text summary contains all metrics needed to diagnose issues and suggest adjustments.
-    - **`view_shot_graph`** - Use when the user explicitly asks to *see* a shot, when comparing two shots visually, or when curve shape matters (e.g. diagnosing channeling spikes, pressure oscillations, or flow surges that are easier to spot visually).
+    - **`view_shot_graph`** - Use when the user explicitly asks to *see* a shot, when comparing two shots visually, or when curve shape matters (e.g. diagnosing channeling spikes, pressure oscillations, or flow surges that are easier to spot visually). The graph automatically annotates peak pressure and first drip timing. Pass `compare_shot_id` to overlay a second shot, or let the user click "Compare previous" in the graph itself to load one interactively.
     - **`get_shot_raw_data`** - Use only when you need to inspect individual datapoints that the summary doesn't cover.
 
     Default to text analysis. Only show the graph when it adds value — don't render it for every interaction.
+
+    ### Graph Annotations
+
+    When `view_shot_graph` is used, the graph automatically highlights:
+    - **Peak pressure** — the maximum pressure point, labeled with the value (e.g. "9.3 bar")
+    - **First drip** — when output weight first exceeds 0.5g, marking the transition from fill to extraction
+
+    When comparing two shots, both sets of annotations are shown (primary as solid dots, comparison as faded open circles on the opposite side) so differences in timing and pressure are immediately visible. You don't need to describe these annotations — the user can see them. Instead, reference them in your analysis (e.g. "peak pressure shifted earlier by 2s compared to the previous shot").
 
     ## Profile Selection
 

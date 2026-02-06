@@ -307,12 +307,199 @@ function CustomLegend({ items, hidden, onToggle }: CustomLegendProps) {
   );
 }
 
+interface AnnotationPair {
+  primary: Annotation;
+  comparison: Annotation;
+}
+
+/** Resolves annotations into paired (connected) and unpaired (standalone) groups */
+function pairAnnotations(
+  primary?: Annotation[],
+  comparison?: Annotation[],
+): {
+  pairs: AnnotationPair[];
+  unpairedPrimary: Annotation[];
+  unpairedComparison: Annotation[];
+} {
+  const pairs: AnnotationPair[] = [];
+  const matchedCmp = new Set<number>();
+
+  const unpairedPrimary: Annotation[] = [];
+  for (const p of primary ?? []) {
+    const cmpIdx = (comparison ?? []).findIndex(
+      (c, i) => c.metric === p.metric && !matchedCmp.has(i),
+    );
+    if (cmpIdx >= 0) {
+      matchedCmp.add(cmpIdx);
+      pairs.push({ primary: p, comparison: comparison![cmpIdx] });
+    } else {
+      unpairedPrimary.push(p);
+    }
+  }
+  const unpairedComparison = (comparison ?? []).filter(
+    (_, i) => !matchedCmp.has(i),
+  );
+  return { pairs, unpairedPrimary, unpairedComparison };
+}
+
+/** Builds the annotation JSX elements: connectors for pairs, standalone dots otherwise */
+function renderAnnotations({
+  annotations,
+  comparisonAnnotations,
+  show,
+}: {
+  annotations?: Annotation[];
+  comparisonAnnotations?: Annotation[];
+  show: (key: string) => boolean;
+}) {
+  const { pairs, unpairedPrimary, unpairedComparison } = pairAnnotations(
+    annotations,
+    comparisonAnnotations,
+  );
+
+  const elements: React.ReactNode[] = [];
+
+  // Connector lines between paired annotations (via ReferenceLine segment)
+  for (const { primary, comparison } of pairs) {
+    const primaryKey = primary.yAxisId === "right" ? "shotWeight" : "pressure";
+    const cmpKey =
+      primary.yAxisId === "right" ? "shotWeightCmp" : "pressureCmp";
+    if (!show(primaryKey) || !show(cmpKey)) continue;
+    elements.push(
+      <ReferenceLine
+        key={`conn-${primary.metric}`}
+        yAxisId={primary.yAxisId}
+        segment={[
+          { x: primary.time, y: primary.value },
+          { x: comparison.time, y: comparison.value },
+        ]}
+        stroke={primary.color}
+        strokeWidth={1}
+        strokeDasharray="4 3"
+        opacity={0.5}
+      />,
+    );
+  }
+
+  // Paired primary dots (filled, label on primary side)
+  for (const { primary } of pairs) {
+    const visibleKey = primary.yAxisId === "right" ? "shotWeight" : "pressure";
+    if (!show(visibleKey)) continue;
+    elements.push(
+      <ReferenceDot
+        key={`paired-${primary.metric}`}
+        x={primary.time}
+        y={primary.value}
+        yAxisId={primary.yAxisId}
+        r={4}
+        fill={primary.color}
+        stroke="var(--color-background-primary)"
+        strokeWidth={2}
+        label={{
+          value: primary.label,
+          position: primary.yAxisId === "right" ? "bottom" : "top",
+          fill: primary.color,
+          fontSize: 11,
+          fontWeight: 600,
+          offset: 8,
+        }}
+      />,
+    );
+  }
+
+  // Paired comparison dots (open, label on opposite side)
+  for (const { primary, comparison } of pairs) {
+    const visibleKey =
+      primary.yAxisId === "right" ? "shotWeightCmp" : "pressureCmp";
+    if (!show(visibleKey)) continue;
+    elements.push(
+      <ReferenceDot
+        key={`paired-cmp-${comparison.metric}`}
+        x={comparison.time}
+        y={comparison.value}
+        yAxisId={comparison.yAxisId}
+        r={4}
+        fill="none"
+        stroke={comparison.color}
+        strokeWidth={1.5}
+        opacity={0.5}
+        label={{
+          value: comparison.label,
+          position: comparison.yAxisId === "right" ? "top" : "bottom",
+          fill: comparison.color,
+          fontSize: 10,
+          fontWeight: 500,
+          opacity: 0.5,
+          offset: 8,
+        }}
+      />,
+    );
+  }
+
+  // Unpaired primary dots
+  for (const a of unpairedPrimary) {
+    const visibleKey = a.yAxisId === "right" ? "shotWeight" : "pressure";
+    if (!show(visibleKey)) continue;
+    elements.push(
+      <ReferenceDot
+        key={a.metric}
+        x={a.time}
+        y={a.value}
+        yAxisId={a.yAxisId}
+        r={4}
+        fill={a.color}
+        stroke="var(--color-background-primary)"
+        strokeWidth={2}
+        label={{
+          value: a.label,
+          position: a.yAxisId === "right" ? "bottom" : "top",
+          fill: a.color,
+          fontSize: 11,
+          fontWeight: 600,
+          offset: 8,
+        }}
+      />,
+    );
+  }
+
+  // Unpaired comparison dots
+  for (const a of unpairedComparison) {
+    const visibleKey = a.yAxisId === "right" ? "shotWeightCmp" : "pressureCmp";
+    if (!show(visibleKey)) continue;
+    elements.push(
+      <ReferenceDot
+        key={`cmp-${a.metric}`}
+        x={a.time}
+        y={a.value}
+        yAxisId={a.yAxisId}
+        r={4}
+        fill="none"
+        stroke={a.color}
+        strokeWidth={1.5}
+        opacity={0.5}
+        label={{
+          value: a.label,
+          position: a.yAxisId === "right" ? "top" : "bottom",
+          fill: a.color,
+          fontSize: 10,
+          fontWeight: 500,
+          opacity: 0.5,
+          offset: 8,
+        }}
+      />,
+    );
+  }
+
+  return elements;
+}
+
 interface ShotGraphProps {
   data: ChartDataPoint[];
   primaryMeta: ShotMeta;
   comparisonMeta?: ShotMeta;
   phaseBoundaries?: number[];
   annotations?: Annotation[];
+  comparisonAnnotations?: Annotation[];
   onRequestCompare?: () => void;
   onDismissCompare?: () => void;
   compareLoading?: boolean;
@@ -324,6 +511,7 @@ export function ShotGraph({
   comparisonMeta,
   phaseBoundaries,
   annotations,
+  comparisonAnnotations,
   onRequestCompare,
   onDismissCompare,
   compareLoading,
@@ -658,31 +846,12 @@ export function ShotGraph({
             />
           )}
           {/* Metric annotations */}
-          {annotations?.map((a) => {
-            // Only render if the corresponding series is visible
-            const visibleKey =
-              a.yAxisId === "right" ? "shotWeight" : "pressure";
-            if (!show(visibleKey)) return null;
-            return (
-              <ReferenceDot
-                key={a.label}
-                x={a.time}
-                y={a.value}
-                yAxisId={a.yAxisId}
-                r={4}
-                fill={a.color}
-                stroke="var(--color-background-primary)"
-                strokeWidth={2}
-                label={{
-                  value: a.label,
-                  position: a.yAxisId === "right" ? "bottom" : "top",
-                  fill: a.color,
-                  fontSize: 11,
-                  fontWeight: 600,
-                  offset: 8,
-                }}
-              />
-            );
+          {renderAnnotations({
+            annotations,
+            comparisonAnnotations: comparisonMeta
+              ? comparisonAnnotations
+              : undefined,
+            show,
           })}
         </ComposedChart>
       </ResponsiveContainer>
