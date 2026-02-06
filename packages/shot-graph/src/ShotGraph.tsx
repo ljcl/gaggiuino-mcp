@@ -1,4 +1,3 @@
-import { CHART_COLORS } from "@gaggiuino/design-system";
 import { useState } from "react";
 import {
   Area,
@@ -14,7 +13,15 @@ import {
 } from "recharts";
 import type { ChartDataPoint, ShotMeta } from "./types";
 
-const COLORS = CHART_COLORS;
+/** Chart colors via CSS variables — theme-aware (light/dark overrides in tokens.css) */
+const COLORS = {
+  pressure: "var(--chart-pressure)",
+  targetPressure: "var(--chart-target-pressure)",
+  pumpFlow: "var(--chart-flow)",
+  targetPumpFlow: "var(--chart-target-flow)",
+  weightFlow: "var(--chart-weight-flow)",
+  shotWeight: "var(--chart-weight)",
+};
 
 function formatTime(seconds: number): string {
   const mins = Math.floor(seconds / 60);

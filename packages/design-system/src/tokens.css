@@ -57,7 +57,9 @@
 
   /* Chart colors (Gaggiuino-specific) */
   --chart-pressure: #2ca02c;
+  --chart-target-pressure: rgba(44, 160, 44, 0.35);
   --chart-flow: #1f77b4;
+  --chart-target-flow: rgba(31, 119, 180, 0.35);
   --chart-weight-flow: #b5832a;
   --chart-weight: rgba(107, 66, 38, 0.5);
 }
@@ -81,4 +83,12 @@
   --color-border-primary: rgba(222, 220, 209, 0.4);
   --color-border-secondary: rgba(222, 220, 209, 0.3);
   --color-border-tertiary: rgba(222, 220, 209, 0.15);
+
+  /* Chart colors — brighter for dark backgrounds */
+  --chart-pressure: #4ade80;
+  --chart-target-pressure: rgba(74, 222, 128, 0.45);
+  --chart-flow: #60a5fa;
+  --chart-target-flow: rgba(96, 165, 250, 0.45);
+  --chart-weight-flow: #e5a83d;
+  --chart-weight: rgba(229, 168, 61, 0.65);
 }
