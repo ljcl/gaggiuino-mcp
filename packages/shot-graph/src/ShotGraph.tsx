@@ -342,6 +342,26 @@ function pairAnnotations(
   return { pairs, unpairedPrimary, unpairedComparison };
 }
 
+/**
+ * Determines label position for an annotation dot.
+ * Right-axis annotations near the bottom (value < 2) get label on top to avoid
+ * overlapping the X-axis. The `invert` flag flips the default for comparison dots.
+ */
+function annotationLabelPosition(
+  a: Annotation,
+  invert = false,
+): "top" | "bottom" {
+  if (a.yAxisId === "right") {
+    const nearBottom = a.value < 2;
+    const defaultPos = nearBottom ? "top" : "bottom";
+    if (invert) return defaultPos === "top" ? "bottom" : "top";
+    return defaultPos;
+  }
+  const defaultPos = "top";
+  if (invert) return defaultPos === "top" ? "bottom" : "top";
+  return defaultPos;
+}
+
 /** Builds the annotation JSX elements: connectors for pairs, standalone dots otherwise */
 function renderAnnotations({
   annotations,
@@ -397,7 +417,7 @@ function renderAnnotations({
         strokeWidth={2}
         label={{
           value: primary.label,
-          position: primary.yAxisId === "right" ? "bottom" : "top",
+          position: annotationLabelPosition(primary),
           fill: primary.color,
           fontSize: 11,
           fontWeight: 600,
@@ -425,7 +445,7 @@ function renderAnnotations({
         opacity={0.5}
         label={{
           value: comparison.label,
-          position: comparison.yAxisId === "right" ? "top" : "bottom",
+          position: annotationLabelPosition(comparison, true),
           fill: comparison.color,
           fontSize: 10,
           fontWeight: 500,
@@ -452,7 +472,7 @@ function renderAnnotations({
         strokeWidth={2}
         label={{
           value: a.label,
-          position: a.yAxisId === "right" ? "bottom" : "top",
+          position: annotationLabelPosition(a),
           fill: a.color,
           fontSize: 11,
           fontWeight: 600,
@@ -479,7 +499,7 @@ function renderAnnotations({
         opacity={0.5}
         label={{
           value: a.label,
-          position: a.yAxisId === "right" ? "top" : "bottom",
+          position: annotationLabelPosition(a, true),
           fill: a.color,
           fontSize: 10,
           fontWeight: 500,

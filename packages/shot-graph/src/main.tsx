@@ -116,6 +116,39 @@ function AppContent({ app, toolArgs, safeAreaInsets }: AppContentProps) {
       const shot = await fetchShot(prevId);
       if (shot) {
         setComparisonShot(shot);
+
+        // Build a concise comparison summary for the AI
+        const pm = extractMeta(primaryShot);
+        const cm = extractMeta(shot);
+        const summary = [
+          `Shot #${pm.id} (${pm.profileName}): ${pm.weight.toFixed(1)}g in ${pm.duration.toFixed(1)}s`,
+          `Shot #${cm.id} (${cm.profileName}): ${cm.weight.toFixed(1)}g in ${cm.duration.toFixed(1)}s`,
+        ].join("\n");
+
+        // Provide comparison context for the model's next turn
+        app
+          .updateModelContext({
+            content: [
+              {
+                type: "text",
+                text: `The user is comparing two espresso shots side-by-side in the shot graph:\n${summary}`,
+              },
+            ],
+          })
+          .catch(() => {});
+
+        // Send a message to trigger AI analysis
+        app
+          .sendMessage({
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: `I'm now comparing shot #${pm.id} with the previous shot #${cm.id}. Can you briefly analyze the differences between these two shots?`,
+              },
+            ],
+          })
+          .catch(() => {});
       } else {
         setCompareError("No previous shot found");
       }
@@ -124,7 +157,7 @@ function AppContent({ app, toolArgs, safeAreaInsets }: AppContentProps) {
     } finally {
       setCompareLoading(false);
     }
-  }, [primaryShot, fetchShot]);
+  }, [primaryShot, app, fetchShot]);
 
   const handleDismissCompare = useCallback(() => {
     setComparisonShot(null);
