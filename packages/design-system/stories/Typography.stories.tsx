@@ -177,21 +177,10 @@ const meta: Meta = {
 export default meta;
 type Story = StoryObj;
 
-export const Light: Story = {};
+export const Light: Story = {
+  globals: { backgrounds: { value: "light" } },
+};
 
 export const Dark: Story = {
-  decorators: [
-    (Story) => (
-      <div
-        className="dark"
-        style={{
-          background: "var(--color-background-primary)",
-          padding: "24px",
-          borderRadius: "8px",
-        }}
-      >
-        <Story />
-      </div>
-    ),
-  ],
+  globals: { backgrounds: { value: "dark" } },
 };
