@@ -55,9 +55,10 @@ interface AppContentProps {
   app: McpApp;
   toolArgs: ToolArgs;
   safeAreaInsets?: McpUiHostContext["safeAreaInsets"];
+  mode: "mobile" | "desktop";
 }
 
-function AppContent({ app, toolArgs, safeAreaInsets }: AppContentProps) {
+function AppContent({ app, toolArgs, safeAreaInsets, mode }: AppContentProps) {
   const [primaryShot, setPrimaryShot] = useState<ShotData | null>(null);
   const [comparisonShot, setComparisonShot] = useState<ShotData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -194,13 +195,17 @@ function AppContent({ app, toolArgs, safeAreaInsets }: AppContentProps) {
   // Host-initiated comparison: allow dismiss but not "compare previous"
   const hostInitiatedCompare = !!toolArgs.compare_shot_id;
 
+  const basePad = mode === "mobile" ? { y: 20, x: 16 } : { y: 24, x: 20 };
   return (
     <div
       style={{
-        paddingTop: safeAreaInsets?.top,
-        paddingRight: safeAreaInsets?.right,
-        paddingBottom: safeAreaInsets?.bottom,
-        paddingLeft: safeAreaInsets?.left,
+        background: "var(--color-background-primary)",
+        border: "1px solid var(--color-border-tertiary)",
+        borderRadius: "var(--border-radius-lg)",
+        paddingTop: `calc(${basePad.y}px + ${safeAreaInsets?.top ?? 0}px)`,
+        paddingRight: `calc(${basePad.x}px + ${safeAreaInsets?.right ?? 0}px)`,
+        paddingBottom: `calc(${basePad.y}px + ${safeAreaInsets?.bottom ?? 0}px)`,
+        paddingLeft: `calc(${basePad.x}px + ${safeAreaInsets?.left ?? 0}px)`,
       }}
     >
       {compareError && (
@@ -226,15 +231,23 @@ function AppContent({ app, toolArgs, safeAreaInsets }: AppContentProps) {
         }
         onDismissCompare={comparisonShot ? handleDismissCompare : undefined}
         compareLoading={compareLoading}
+        mode={mode}
       />
     </div>
   );
 }
 
+/** Width (in px) below which the shot graph renders in mobile layout. */
+const MOBILE_BREAKPOINT_PX = 480;
+
+type HostCtx = Pick<
+  McpUiHostContext,
+  "platform" | "containerDimensions" | "safeAreaInsets"
+>;
+
 function Root() {
   const [toolArgs, setToolArgs] = useState<ToolArgs | null>(null);
-  const [safeAreaInsets, setSafeAreaInsets] =
-    useState<McpUiHostContext["safeAreaInsets"]>();
+  const [hostCtx, setHostCtx] = useState<HostCtx>({});
 
   const { app, error: connectError } = useApp({
     appInfo: { name: "Shot Graph", version: "1.0.0" },
@@ -247,9 +260,11 @@ function Root() {
         }
       };
       app.onhostcontextchanged = (ctx) => {
-        if (ctx.safeAreaInsets) {
-          setSafeAreaInsets(ctx.safeAreaInsets);
-        }
+        setHostCtx({
+          platform: ctx.platform,
+          containerDimensions: ctx.containerDimensions,
+          safeAreaInsets: ctx.safeAreaInsets,
+        });
       };
       app.onerror = console.error;
     },
@@ -267,8 +282,25 @@ function Root() {
   if (!toolArgs)
     return <div style={{ padding: "24px" }}>Waiting for shot data...</div>;
 
+  const dims = hostCtx.containerDimensions;
+  const widthHint =
+    dims && "width" in dims
+      ? dims.width
+      : dims && "maxWidth" in dims
+        ? dims.maxWidth
+        : undefined;
+  const isMobile =
+    hostCtx.platform === "mobile" ||
+    (widthHint !== undefined && widthHint < MOBILE_BREAKPOINT_PX);
+  const mode: "mobile" | "desktop" = isMobile ? "mobile" : "desktop";
+
   return (
-    <AppContent app={app} toolArgs={toolArgs} safeAreaInsets={safeAreaInsets} />
+    <AppContent
+      app={app}
+      toolArgs={toolArgs}
+      safeAreaInsets={hostCtx.safeAreaInsets}
+      mode={mode}
+    />
   );
 }
 
