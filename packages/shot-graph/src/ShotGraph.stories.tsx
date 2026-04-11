@@ -187,6 +187,26 @@ export const Interactive: Story = {
   },
 };
 
+/**
+ * Renders the story inside the same bordered card shell that `main.tsx`
+ * uses in the MCP app, so mobile previews reflect what ships to hosts.
+ */
+function MobileCardShell({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        margin: 3,
+        background: "var(--color-background-primary)",
+        border: "1px solid var(--color-border-tertiary)",
+        borderRadius: "var(--border-radius-lg)",
+        padding: "16px 14px",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 export const MobileSingle: Story = {
   args: {
     data: toChartData(londiniumShot33),
@@ -197,6 +217,17 @@ export const MobileSingle: Story = {
   globals: {
     viewport: { value: "claudeIosCard" },
   },
+  // layout: fullscreen removes Storybook's outer padding so the preview
+  // matches what actually ships: the card sits directly against the
+  // iframe edge, with only our 2px outer margin.
+  parameters: { layout: "fullscreen" },
+  decorators: [
+    (Story) => (
+      <MobileCardShell>
+        <Story />
+      </MobileCardShell>
+    ),
+  ],
 };
 
 export const MobileComparison: Story = {
@@ -211,4 +242,12 @@ export const MobileComparison: Story = {
   globals: {
     viewport: { value: "claudeIosCard" },
   },
+  parameters: { layout: "fullscreen" },
+  decorators: [
+    (Story) => (
+      <MobileCardShell>
+        <Story />
+      </MobileCardShell>
+    ),
+  ],
 };

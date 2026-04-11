@@ -1,6 +1,12 @@
 import { Skeleton } from "@gaggiuino/ui";
 import { useApp, useHostStyles } from "@modelcontextprotocol/ext-apps/react";
-import { StrictMode, useCallback, useEffect, useState } from "react";
+import {
+  StrictMode,
+  useCallback,
+  useEffect,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { createRoot } from "react-dom/client";
 import { extractAnnotations, extractMeta, toChartData } from "./normalize";
 import { ShotGraph } from "./ShotGraph";
@@ -199,10 +205,15 @@ function AppContent({ app, toolArgs, safeAreaInsets, mode }: AppContentProps) {
   // Host-initiated comparison: allow dismiss but not "compare previous"
   const hostInitiatedCompare = !!toolArgs.compare_shot_id;
 
-  const basePad = mode === "mobile" ? { y: 20, x: 16 } : { y: 24, x: 20 };
+  const basePad = mode === "mobile" ? { y: 16, x: 14 } : { y: 24, x: 20 };
+  // Small outer margin on mobile so the card's border isn't clipped by
+  // the host iframe edge (seen on Claude iOS, where the chat card gives
+  // the app iframe zero surrounding padding).
+  const outerMargin = mode === "mobile" ? 3 : 0;
   return (
     <div
       style={{
+        margin: outerMargin,
         background: "var(--color-background-primary)",
         border: "1px solid var(--color-border-tertiary)",
         borderRadius: "var(--border-radius-lg)",
@@ -241,13 +252,86 @@ function AppContent({ app, toolArgs, safeAreaInsets, mode }: AppContentProps) {
   );
 }
 
-/** Width (in px) below which the shot graph renders in mobile layout. */
-const MOBILE_BREAKPOINT_PX = 480;
+/**
+ * Width (in px) below which the shot graph renders in mobile layout.
+ * Chosen to comfortably cover iPhone Pro Max (~430 CSS px), rotated iPads
+ * in split view, and narrow desktop side panels where the desktop legend
+ * with comparison rows would wrap and collide.
+ */
+const MOBILE_BREAKPOINT_PX = 640;
 
 type HostCtx = Pick<
   McpUiHostContext,
-  "platform" | "containerDimensions" | "safeAreaInsets"
+  | "platform"
+  | "containerDimensions"
+  | "safeAreaInsets"
+  | "deviceCapabilities"
+  | "userAgent"
 >;
+
+/**
+ * Extract a width hint (in px) from host-reported container dimensions.
+ * Supports both fixed `width` and bounded `maxWidth` forms per the MCP
+ * Apps spec.
+ */
+function widthFromHost(
+  dims: McpUiHostContext["containerDimensions"],
+): number | undefined {
+  if (!dims) return undefined;
+  if ("width" in dims && typeof dims.width === "number") return dims.width;
+  if ("maxWidth" in dims && typeof dims.maxWidth === "number")
+    return dims.maxWidth;
+  return undefined;
+}
+
+/**
+ * Subscribe to window.innerWidth so we re-render when the iframe is
+ * resized. This is our most reliable mobile signal when the host doesn't
+ * populate `platform` or `containerDimensions` (e.g. current Claude iOS
+ * builds).
+ */
+function useViewportWidth(): number {
+  return useSyncExternalStore(
+    (notify) => {
+      window.addEventListener("resize", notify);
+      return () => window.removeEventListener("resize", notify);
+    },
+    () => window.innerWidth,
+    () => MOBILE_BREAKPOINT_PX + 1,
+  );
+}
+
+/**
+ * Decide whether to render the mobile layout. Combines every signal the
+ * host is willing to give us:
+ *
+ * 1. Explicit `platform === "mobile"` (strongest)
+ * 2. Touch-only device (touch && !hover) via deviceCapabilities
+ * 3. Host-reported container width/maxWidth under the breakpoint
+ * 4. Actual iframe `window.innerWidth` under the breakpoint (fallback)
+ * 5. UA sniff for iPhone/iPad/Android (last resort)
+ *
+ * Any single signal triggers mobile. This is intentional: falsely rendering
+ * mobile on desktop is a minor cosmetic issue, but falsely rendering
+ * desktop on mobile (what we're seeing today) squishes the chart into an
+ * unreadable state.
+ */
+function detectMobile(host: HostCtx, viewportWidth: number): boolean {
+  if (host.platform === "mobile") return true;
+
+  const caps = host.deviceCapabilities;
+  if (caps?.touch === true && caps?.hover === false) return true;
+
+  const hostWidth = widthFromHost(host.containerDimensions);
+  if (hostWidth !== undefined && hostWidth < MOBILE_BREAKPOINT_PX) return true;
+
+  if (viewportWidth < MOBILE_BREAKPOINT_PX) return true;
+
+  const ua = host.userAgent ?? navigator.userAgent ?? "";
+  if (/iPhone|iPad|iPod|Android|Mobile/i.test(ua)) return true;
+
+  return false;
+}
 
 function Root() {
   const [toolArgs, setToolArgs] = useState<ToolArgs | null>(null);
@@ -268,11 +352,15 @@ function Root() {
           platform: ctx.platform,
           containerDimensions: ctx.containerDimensions,
           safeAreaInsets: ctx.safeAreaInsets,
+          deviceCapabilities: ctx.deviceCapabilities,
+          userAgent: ctx.userAgent,
         });
       };
       app.onerror = console.error;
     },
   });
+
+  const viewportWidth = useViewportWidth();
 
   useHostStyles(app, app?.getHostContext());
 
@@ -286,17 +374,9 @@ function Root() {
   if (!toolArgs)
     return <div style={{ padding: "24px" }}>Waiting for shot data...</div>;
 
-  const dims = hostCtx.containerDimensions;
-  const widthHint =
-    dims && "width" in dims
-      ? dims.width
-      : dims && "maxWidth" in dims
-        ? dims.maxWidth
-        : undefined;
-  const isMobile =
-    hostCtx.platform === "mobile" ||
-    (widthHint !== undefined && widthHint < MOBILE_BREAKPOINT_PX);
-  const mode: "mobile" | "desktop" = isMobile ? "mobile" : "desktop";
+  const mode: "mobile" | "desktop" = detectMobile(hostCtx, viewportWidth)
+    ? "mobile"
+    : "desktop";
 
   return (
     <AppContent

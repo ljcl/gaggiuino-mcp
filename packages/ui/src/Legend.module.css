@@ -12,7 +12,7 @@
 }
 
 .legend[data-size="touch"] {
-  gap: 10px;
+  gap: 6px;
   font-size: var(--font-text-sm-size);
 }
 
@@ -31,8 +31,8 @@
 }
 
 .legend[data-size="touch"] .legendButton {
-  gap: 6px;
-  padding: 8px 2px;
+  gap: 5px;
+  padding: 8px 1px;
 }
 
 .legendButton[data-hidden] {

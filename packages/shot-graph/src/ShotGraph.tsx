@@ -59,12 +59,24 @@ export function ShotGraph({
 
   const isMobile = mode === "mobile";
   const tokens = {
-    aspect: isMobile ? 1.1 : 1.8,
-    axisFont: isMobile ? 15 : 13,
+    aspect: isMobile ? 0.95 : 1.8,
+    axisFont: isMobile ? 14 : 13,
     annotationFont: isMobile ? 14 : 11,
     annotationFontCmp: isMobile ? 13 : 10,
     chartMarginX: isMobile ? -20 : -30,
+    chartMarginTop: isMobile ? 18 : 5,
+    strokeWidth: isMobile ? 2.25 : 2,
   };
+
+  // On mobile, drop the "First drip" annotation — its position near the
+  // bottom of the right axis collides with x-axis ticks and the comparison
+  // label, and peak pressure is the higher-value insight for a glance.
+  const visibleAnnotations = isMobile
+    ? annotations?.filter((a) => a.metric !== "firstDrip")
+    : annotations;
+  const visibleComparisonAnnotations = isMobile
+    ? comparisonAnnotations?.filter((a) => a.metric !== "firstDrip")
+    : comparisonAnnotations;
 
   return (
     <div className={styles.root}>
@@ -80,7 +92,7 @@ export function ShotGraph({
         <ComposedChart
           data={data}
           margin={{
-            top: 5,
+            top: tokens.chartMarginTop,
             right: tokens.chartMarginX,
             left: tokens.chartMarginX,
             bottom: 5,
@@ -256,7 +268,7 @@ export function ShotGraph({
               name="Pressure"
               stroke={COLORS.pressure}
               dot={false}
-              strokeWidth={2}
+              strokeWidth={tokens.strokeWidth}
               connectNulls
             />
           )}
@@ -268,7 +280,7 @@ export function ShotGraph({
               name="Flow"
               stroke={COLORS.pumpFlow}
               dot={false}
-              strokeWidth={2}
+              strokeWidth={tokens.strokeWidth}
               connectNulls
             />
           )}
@@ -280,7 +292,7 @@ export function ShotGraph({
               name="Weight Flow"
               stroke={COLORS.weightFlow}
               dot={false}
-              strokeWidth={2}
+              strokeWidth={tokens.strokeWidth}
               connectNulls
             />
           )}
@@ -292,7 +304,7 @@ export function ShotGraph({
               name="Weight"
               stroke={COLORS.shotWeight}
               dot={false}
-              strokeWidth={1.5}
+              strokeWidth={isMobile ? 1.75 : 1.5}
               connectNulls
             />
           )}
@@ -356,9 +368,9 @@ export function ShotGraph({
           )}
           {/* Metric annotations */}
           {renderAnnotations({
-            annotations,
+            annotations: visibleAnnotations,
             comparisonAnnotations: comparisonMeta
-              ? comparisonAnnotations
+              ? visibleComparisonAnnotations
               : undefined,
             show,
             primaryFont: tokens.annotationFont,

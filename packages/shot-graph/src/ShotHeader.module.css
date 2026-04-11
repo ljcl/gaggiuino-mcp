@@ -32,10 +32,10 @@
 .mobileRoot {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   align-items: stretch;
   padding: 0 4px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   font-family: var(--font-sans);
 }
 
@@ -45,33 +45,60 @@
   font-size: var(--font-text-sm-size);
 }
 
+.mobileComparisonStack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .mobileComparisonRow {
   display: flex;
   gap: 8px;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-}
-
-.mobileComparisonMeta {
-  flex: 1;
-  opacity: 0.6;
-}
-
-.vsLabel {
-  margin-bottom: 2px;
-  font-size: var(--font-text-xs-size);
-  color: var(--color-text-tertiary);
 }
 
 .mobileDismissButton {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   font-size: var(--font-text-sm-size);
   line-height: 1;
+}
+
+/* Inline single-line shot summary (mobile comparison) */
+
+.inlineSummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  line-height: 1.3;
+}
+
+.mobileComparisonRow .inlineSummary {
+  flex: 1;
+  opacity: 0.6;
+}
+
+.inlinePrefix {
+  font-size: var(--font-text-xs-size);
+  color: var(--color-text-tertiary);
+}
+
+.inlineTitle {
+  font-size: var(--font-text-sm-size);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.inlineSubtitle {
+  font-size: var(--font-text-sm-size);
+  color: var(--color-text-secondary);
 }
 
 /* Desktop layout */

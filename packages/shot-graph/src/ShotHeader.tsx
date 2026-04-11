@@ -12,6 +12,28 @@ function MetaSummary({ meta }: { meta: ShotMeta }) {
   );
 }
 
+/**
+ * Compact single-line meta summary for mobile comparison header. Uses a
+ * bold profile name inline with the weight/duration to save vertical space.
+ */
+function InlineMetaSummary({
+  meta,
+  prefix,
+}: {
+  meta: ShotMeta;
+  prefix?: string;
+}) {
+  return (
+    <div className={styles.inlineSummary}>
+      {prefix && <span className={styles.inlinePrefix}>{prefix}</span>}
+      <span className={styles.inlineTitle}>{meta.profileName}</span>
+      <span className={styles.inlineSubtitle}>
+        {meta.weight.toFixed(1)}g in {meta.duration.toFixed(1)}s
+      </span>
+    </div>
+  );
+}
+
 interface ShotHeaderProps {
   primary: ShotMeta;
   comparison?: ShotMeta;
@@ -32,7 +54,7 @@ export function ShotHeader({
   if (mode === "mobile") {
     return (
       <div className={styles.mobileRoot}>
-        <MetaSummary meta={primary} />
+        {!comparison && <MetaSummary meta={primary} />}
         {!comparison && onRequestCompare && (
           <button
             type="button"
@@ -45,21 +67,21 @@ export function ShotHeader({
           </button>
         )}
         {comparison && (
-          <div className={styles.mobileComparisonRow}>
-            <div className={styles.mobileComparisonMeta}>
-              <div className={styles.vsLabel}>vs</div>
-              <MetaSummary meta={comparison} />
+          <div className={styles.mobileComparisonStack}>
+            <InlineMetaSummary meta={primary} />
+            <div className={styles.mobileComparisonRow}>
+              <InlineMetaSummary meta={comparison} prefix="vs" />
+              {onDismissCompare && (
+                <button
+                  type="button"
+                  onClick={onDismissCompare}
+                  aria-label="Dismiss comparison"
+                  className={`${styles.button} ${styles.mobileDismissButton}`}
+                >
+                  ✕
+                </button>
+              )}
             </div>
-            {onDismissCompare && (
-              <button
-                type="button"
-                onClick={onDismissCompare}
-                aria-label="Dismiss comparison"
-                className={`${styles.button} ${styles.mobileDismissButton}`}
-              >
-                ✕
-              </button>
-            )}
           </div>
         )}
       </div>
