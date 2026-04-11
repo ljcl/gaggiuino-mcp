@@ -1,0 +1,12 @@
+@import "@gaggiuino/design-system/tokens.css";
+
+/*
+ * Recharts renders its SVG wider than the container because ComposedChart
+ * uses negative horizontal margins (chartMarginX) to pull axis labels inward.
+ * The phantom overflow causes a horizontal scrollbar in Storybook. Clipping
+ * the wrapper is safe: all visible chart content stays inside the container
+ * width — only the unused negative-margin area is clipped.
+ */
+.root {
+  overflow-x: clip;
+}

@@ -1,3 +1,4 @@
+import { Skeleton } from "@gaggiuino/ui";
 import { useApp, useHostStyles } from "@modelcontextprotocol/ext-apps/react";
 import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -167,8 +168,8 @@ function AppContent({ app, toolArgs, safeAreaInsets, mode }: AppContentProps) {
 
   if (loading) {
     return (
-      <div style={{ padding: "24px", color: "var(--color-text-secondary)" }}>
-        Loading shot data...
+      <div style={{ padding: "24px" }}>
+        <Skeleton variant="chart" />
       </div>
     );
   }

@@ -9,10 +9,10 @@ export default defineConfig({
       enabled: true,
       thresholds: {
         autoUpdate: true,
-        branches: 64.1,
+        branches: 67.69,
         functions: 80.95,
-        lines: 81.54,
-        statements: 80.63,
+        lines: 83.76,
+        statements: 82.74,
       },
       include: ["src/**/*.ts"],
       exclude: ["src/**/*.test.ts", "src/test-setup.ts", "src/index.ts"],
