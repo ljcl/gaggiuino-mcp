@@ -8,6 +8,7 @@
     "test": {
       "dependsOn": ["^build"]
     },
+    "typecheck": {},
     "//#lint": {
       "outputs": []
     },
@@ -15,6 +16,14 @@
       "persistent": true,
       "cache": false,
       "env": ["GAGGIUINO_URL", "PORT", "HOST"]
+    },
+    "storybook": {
+      "persistent": true,
+      "cache": false
+    },
+    "build-storybook": {
+      "dependsOn": ["^build"],
+      "outputs": ["storybook-static/**"]
     }
   }
 }

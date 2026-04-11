@@ -10,8 +10,11 @@
   "scripts": {
     "build": "turbo run build",
     "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
     "lint": "biome check .",
     "dev": "turbo run dev",
+    "storybook": "turbo run storybook --filter=@gaggiuino/storybook",
+    "build-storybook": "turbo run build-storybook --filter=@gaggiuino/storybook",
     "check": "biome check . && turbo run test"
   },
   "devDependencies": {

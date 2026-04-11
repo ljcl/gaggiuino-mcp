@@ -1,0 +1,29 @@
+{
+  "name": "@gaggiuino/storybook",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./preview": "./.storybook/preview.tsx"
+  },
+  "scripts": {
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@gaggiuino/design-system": "workspace:*",
+    "gaggiuino-shot-graph": "workspace:*"
+  },
+  "devDependencies": {
+    "@gaggiuino/tsconfig": "workspace:*",
+    "@storybook/react-vite": "^10.3.5",
+    "@types/react": "^19.2.11",
+    "@types/react-dom": "^19.2.3",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "storybook": "^10.3.5",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}

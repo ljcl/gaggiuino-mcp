@@ -12,8 +12,10 @@ Remote MCP server for integrating a Gaggiuino espresso machine with AI tools.
 ## Key Directories
 
 - `apps/server/` - MCP server (tools, prompts, resources, client)
+- `apps/storybook/` - Standalone Storybook app, serves stories from all packages
 - `packages/shot-graph/` - React + Recharts MCP App for interactive shot graphs
-- `packages/design-system/` - Shared design tokens and components
+- `packages/design-system/` - Shared design tokens, components, and host theme presets
+- `packages/vite-config/` - Shared Vite config helpers for MCP Apps
 - `packages/tsconfig/` - Shared TypeScript configurations
 - `apps/server/src/data/profiles/` - YAML profile documentation (not machine profiles)
 - `apps/server/src/data/prompts.yaml` - System prompt for espresso dial-in guidance
@@ -55,10 +57,12 @@ Gaggiuino API returns values scaled by 10 (e.g., pressure 91 = 9.1 bar). The `no
 
 ```bash
 bun install          # Install all deps (workspace-aware)
-bun run build        # Build all packages (via Turborepo)
-bun run test         # Run all tests (via Turborepo)
-bun run lint         # Lint all packages (via Turborepo)
-bun run dev          # Dev mode (via Turborepo)
+bun run build            # Build all packages (via Turborepo)
+bun run test             # Run all tests (via Turborepo)
+bun run lint             # Lint all packages (via Turborepo)
+bun run dev              # Dev mode (via Turborepo)
+bun run storybook        # Storybook on port 6006 (via Turborepo)
+bun run build-storybook  # Static Storybook build to apps/storybook/storybook-static/
 
 # Server only
 cd apps/server
@@ -66,10 +70,9 @@ bun run start        # Start server
 bun run dev          # Watch mode
 bun run test         # Run server tests
 
-# UI development
+# Rebuild the shot-graph MCP App single-file HTML
 cd packages/shot-graph
-bun run storybook    # Storybook on port 6006
-INPUT=app.html bunx vite build  # Rebuild single-file HTML
+INPUT=app.html bunx vite build
 
 # Regenerate JSON schemas (after changing Zod schemas in loader.ts)
 cd apps/server
