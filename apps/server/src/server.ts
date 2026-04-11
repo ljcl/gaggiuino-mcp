@@ -336,6 +336,11 @@ export function createServer() {
         uri: "ui://shot-graph/app.html",
         name: "Shot Graph",
         mimeType: "text/html;profile=mcp-app",
+        _meta: {
+          ui: {
+            prefersBorder: false,
+          },
+        },
       },
     ],
   }));
@@ -372,7 +377,14 @@ export function createServer() {
       );
       const html = await fs.readFile(htmlPath, "utf-8");
       return {
-        contents: [{ uri, mimeType: "text/html;profile=mcp-app", text: html }],
+        contents: [
+          {
+            uri,
+            mimeType: "text/html;profile=mcp-app",
+            text: html,
+            _meta: { ui: { prefersBorder: false } },
+          },
+        ],
       };
     }
     throw new Error(`Unknown resource: ${uri}`);
