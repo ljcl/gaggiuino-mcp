@@ -1,0 +1,22 @@
+{
+  "name": "@gaggiuino/ui",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@gaggiuino/design-system": "workspace:*",
+    "react": "^19.2.4"
+  },
+  "devDependencies": {
+    "@gaggiuino/tsconfig": "workspace:*",
+    "@storybook/react": "^10.3.5",
+    "@types/react": "^19.2.11",
+    "typescript": "^5.9.3"
+  }
+}

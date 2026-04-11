@@ -1,0 +1,44 @@
+@import "@gaggiuino/design-system/tokens.css";
+
+@keyframes shimmer {
+  0% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 0.8;
+  }
+  100% {
+    opacity: 0.5;
+  }
+}
+
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  padding: 8px;
+}
+
+.chartArea {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: var(--color-background-secondary);
+  border-radius: var(--border-radius-md);
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+.chartFooter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.pillGhost {
+  width: 96px;
+  height: 28px;
+  background: var(--color-background-secondary);
+  border-radius: var(--border-radius-full);
+  animation: shimmer 1.6s ease-in-out infinite;
+}

@@ -8,6 +8,10 @@ export default defineMain({
       titlePrefix: "Shot Graph",
       directory: "../../../packages/shot-graph/src/",
     },
+    {
+      titlePrefix: "UI",
+      directory: "../../../packages/ui/src/",
+    },
     { directory: "../../../packages/design-system/stories/" },
   ],
 });

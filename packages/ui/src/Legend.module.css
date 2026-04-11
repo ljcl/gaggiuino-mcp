@@ -1,0 +1,56 @@
+@import "@gaggiuino/design-system/tokens.css";
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-sans);
+  font-size: var(--font-text-xs-size);
+  color: var(--color-text-secondary);
+}
+
+.legend[data-size="touch"] {
+  gap: 10px;
+  font-size: var(--font-text-sm-size);
+}
+
+.legendButton {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  background: none;
+  border: none;
+}
+
+.legend[data-size="touch"] .legendButton {
+  gap: 6px;
+  padding: 8px 2px;
+}
+
+.legendButton[data-hidden] {
+  text-decoration: line-through;
+  opacity: 0.3;
+}
+
+.legendButton[data-faded] {
+  opacity: 0.5;
+}
+
+.legendButton[data-hidden][data-faded] {
+  opacity: 0.25;
+}
+
+.swatch {
+  flex-shrink: 0;
+  width: 16px;
+  height: 3px;
+  border-radius: 2px;
+}
