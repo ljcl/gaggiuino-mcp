@@ -1,6 +1,6 @@
 FROM oven/bun:1.3.6 AS base
 WORKDIR /app
-RUN bun add -g turbo@2
+RUN bun add -g turbo@2.9.6
 
 # 1) Prune the monorepo to the subset @gaggiuino/server needs.
 #    Produces /app/out/json (package.json files only), /app/out/full (sources),

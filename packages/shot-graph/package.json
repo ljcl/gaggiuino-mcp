@@ -15,20 +15,20 @@
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "1.5.0",
     "@modelcontextprotocol/sdk": "1.29.0",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "recharts": "^3.7.0",
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
+    "recharts": "3.8.1",
     "@gaggiuino/design-system": "workspace:*",
     "@gaggiuino/ui": "workspace:*"
   },
   "devDependencies": {
     "@gaggiuino/tsconfig": "workspace:*",
     "@gaggiuino/vite-config": "workspace:*",
-    "@storybook/react": "^10.3.5",
-    "@types/react": "^19.2.11",
-    "@types/react-dom": "^19.2.3",
-    "storybook": "^10.3.5",
+    "@storybook/react": "10.3.5",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "storybook": "10.3.5",
     "typescript": "6.0.2",
-    "vite": "^7.3.1"
+    "vite": "8.0.8"
   }
 }

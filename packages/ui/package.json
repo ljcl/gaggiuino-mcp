@@ -11,12 +11,12 @@
   },
   "dependencies": {
     "@gaggiuino/design-system": "workspace:*",
-    "react": "^19.2.4"
+    "react": "19.2.5"
   },
   "devDependencies": {
     "@gaggiuino/tsconfig": "workspace:*",
-    "@storybook/react": "^10.3.5",
-    "@types/react": "^19.2.11",
+    "@storybook/react": "10.3.5",
+    "@types/react": "19.2.14",
     "typescript": "6.0.2"
   }
 }
