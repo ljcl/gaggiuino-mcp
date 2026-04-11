@@ -60,6 +60,7 @@ interface ShotHeaderProps {
   onRequestCompare?: () => void;
   onDismissCompare?: () => void;
   compareLoading?: boolean;
+  mode: "mobile" | "desktop";
 }
 
 function ShotHeader({
@@ -68,6 +69,7 @@ function ShotHeader({
   onRequestCompare,
   onDismissCompare,
   compareLoading,
+  mode,
 }: ShotHeaderProps) {
   const buttonStyle: React.CSSProperties = {
     background: "none",
@@ -80,6 +82,83 @@ function ShotHeader({
     font: "inherit",
     whiteSpace: "nowrap",
   };
+
+  if (mode === "mobile") {
+    return (
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "stretch",
+          gap: "12px",
+          padding: "0 4px",
+          marginBottom: "12px",
+          fontFamily: "var(--font-sans)",
+        }}
+      >
+        <MetaSummary meta={primary} />
+        {!comparison && onRequestCompare && (
+          <button
+            type="button"
+            onClick={onRequestCompare}
+            disabled={compareLoading}
+            style={{
+              ...buttonStyle,
+              width: "100%",
+              height: 44,
+              fontSize: "var(--font-text-sm-size)",
+              opacity: compareLoading ? 0.5 : 1,
+            }}
+          >
+            {compareLoading ? "Loading..." : "Compare previous"}
+          </button>
+        )}
+        {comparison && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              justifyContent: "space-between",
+              gap: "8px",
+            }}
+          >
+            <div style={{ flex: 1, opacity: 0.6 }}>
+              <div
+                style={{
+                  fontSize: "var(--font-text-xs-size)",
+                  color: "var(--color-text-tertiary)",
+                  marginBottom: "2px",
+                }}
+              >
+                vs
+              </div>
+              <MetaSummary meta={comparison} />
+            </div>
+            {onDismissCompare && (
+              <button
+                type="button"
+                onClick={onDismissCompare}
+                aria-label="Dismiss comparison"
+                style={{
+                  ...buttonStyle,
+                  width: 44,
+                  height: 44,
+                  padding: 0,
+                  lineHeight: 1,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "var(--font-text-sm-size)",
+                }}
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -307,6 +386,104 @@ function CustomLegend({ items, hidden, onToggle }: CustomLegendProps) {
   );
 }
 
+type ChipKey = "pressure" | "pumpFlow" | "weightFlow" | "shotWeight";
+
+interface MetricChipsProps {
+  hidden: Set<string>;
+  onToggle: (key: string) => void;
+  hasComparison: boolean;
+}
+
+function MetricChips({ hidden, onToggle, hasComparison }: MetricChipsProps) {
+  const chips: Array<{ key: ChipKey; label: string; color: string }> = [
+    { key: "pressure", label: "Pressure", color: COLORS.pressure },
+    { key: "pumpFlow", label: "Flow", color: COLORS.pumpFlow },
+    { key: "weightFlow", label: "Weight Flow", color: COLORS.weightFlow },
+    { key: "shotWeight", label: "Weight", color: COLORS.shotWeight },
+  ];
+
+  const handleClick = (key: ChipKey) => {
+    onToggle(key);
+    if (hasComparison) onToggle(`${key}Cmp`);
+  };
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: "8px",
+        flexWrap: "wrap",
+        justifyContent: "center",
+        marginTop: "12px",
+      }}
+    >
+      {chips.map(({ key, label, color }) => {
+        const isHidden = hidden.has(key);
+        return (
+          <button
+            key={key}
+            type="button"
+            onClick={() => handleClick(key)}
+            aria-pressed={!isHidden}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "8px",
+              height: 36,
+              padding: "0 14px",
+              borderRadius: "var(--border-radius-full)",
+              border: "1px solid var(--color-border-tertiary)",
+              background: isHidden
+                ? "transparent"
+                : "var(--color-background-secondary)",
+              opacity: isHidden ? 0.4 : 1,
+              textDecoration: isHidden ? "line-through" : "none",
+              fontSize: 14,
+              fontWeight: "var(--font-weight-medium)",
+              color: "var(--color-text-primary)",
+              cursor: "pointer",
+              font: "inherit",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <span
+              style={{
+                display: "inline-flex",
+                flexDirection: "column",
+                gap: 2,
+              }}
+              aria-hidden="true"
+            >
+              <span
+                style={{
+                  display: "block",
+                  width: 14,
+                  height: 3,
+                  background: color,
+                  borderRadius: 2,
+                }}
+              />
+              {hasComparison && (
+                <span
+                  style={{
+                    display: "block",
+                    width: 14,
+                    height: 3,
+                    background: color,
+                    borderRadius: 2,
+                    opacity: 0.4,
+                  }}
+                />
+              )}
+            </span>
+            <span>{label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 interface AnnotationPair {
   primary: Annotation;
   comparison: Annotation;
@@ -367,10 +544,14 @@ function renderAnnotations({
   annotations,
   comparisonAnnotations,
   show,
+  primaryFont,
+  comparisonFont,
 }: {
   annotations?: Annotation[];
   comparisonAnnotations?: Annotation[];
   show: (key: string) => boolean;
+  primaryFont: number;
+  comparisonFont: number;
 }) {
   const { pairs, unpairedPrimary, unpairedComparison } = pairAnnotations(
     annotations,
@@ -419,7 +600,7 @@ function renderAnnotations({
           value: primary.label,
           position: annotationLabelPosition(primary),
           fill: primary.color,
-          fontSize: 11,
+          fontSize: primaryFont,
           fontWeight: 600,
           offset: 8,
         }}
@@ -447,7 +628,7 @@ function renderAnnotations({
           value: comparison.label,
           position: annotationLabelPosition(comparison, true),
           fill: comparison.color,
-          fontSize: 10,
+          fontSize: comparisonFont,
           fontWeight: 500,
           opacity: 0.5,
           offset: 8,
@@ -474,7 +655,7 @@ function renderAnnotations({
           value: a.label,
           position: annotationLabelPosition(a),
           fill: a.color,
-          fontSize: 11,
+          fontSize: primaryFont,
           fontWeight: 600,
           offset: 8,
         }}
@@ -501,7 +682,7 @@ function renderAnnotations({
           value: a.label,
           position: annotationLabelPosition(a, true),
           fill: a.color,
-          fontSize: 10,
+          fontSize: comparisonFont,
           fontWeight: 500,
           opacity: 0.5,
           offset: 8,
@@ -523,6 +704,7 @@ interface ShotGraphProps {
   onRequestCompare?: () => void;
   onDismissCompare?: () => void;
   compareLoading?: boolean;
+  mode?: "mobile" | "desktop";
 }
 
 export function ShotGraph({
@@ -535,6 +717,7 @@ export function ShotGraph({
   onRequestCompare,
   onDismissCompare,
   compareLoading,
+  mode = "desktop",
 }: ShotGraphProps) {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
 
@@ -548,6 +731,15 @@ export function ShotGraph({
   };
 
   const show = (key: string) => !hidden.has(key);
+
+  const isMobile = mode === "mobile";
+  const tokens = {
+    aspect: isMobile ? 1.1 : 1.8,
+    axisFont: isMobile ? 15 : 13,
+    annotationFont: isMobile ? 14 : 11,
+    annotationFontCmp: isMobile ? 13 : 10,
+    chartMarginX: isMobile ? -20 : -30,
+  };
 
   const legendItems: LegendItem[] = [
     { key: "pressure", color: COLORS.pressure, label: "Pressure" },
@@ -592,11 +784,17 @@ export function ShotGraph({
         onRequestCompare={onRequestCompare}
         onDismissCompare={onDismissCompare}
         compareLoading={compareLoading}
+        mode={mode}
       />
-      <ResponsiveContainer width="100%" aspect={1.8}>
+      <ResponsiveContainer width="100%" aspect={tokens.aspect}>
         <ComposedChart
           data={data}
-          margin={{ top: 5, right: -30, left: -30, bottom: 5 }}
+          margin={{
+            top: 5,
+            right: tokens.chartMarginX,
+            left: tokens.chartMarginX,
+            bottom: 5,
+          }}
         >
           <defs>
             <linearGradient id="gradPressure" x1="0" y1="0" x2="0" y2="1">
@@ -638,7 +836,7 @@ export function ShotGraph({
             dataKey="time"
             tickFormatter={formatTime}
             stroke="var(--color-text-tertiary)"
-            fontSize={13}
+            fontSize={tokens.axisFont}
             interval="preserveStartEnd"
             minTickGap={40}
             axisLine={false}
@@ -648,7 +846,7 @@ export function ShotGraph({
             yAxisId="left"
             domain={[0, 12]}
             stroke="var(--color-text-tertiary)"
-            fontSize={13}
+            fontSize={tokens.axisFont}
             tickCount={5}
             axisLine={false}
             tickLine={false}
@@ -658,7 +856,7 @@ export function ShotGraph({
             orientation="right"
             domain={[0, "auto"]}
             stroke="var(--color-text-tertiary)"
-            fontSize={13}
+            fontSize={tokens.axisFont}
             tickCount={5}
             axisLine={false}
             tickLine={false}
@@ -671,11 +869,19 @@ export function ShotGraph({
           />
           <Legend
             content={
-              <CustomLegend
-                items={legendItems}
-                hidden={hidden}
-                onToggle={toggle}
-              />
+              isMobile ? (
+                <MetricChips
+                  hidden={hidden}
+                  onToggle={toggle}
+                  hasComparison={!!comparisonMeta}
+                />
+              ) : (
+                <CustomLegend
+                  items={legendItems}
+                  hidden={hidden}
+                  onToggle={toggle}
+                />
+              )
             }
           />
 
@@ -872,6 +1078,8 @@ export function ShotGraph({
               ? comparisonAnnotations
               : undefined,
             show,
+            primaryFont: tokens.annotationFont,
+            comparisonFont: tokens.annotationFontCmp,
           })}
         </ComposedChart>
       </ResponsiveContainer>
