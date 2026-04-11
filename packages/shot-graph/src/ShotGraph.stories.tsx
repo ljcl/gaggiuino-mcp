@@ -65,20 +65,10 @@ export const DarkTheme: Story = {
     primaryMeta: extractMeta(londiniumShot33),
     annotations: extractAnnotations(londiniumShot33),
   },
-  decorators: [
-    (Story) => (
-      <div
-        className="dark"
-        style={{
-          background: "var(--color-background-primary)",
-          padding: "24px",
-          borderRadius: "var(--border-radius-md)",
-        }}
-      >
-        <Story />
-      </div>
-    ),
-  ],
+  globals: {
+    backgrounds: { value: "dark" },
+    hostTheme: "claude",
+  },
 };
 
 // --- Interactive stories for compare button ---
@@ -194,5 +184,31 @@ export const Interactive: Story = {
         compareLoading={loading}
       />
     );
+  },
+};
+
+export const MobileSingle: Story = {
+  args: {
+    data: toChartData(londiniumShot33),
+    primaryMeta: extractMeta(londiniumShot33),
+    annotations: extractAnnotations(londiniumShot33),
+    mode: "mobile",
+  },
+  globals: {
+    viewport: { value: "claudeIosCard" },
+  },
+};
+
+export const MobileComparison: Story = {
+  args: {
+    data: toChartData(londiniumShot33, londiniumShot32),
+    primaryMeta: extractMeta(londiniumShot33),
+    comparisonMeta: extractMeta(londiniumShot32),
+    annotations: extractAnnotations(londiniumShot33),
+    comparisonAnnotations: extractAnnotations(londiniumShot32),
+    mode: "mobile",
+  },
+  globals: {
+    viewport: { value: "claudeIosCard" },
   },
 };
