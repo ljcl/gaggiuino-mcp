@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./global.css": "./src/global.css"
+    "./global.css": "./src/global.css",
+    "./app.html": "./dist/app.html"
   },
   "scripts": {
     "build": "INPUT=app.html vite build",

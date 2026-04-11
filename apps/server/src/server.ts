@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import path from "node:path";
+import { createRequire } from "node:module";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
@@ -20,6 +20,15 @@ import { loadPrompts } from "./loader";
 import { getAllProfilesText, getProfile, listProfileNames } from "./profiles";
 
 const GAGGIUINO_URL = process.env.GAGGIUINO_URL ?? "http://gaggiuino.local";
+
+/**
+ * Resolved once at startup via the `gaggiuino-shot-graph` package's `./app.html`
+ * export. Works in dev (workspace symlink) and in the Docker runner (pruned
+ * workspace tree with built dist/ copied in).
+ */
+const SHOT_GRAPH_HTML_PATH = createRequire(import.meta.url).resolve(
+  "gaggiuino-shot-graph/app.html",
+);
 
 let _client: ReturnType<typeof createClient> | null = null;
 function getClient() {
@@ -366,16 +375,7 @@ export function createServer() {
       };
     }
     if (uri === "ui://shot-graph/app.html") {
-      const htmlPath = path.join(
-        import.meta.dirname,
-        "..",
-        "..",
-        "..",
-        "dist",
-        "shot-graph",
-        "app.html",
-      );
-      const html = await fs.readFile(htmlPath, "utf-8");
+      const html = await fs.readFile(SHOT_GRAPH_HTML_PATH, "utf-8");
       return {
         contents: [
           {

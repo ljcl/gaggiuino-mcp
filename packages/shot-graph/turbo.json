@@ -2,7 +2,7 @@
   "extends": ["//"],
   "tasks": {
     "build": {
-      "outputs": ["../../dist/shot-graph/**"]
+      "outputs": ["dist/**"]
     }
   }
 }
