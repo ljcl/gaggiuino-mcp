@@ -1,33 +1,34 @@
 FROM oven/bun:1.3.6 AS base
 WORKDIR /app
+RUN bun add -g turbo@2
 
-# Build UI (only install packages needed for shot-graph build)
-FROM base AS ui-builder
-COPY package.json bun.lock ./
-COPY apps/server/package.json apps/server/
-COPY packages/tsconfig/package.json packages/tsconfig/
-COPY packages/shot-graph/package.json packages/shot-graph/
-COPY packages/design-system/package.json packages/design-system/
-RUN bun install --frozen-lockfile --ignore-scripts
-COPY packages/ packages/
-RUN cd packages/shot-graph && INPUT=app.html bunx vite build
+# 1) Prune the monorepo to the subset @gaggiuino/server needs.
+#    Produces /app/out/json (package.json files only), /app/out/full (sources),
+#    and /app/out/bun.lock (subset lockfile).
+FROM base AS pruner
+COPY . .
+RUN turbo prune @gaggiuino/server --docker
 
-# Install server production deps only
-FROM base AS server-deps
-COPY package.json bun.lock ./
-COPY apps/server/package.json apps/server/
-COPY packages/tsconfig/package.json packages/tsconfig/
-COPY packages/shot-graph/package.json packages/shot-graph/
-COPY packages/design-system/package.json packages/design-system/
-RUN cd apps/server && bun install --production --frozen-lockfile --ignore-scripts
+# 2) Build: install full deps (dev + prod) then run turbo build.
+#    Because server depends on gaggiuino-shot-graph, turbo ^build runs
+#    shot-graph's vite build first, producing packages/shot-graph/dist/app.html.
+FROM base AS builder
+COPY --from=pruner /app/out/json/ ./
+COPY --from=pruner /app/out/bun.lock ./bun.lock
+RUN bun install --frozen-lockfile
+COPY --from=pruner /app/out/full/ ./
+RUN turbo run build --filter=@gaggiuino/server
 
-# Runner
+# 3) Runner: lean image with prod-only deps plus built shot-graph dist.
+#    Prod install links workspace deps by symlink; we fill in the built
+#    dist/ from the builder stage so createRequire(...).resolve("…/app.html")
+#    works at runtime.
 FROM base AS runner
-COPY --from=server-deps /app/node_modules ./node_modules
-COPY --from=server-deps /app/apps/server/node_modules ./apps/server/node_modules
-COPY apps/server/src ./apps/server/src
-COPY apps/server/package.json ./apps/server/
-COPY --from=ui-builder /app/dist ./dist
+COPY --from=pruner /app/out/json/ ./
+COPY --from=pruner /app/out/bun.lock ./bun.lock
+RUN bun install --frozen-lockfile --production
+COPY --from=builder /app/apps/server/src ./apps/server/src
+COPY --from=builder /app/packages/shot-graph/dist ./packages/shot-graph/dist
 
 ENV NODE_ENV=production
 EXPOSE 8000
