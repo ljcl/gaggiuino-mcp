@@ -17,20 +17,23 @@ export interface MachineStatus {
   upTime: number;
 }
 
+export interface ShotDatapoints {
+  timeInShot?: number[];
+  pressure?: number[];
+  temperature?: number[];
+  shotWeight?: number[];
+  weightFlow?: number[];
+  waterPumped?: number[];
+  pumpFlow?: number[];
+  targetPressure?: number[];
+  targetPumpFlow?: number[];
+  [key: string]: number[] | undefined;
+}
+
 export interface ShotData {
   id: string;
   duration: number;
-  datapoints: {
-    timeInShot: number[];
-    pressure: number[];
-    temperature: number[];
-    shotWeight: number[];
-    weightFlow: number[];
-    waterPumped: number[];
-    pumpFlow: number[];
-    targetPressure: number[];
-    targetPumpFlow: number[];
-  };
+  datapoints: ShotDatapoints;
   profile: {
     name: string;
     waterTemperature?: number;
@@ -51,7 +54,7 @@ function sleep(ms: number): Promise<void> {
 
 function unwrapArray<T>(data: T | T[]): T {
   if (Array.isArray(data) && data.length > 0) {
-    return data[0];
+    return data[0] as T;
   }
   return data as T;
 }

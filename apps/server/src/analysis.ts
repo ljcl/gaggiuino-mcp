@@ -21,8 +21,9 @@ export function normalizeValue(value: number, fieldName: string): number {
 }
 
 function getLastNormalized(values: number[], fieldName: string): number {
-  if (values.length === 0) return 0;
-  return normalizeValue(values[values.length - 1], fieldName);
+  const last = values.at(-1);
+  if (last === undefined) return 0;
+  return normalizeValue(last, fieldName);
 }
 
 function getMaxNormalized(values: number[], fieldName: string): number {
@@ -71,8 +72,10 @@ export function extractOutcomeMetrics(shotData: ShotData): OutcomeMetrics {
   // Find time to first drip (weight > 0.5g = 5 in API units)
   let timeToFirstDripSec: number | null = null;
   for (let i = 0; i < shotWeights.length; i += 1) {
-    if (shotWeights[i] > 5 && i < times.length) {
-      timeToFirstDripSec = normalizeValue(times[i], "timeInShot");
+    const weight = shotWeights[i];
+    const time = times[i];
+    if (weight !== undefined && weight > 5 && time !== undefined) {
+      timeToFirstDripSec = normalizeValue(time, "timeInShot");
       break;
     }
   }
@@ -108,19 +111,16 @@ function sampleAtIndex(
   datapoints: ShotData["datapoints"],
   idx: number,
 ): { pressure: number; flow: number; weight: number } {
-  const pressure =
-    idx < datapoints.pressure.length
-      ? normalizeValue(datapoints.pressure[idx], "pressure")
-      : 0;
-  const flow =
-    idx < datapoints.pumpFlow.length
-      ? normalizeValue(datapoints.pumpFlow[idx], "pumpFlow")
-      : 0;
-  const weight =
-    idx < datapoints.shotWeight.length
-      ? normalizeValue(datapoints.shotWeight[idx], "shotWeight")
-      : 0;
-  return { pressure, flow, weight };
+  const rawPressure = datapoints.pressure?.[idx];
+  const rawFlow = datapoints.pumpFlow?.[idx];
+  const rawWeight = datapoints.shotWeight?.[idx];
+  return {
+    pressure:
+      rawPressure !== undefined ? normalizeValue(rawPressure, "pressure") : 0,
+    flow: rawFlow !== undefined ? normalizeValue(rawFlow, "pumpFlow") : 0,
+    weight:
+      rawWeight !== undefined ? normalizeValue(rawWeight, "shotWeight") : 0,
+  };
 }
 
 function extractPhaseSummary(shotData: ShotData): PhaseSummary[] {
@@ -155,16 +155,17 @@ function extractPhaseSummary(shotData: ShotData): PhaseSummary[] {
   boundaries.push([phaseStart, targets.length - 1]);
 
   return boundaries.map(([startIdx, endIdx], i) => {
+    const startTimeRaw = times[startIdx];
+    const endTimeRaw = times[endIdx];
     const startTime =
-      startIdx < times.length
-        ? normalizeValue(times[startIdx], "timeInShot")
+      startTimeRaw !== undefined
+        ? normalizeValue(startTimeRaw, "timeInShot")
         : 0;
     const endTime =
-      endIdx < times.length ? normalizeValue(times[endIdx], "timeInShot") : 0;
+      endTimeRaw !== undefined ? normalizeValue(endTimeRaw, "timeInShot") : 0;
     const midIdx = Math.floor((startIdx + endIdx) / 2);
 
-    const phaseType =
-      i < profilePhases.length ? profilePhases[i].type : "UNKNOWN";
+    const phaseType = profilePhases[i]?.type ?? "UNKNOWN";
 
     return {
       phaseNumber: i + 1,

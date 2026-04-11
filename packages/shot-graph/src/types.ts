@@ -1,13 +1,14 @@
 export interface ShotDatapoints {
-  timeInShot: number[];
-  pressure: number[];
-  temperature: number[];
-  shotWeight: number[];
-  weightFlow: number[];
-  waterPumped: number[];
-  pumpFlow: number[];
-  targetPressure: number[];
-  targetPumpFlow: number[];
+  timeInShot?: number[];
+  pressure?: number[];
+  temperature?: number[];
+  shotWeight?: number[];
+  weightFlow?: number[];
+  waterPumped?: number[];
+  pumpFlow?: number[];
+  targetPressure?: number[];
+  targetPumpFlow?: number[];
+  [key: string]: number[] | undefined;
 }
 
 export interface ShotProfile {

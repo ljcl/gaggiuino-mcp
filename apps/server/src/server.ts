@@ -237,6 +237,9 @@ export async function handleToolCall(
     case "get_dial_in_guidance": {
       const prompts = loadPrompts();
       const prompt = prompts.espresso_shot_analyst;
+      if (!prompt) {
+        throw new Error("Missing prompt: espresso_shot_analyst");
+      }
       const profilesText = getAllProfilesText();
       const userContext = prompt.userContext ?? "";
       return prompt.template
@@ -316,6 +319,9 @@ export function createServer() {
     if (request.params.name === "espresso_shot_analyst") {
       const prompts = loadPrompts();
       const prompt = prompts.espresso_shot_analyst;
+      if (!prompt) {
+        throw new Error("Missing prompt: espresso_shot_analyst");
+      }
       const userContext = prompt.userContext ?? "";
       return {
         messages: [
@@ -361,9 +367,10 @@ export function createServer() {
       };
     }
     const profileMatch = uri.match(/^gaggiuino:\/\/profiles\/(.+)$/);
-    if (profileMatch) {
-      const profile = getProfile(profileMatch[1]);
-      if (!profile) throw new Error(`Profile not found: ${profileMatch[1]}`);
+    const profileId = profileMatch?.[1];
+    if (profileId) {
+      const profile = getProfile(profileId);
+      if (!profile) throw new Error(`Profile not found: ${profileId}`);
       return {
         contents: [
           {

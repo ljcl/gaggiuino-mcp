@@ -42,14 +42,17 @@ function extractPhaseBoundaries(shot: ShotData): number[] {
     const pressureTransition =
       Math.abs((targetPressure[i] ?? 0) - (targetPressure[i - 1] ?? 0)) > 10;
 
-    if ((flowTransition || pressureTransition) && i < timeInShot.length) {
-      raw.push(timeInShot[i] / 10);
+    const time = timeInShot[i];
+    if ((flowTransition || pressureTransition) && time !== undefined) {
+      raw.push(time / 10);
     }
   }
 
   // Deduplicate: keep only the first boundary in each cluster
   const MIN_GAP = 4;
-  return raw.filter((t, idx) => idx === 0 || t - raw[idx - 1] >= MIN_GAP);
+  return raw.filter(
+    (t, idx) => idx === 0 || t - (raw[idx - 1] ?? 0) >= MIN_GAP,
+  );
 }
 
 interface AppContentProps {

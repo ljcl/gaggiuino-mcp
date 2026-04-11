@@ -17,6 +17,6 @@
     "@gaggiuino/tsconfig": "workspace:*",
     "@storybook/react": "^10.3.5",
     "@types/react": "^19.2.11",
-    "typescript": "^5.9.3"
+    "typescript": "6.0.2"
   }
 }

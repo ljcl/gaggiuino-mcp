@@ -7,7 +7,7 @@
     "dev": "bun --watch run src/index.ts",
     "start": "bun run src/index.ts",
     "test": "vitest run",
-
+    "typecheck": "tsc --noEmit",
     "generate-schemas": "bun run scripts/generate-schemas.ts"
   },
   "dependencies": {
@@ -21,7 +21,7 @@
     "@types/bun": "^1.1.0",
     "@vitest/coverage-v8": "4.0.18",
     "msw": "^2.7.0",
-    "typescript": "^5.7.0",
+    "typescript": "6.0.2",
     "vitest": "^4.0.18"
   }
 }
