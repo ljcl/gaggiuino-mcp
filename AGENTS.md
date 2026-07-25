@@ -200,6 +200,25 @@ ecosystem (added in a later phase).
 `*.local.yaml` is excluded from the build context — those files carry personal
 equipment configuration and must never be baked into a published image.
 
+### Verifying the image locally
+
+`docker-compose.yml` uses `network_mode: host`, which works as intended on a
+Linux Docker host but does **not** publish the port to the host on macOS
+(Docker Desktop runs containers in a VM). On a Mac, `curl
+http://localhost:8000/health` fails even when the container is perfectly
+healthy — do not read that as a broken image. Check the container's own view
+instead:
+
+```bash
+docker compose up -d
+docker inspect --format '{{.State.Health.Status}}' gaggiuino-mcp   # -> healthy
+docker exec gaggiuino-mcp /usr/local/bin/bun --eval \
+  'fetch("http://localhost:8000/health").then(r=>console.log(r.status))'
+```
+
+The runner has no shell, so `docker exec ... /bin/sh` fails by design; exec the
+bun binary directly (it is the image's ENTRYPOINT) as above.
+
 ## Storybook
 
 `apps/storybook` renders co-located stories: story files live next to their component in
