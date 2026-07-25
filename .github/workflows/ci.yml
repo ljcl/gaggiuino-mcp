@@ -1,0 +1,147 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 6 * * 3" # weekly audit run, surfaces new advisories between PRs
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup
+
+      # Biome runs outside turbo here (unlike the local `check` task) so its
+      # GitHub reporter's ::error/::warning workflow commands start the line —
+      # turbo's task-name prefix would stop GitHub parsing them. This is what
+      # surfaces diagnostics as inline annotations on the PR diff, including
+      # warn-level rules that never fail the build.
+      - name: Lint
+        run: bun run lint --reporter=github
+
+      - name: Check (PR — affected only)
+        if: github.event_name == 'pull_request'
+        run: |
+          bun run turbo run test typecheck build knip --affected
+          bun run turbo boundaries
+
+      - name: Check (main — full)
+        if: github.event_name == 'push'
+        run: |
+          bun run turbo run test typecheck build knip
+          bun run turbo boundaries
+
+      # Story smoke tests: every Storybook story renders in real headless
+      # Chromium via the Vitest addon. This is the automated UI gate;
+      # runs after the unit-test check, coverage below is unaffected.
+      - name: Get Playwright version
+        id: playwright-version
+        run: echo "version=$(bun --print 'require("./package.json").devDependencies.playwright')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}
+
+      - name: Install Playwright Chromium
+        run: bunx playwright install chromium --with-deps
+
+      # With coverage: the same story smoke tests, plus a measure of which
+      # packages/* source the stories execute in the browser. The
+      # summary row lands in the coverage table below.
+      - name: Story tests
+        run: bun run turbo run test:stories:coverage
+
+      # Coverage is computed on every run and surfaced in the job summary,
+      # so test-depth regressions are visible at review time.
+      - name: Coverage
+        run: bun run turbo run test:coverage
+
+      # Restore the latest main coverage snapshot into coverage-baseline/ so the
+      # summary can annotate each cell with its delta vs main. Best-effort: the
+      # primary key never hits (it is stamped with this run's SHA), so the
+      # restore-keys prefix picks the most recent saved baseline; the first main
+      # run and fork PRs simply get no baseline and the table degrades to
+      # absolute numbers.
+      - name: Restore coverage baseline
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: coverage-baseline
+          key: coverage-baseline-${{ github.sha }}
+          restore-keys: |
+            coverage-baseline-
+
+      - name: Publish coverage summary
+        run: bun run coverage:summary >> "$GITHUB_STEP_SUMMARY"
+
+      # On main, replace the baseline with this run's coverage and persist it so
+      # the next PR diffs against it. Rebuilt from scratch (not the restored
+      # copy) so a package that stops emitting coverage drops out of the baseline
+      # too. Cached with a SHA-stamped key because cache entries are immutable.
+      - name: Stage coverage baseline
+        if: github.event_name == 'push'
+        run: |
+          rm -rf coverage-baseline
+          for f in apps/*/coverage/coverage-summary.json \
+                   packages/*/coverage/coverage-summary.json \
+                   coverage-stories/coverage-summary.json; do
+            [ -f "$f" ] || continue
+            mkdir -p "coverage-baseline/$(dirname "$f")"
+            cp "$f" "coverage-baseline/$f"
+          done
+
+      - name: Save coverage baseline
+        if: github.event_name == 'push'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: coverage-baseline
+          key: coverage-baseline-${{ github.sha }}
+
+      # Informational dead-code readout beside the turbo `knip` gate above (a
+      # green build already means zero issues). Re-runs the analysis with the
+      # JSON reporter; --no-exit-code plus the script's always-zero exit keep it
+      # from ever failing the build.
+      - name: Knip summary
+        if: ${{ !cancelled() }}
+        run: |
+          bun run knip --reporter json --no-exit-code 2>/dev/null \
+            | bun scripts/knip-summary.ts >> "$GITHUB_STEP_SUMMARY" || true
+
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: ./.github/actions/setup
+
+      - name: Audit dependencies (high severity and above)
+        # Advisory on PRs and main pushes: most findings are transitive deps
+        # with no local update path, so a hard gate would block unrelated work.
+        # The weekly scheduled run DOES fail on findings, so new advisories
+        # still surface between PRs (mirrors codeql.yml's cron pattern).
+        continue-on-error: ${{ github.event_name != 'schedule' }}
+        run: |
+          set +e
+          bun audit --audit-level=high > audit.txt 2>&1
+          status=$?
+          cat audit.txt
+          { echo '```'; cat audit.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
