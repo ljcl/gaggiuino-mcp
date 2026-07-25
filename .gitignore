@@ -1,27 +1,52 @@
-__pycache__/
-*.py[cod]
-*$py.class
-.env
-.venv/
-venv/
-.pytest_cache/
-.mypy_cache/
-*.egg-info/
-dist/
-build/
-.coverage
-coverage
-.worktrees/
-
-# Node/Bun
+# Dependencies
 node_modules/
-*.tsbuildinfo
 
-# Turborepo
+# Build output
+dist/
+
+# Turbo
 .turbo
+*.tsbuildinfo
 
 # Storybook
 storybook-static/
 
+# Test coverage
+coverage/
+coverage-stories/
+
+# Git worktrees
+.worktrees/
+
+# Environment variables
+.env
+
 # User local overrides
 *.local.yaml
+
+# Log files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor directories and files
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Cursor IDE files
+.cursor/
+*.mdc
+cursor_rules.json
+
+# Playwright/vitest run artifacts
+test-results/
+
+# Story screenshots (bun run shots) — look-at-it artifacts, never baselines
+story-shots/
+
+# OS files
+.DS_Store
