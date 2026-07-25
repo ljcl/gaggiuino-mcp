@@ -22,7 +22,10 @@ export const claudeTheme: HostThemePreset = {
     "--color-background-tertiary": "#e8e7df",
     "--color-text-primary": "#1a1915",
     "--color-text-secondary": "#4a4940",
-    "--color-text-tertiary": "#7a7968",
+    // Darkened from #7a7968 (4.19:1 on --color-background-primary, below
+    // WCAG AA's 4.5:1 for normal text — found by the axe checks in the story
+    // smoke tests). #737262 keeps the same warm hue at 4.62:1.
+    "--color-text-tertiary": "#737262",
     "--color-border-primary": "rgba(31, 30, 29, 0.35)",
     "--color-border-secondary": "rgba(31, 30, 29, 0.2)",
     "--color-border-tertiary": "rgba(31, 30, 29, 0.1)",

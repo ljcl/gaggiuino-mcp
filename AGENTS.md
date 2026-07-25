@@ -77,6 +77,7 @@ Run this gate before declaring a task complete or opening a PR.
 bun run check              # lint + test + typecheck + build + knip + boundaries (Turborepo)
 bun run check:affected     # same, scoped to packages affected by the diff
 bun run knip               # Dead code / unused export analysis
+bun run test:stories       # Every story renders in headless Chromium (needs Playwright browsers)
 docker compose build       # Server container builds from current sources
 ```
 
@@ -87,6 +88,8 @@ bun install               # Install all deps (workspace-aware)
 bun run build             # Build all packages (via Turborepo)
 bun run build:affected    # Build only packages affected by the diff
 bun run test              # Run all tests (via Turborepo)
+bun run test:stories      # Run every Storybook story as a Vitest browser-mode smoke test
+bun run test:stories:coverage # Same, plus render-path coverage into coverage-stories/
 bun run typecheck         # TS across every workspace package
 bun run typecheck:affected # Typecheck only packages affected by the diff
 bun run lint               # Biome, repo-wide (NOT `turbo run lint` — infinite loop)
@@ -153,9 +156,56 @@ Do NOT change root `lint` to `turbo run lint` (infinite loop).
 
 ## Storybook
 
-`apps/storybook` renders co-located stories from `packages/shot-graph`, `packages/ui`, and
-`packages/design-system`. Only `@storybook/addon-mcp` is registered. There are no story smoke
-tests, no accessibility addon, no autodocs, and no hosted build yet. A later phase adds these.
+`apps/storybook` renders co-located stories: story files live next to their component in
+`packages/shot-graph/src` and `packages/ui/src`, plus standalone docs-style stories in
+`packages/design-system/stories`. `main.ts` registers `@storybook/addon-mcp`,
+`@storybook/addon-vitest`, `@storybook/addon-a11y`, and `@storybook/addon-docs`.
+
+### Story smoke tests
+
+Every story also runs as a Vitest browser-mode smoke test: `bun run test:stories` locally, cached
+as the `//#test:stories` turbo root task (inputs: story/package sources and the Storybook config).
+There is no `.github/` yet, so this does not run in CI — a later phase wires it in. The root
+`vitest.stories.config.ts` (deliberately not `vitest.config.ts` — vitest searches parent
+directories for a config, so a default-named root config would hijack `apps/server`'s bare
+`vitest run`) defines a single `storybook` project via `@storybook/addon-vitest`'s `storybookTest`
+plugin and renders each story in headless Chromium (Playwright). The project's `test.dir` must
+stay at the repo root: the addon pins the project root to `apps/storybook` (configDir's parent)
+but resolves the co-located story globs against `test.dir`, and with the two misaligned no story
+files are found. Needs Playwright browsers (`bunx playwright install chromium --with-deps`).
+Browser resolution: `launchOptions.executablePath` comes from
+`resolveChromiumExecutablePath()` (`scripts/playwright-chromium.ts`), which returns `undefined` —
+a no-op — whenever Playwright's own pinned build is installed (the normal case, local or CI). It
+only resolves a path in sandboxes that ship a *different* pre-installed Chromium and block the
+download (`PLAYWRIGHT_BROWSERS_PATH`/`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` pass through turbo for
+this).
+
+`bun run test:stories:coverage` runs the same smoke tests plus v8 render-path coverage of every
+`packages/*` source the stories execute in the browser, writing `coverage-stories/coverage-summary.json`
+(cached as `//#test:stories:coverage`, gitignored). The `storybookTest` addon pins the project root
+to `apps/storybook`, so `coverage.allowExternal: true` in `vitest.stories.config.ts` is
+load-bearing — without it every `packages/*` file is "external" and the report is empty. Plain
+`bun run test:stories` stays coverage-free for fast local runs.
+
+Each story also runs a per-story accessibility check via `addon-a11y`'s Vitest integration (axe-core),
+visible in Storybook's Accessibility panel and in each test's reporting output. The default
+`a11y.test: "todo"` parameter means a violation is recorded, not asserted — `bun run test:stories`
+does not currently fail on an accessibility defect. Treat the panel as a review aid today; a
+stricter `test: "error"` gate is a candidate for a later phase.
+
+There is intentionally **no pixel-level visual-regression gate**.
+
+### Autodocs
+
+`@storybook/addon-docs` generates a **Docs** page for every component from its stories, JSDoc, and
+react-docgen prop table, enabled with the `autodocs` tag applied project-wide.
+
+Placement is load-bearing: the tag must be a literal named export in the project's own
+`apps/storybook/.storybook/preview.tsx` (`export const tags = ["autodocs"]`) — Storybook merges
+named preview exports with the default `definePreview(...)` export, but the docs indexer only
+picks up project tags declared there, not tags nested inside the `definePreview` call itself. The
+addon is registered in both `main.ts` (manager UI) and the `definePreview` `addons` array (docs
+rendering), mirroring how `addon-a11y` is wired.
 
 ## Testing the MCP endpoint
 
