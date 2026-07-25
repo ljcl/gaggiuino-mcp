@@ -3,7 +3,7 @@
  * Values are raw integers scaled by 10 (e.g., pressure 91 = 9.1 bar),
  * matching the Gaggiuino API format.
  */
-import type { ShotData } from "../types";
+import { type ShotData } from "../types";
 
 /** Helper to generate a range of time values (in 10ths of seconds) */
 function timeRange(count: number, interval: number): number[] {

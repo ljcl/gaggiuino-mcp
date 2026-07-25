@@ -1,5 +1,5 @@
+import { type ReactNode } from "react";
 import styles from "./Tooltip.module.css";
-import type { ReactNode } from "react";
 
 interface TooltipProps {
   timestamp?: string;

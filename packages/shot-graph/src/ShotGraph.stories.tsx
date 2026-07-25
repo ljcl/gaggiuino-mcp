@@ -1,3 +1,4 @@
+import { type Meta, type StoryObj } from "@storybook/react";
 import { useState } from "react";
 import { fn } from "storybook/test";
 import {
@@ -7,7 +8,6 @@ import {
 } from "./__fixtures__/chart-data";
 import { extractAnnotations, extractMeta, toChartData } from "./normalize";
 import { ShotGraph } from "./ShotGraph";
-import type { Meta, StoryObj } from "@storybook/react";
 
 const meta: Meta<typeof ShotGraph> = {
   component: ShotGraph,

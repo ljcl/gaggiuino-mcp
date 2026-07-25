@@ -1,5 +1,5 @@
 import styles from "./ShotHeader.module.css";
-import type { ShotMeta } from "./types";
+import { type ShotMeta } from "./types";
 
 function MetaSummary({ meta }: { meta: ShotMeta }) {
   return (

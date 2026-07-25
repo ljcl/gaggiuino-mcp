@@ -1,4 +1,4 @@
-import type { ShotData } from "./client";
+import { type ShotData } from "./client";
 
 export const SCALE_BY_10 = new Set([
   "pressure",
