@@ -74,8 +74,9 @@ Gaggiuino API returns values scaled by 10 (e.g., pressure 91 = 9.1 bar). The `no
 Run this gate before declaring a task complete or opening a PR.
 
 ```bash
-bun run check              # lint + test + typecheck + build + boundaries (Turborepo)
+bun run check              # lint + test + typecheck + build + knip + boundaries (Turborepo)
 bun run check:affected     # same, scoped to packages affected by the diff
+bun run knip               # Dead code / unused export analysis
 docker compose build       # Server container builds from current sources
 ```
 
@@ -126,6 +127,9 @@ build artifact (the single-file HTML bundle via Vite). The server has no build
 step.
 
 Biome runs as a root task (`//#lint`) — fast enough not to need decomposing.
+Knip runs as a root task (`//#knip`) too: it is a whole-graph dead-code
+analyzer, not something that decomposes per-package. There is no `.github/`
+in this repo yet, so CI does not run knip. That lands in a later phase.
 
 Storybook uses co-located stories: story files in `packages/` are excluded from
 the root `build` inputs (`!**/*.stories.{ts,tsx,mdx}`) so story edits do not

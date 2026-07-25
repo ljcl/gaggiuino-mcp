@@ -17,14 +17,16 @@
     "lint:fix": "biome check --write .",
     "dev": "turbo run dev",
     "boundaries": "turbo boundaries",
-    "check": "turbo run lint test typecheck build && turbo boundaries",
-    "check:affected": "turbo run lint test typecheck build --affected && turbo boundaries",
+    "check": "turbo run lint test typecheck build knip && turbo boundaries",
+    "check:affected": "turbo run lint test typecheck build knip --affected && turbo boundaries",
+    "knip": "knip",
+    "knip:summary": "knip --reporter json --no-exit-code | bun scripts/knip-summary.ts",
     "storybook": "turbo run storybook --filter=@gaggiuino/storybook",
     "build-storybook": "turbo run build:storybook --filter=@gaggiuino/storybook"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.4",
-    "knip": "6.3.1",
+    "knip": "6.27.0",
     "turbo": "2.10.5"
   }
 }
