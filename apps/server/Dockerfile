@@ -10,7 +10,7 @@ COPY . .
 RUN turbo prune @gaggiuino/server --docker
 
 # 2) Build: install full deps (dev + prod) then run turbo build.
-#    Because server depends on gaggiuino-shot-graph, turbo ^build runs
+#    Because server depends on @gaggiuino/shot-graph, turbo ^build runs
 #    shot-graph's vite build first, producing packages/shot-graph/dist/app.html.
 FROM base AS builder
 COPY --from=pruner /app/out/json/ ./
