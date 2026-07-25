@@ -11,8 +11,8 @@
     "generate-schemas": "bun run scripts/generate-schemas.ts"
   },
   "dependencies": {
+    "@gaggiuino/shot-graph": "workspace:*",
     "@modelcontextprotocol/sdk": "1.29.0",
-    "gaggiuino-shot-graph": "workspace:*",
     "yaml": "2.8.3",
     "zod": "4.3.6"
   },

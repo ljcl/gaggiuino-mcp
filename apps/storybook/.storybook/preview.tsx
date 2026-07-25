@@ -4,7 +4,7 @@ import {
 } from "@gaggiuino/design-system/host-themes";
 import { definePreview } from "@storybook/react-vite";
 import "@gaggiuino/design-system/tokens.css";
-import "gaggiuino-shot-graph/global.css";
+import "@gaggiuino/shot-graph/global.css";
 
 /** Collect every CSS variable key used across all theme presets */
 const ALL_HOST_KEYS = new Set(

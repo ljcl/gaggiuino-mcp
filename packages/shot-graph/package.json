@@ -1,5 +1,5 @@
 {
-  "name": "gaggiuino-shot-graph",
+  "name": "@gaggiuino/shot-graph",
   "version": "1.0.0",
   "private": true,
   "type": "module",
