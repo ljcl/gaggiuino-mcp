@@ -131,6 +131,15 @@ Knip runs as a root task (`//#knip`) too: it is a whole-graph dead-code
 analyzer, not something that decomposes per-package. There is no `.github/`
 in this repo yet, so CI does not run knip. That lands in a later phase.
 
+The `react`, `test`, and `turborepo` lint domains are active and were verified
+firing (`useJsxKeyInIterable`, `noFocusedTests`, `noUndeclaredEnvVars`).
+`nursery.preset` is set to `recommended` but grants **no** rules under Biome
+2.5.4 — a nursery rule such as `noImpliedEval` stays silent under the project
+config and only fires via `--only`. Nursery rules appear to be opt-in by name
+regardless of preset, which is reasonable for unstable rules. The key is kept
+for forward compatibility, but do not read it as nursery coverage: there is
+none. Enable a specific nursery rule by naming it explicitly if you want it.
+
 Storybook uses co-located stories: story files in `packages/` are excluded from
 the root `build` inputs (`!**/*.stories.{ts,tsx,mdx}`) so story edits do not
 bust unrelated build caches.
