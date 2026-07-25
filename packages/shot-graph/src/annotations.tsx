@@ -1,5 +1,5 @@
 import { ReferenceDot, ReferenceLine } from "recharts";
-import type { Annotation } from "./types";
+import { type Annotation } from "./types";
 
 interface AnnotationPair {
   primary: Annotation;

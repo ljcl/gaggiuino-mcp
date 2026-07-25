@@ -17,7 +17,7 @@ import { ChartTooltip } from "./ChartTooltip";
 import { COLORS, formatTime } from "./constants";
 import styles from "./ShotGraph.module.css";
 import { ShotHeader } from "./ShotHeader";
-import type { Annotation, ChartDataPoint, ShotMeta } from "./types";
+import { type Annotation, type ChartDataPoint, type ShotMeta } from "./types";
 
 interface ShotGraphProps {
   data: ChartDataPoint[];

@@ -1,5 +1,5 @@
+import { type ReactNode } from "react";
 import styles from "./Legend.module.css";
-import type { ReactNode } from "react";
 
 interface LegendProps {
   children: ReactNode;

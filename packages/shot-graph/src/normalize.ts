@@ -1,9 +1,9 @@
-import type {
-  Annotation,
-  ChartDataPoint,
-  ShotData,
-  ShotDatapoints,
-  ShotMeta,
+import {
+  type Annotation,
+  type ChartDataPoint,
+  type ShotData,
+  type ShotDatapoints,
+  type ShotMeta,
 } from "./types";
 
 const SCALE = 10;

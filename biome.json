@@ -1,9 +1,10 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.4.11/schema.json",
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
-    "useIgnoreFile": true
+    "useIgnoreFile": true,
+    "defaultBranch": "main"
   },
   "files": {
     "ignoreUnknown": false,
@@ -12,8 +13,7 @@
       "!**/node_modules",
       "!**/dist",
       "!bun.lock",
-      "!.vscode",
-      "!.zed",
+      "!.turbo",
       "!**/*.schema.json"
     ]
   },
@@ -25,27 +25,63 @@
   },
   "linter": {
     "enabled": true,
+    "domains": {
+      "react": "recommended",
+      "test": "recommended",
+      "turborepo": "recommended"
+    },
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
+      "suspicious": {
+        "preset": "recommended",
+        "noExplicitAny": "warn"
+      },
       "correctness": {
+        "preset": "recommended",
         "useExhaustiveDependencies": "warn",
-        "noUnusedImports": "error"
+        "noUnusedImports": {
+          "level": "error",
+          "fix": "safe"
+        }
       },
       "style": {
+        "preset": "recommended",
         "noNonNullAssertion": "off",
-        "useImportType": "error"
+        "useImportType": {
+          "level": "error",
+          "options": {
+            "style": "inlineType"
+          }
+        }
       },
-      "suspicious": {
-        "noExplicitAny": "warn"
+      "nursery": {
+        "preset": "recommended"
       }
     }
   },
-
+  "javascript": {
+    "formatter": {
+      "enabled": true,
+      "quoteStyle": "double"
+    }
+  },
+  "json": {
+    "formatter": {
+      "enabled": true,
+      "trailingCommas": "none",
+      "indentWidth": 2
+    }
+  },
+  "css": {
+    "formatter": {
+      "enabled": true
+    }
+  },
   "assist": {
     "enabled": true,
     "actions": {
       "source": {
-        "recommended": true,
+        "preset": "recommended",
         "organizeImports": {
           "level": "on",
           "options": {
@@ -58,17 +94,6 @@
         },
         "useSortedProperties": "on"
       }
-    }
-  },
-  "javascript": {
-    "formatter": {
-      "quoteStyle": "double"
-    }
-  },
-  "json": {
-    "formatter": {
-      "trailingCommas": "none",
-      "indentWidth": 2
     }
   }
 }

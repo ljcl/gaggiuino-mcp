@@ -1,5 +1,10 @@
 import { Skeleton } from "@gaggiuino/ui";
+import {
+  type App as McpApp,
+  type McpUiHostContext,
+} from "@modelcontextprotocol/ext-apps";
 import { useApp, useHostStyles } from "@modelcontextprotocol/ext-apps/react";
+import { type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   StrictMode,
   useCallback,
@@ -10,12 +15,7 @@ import {
 import { createRoot } from "react-dom/client";
 import { extractAnnotations, extractMeta, toChartData } from "./normalize";
 import { ShotGraph } from "./ShotGraph";
-import type {
-  App as McpApp,
-  McpUiHostContext,
-} from "@modelcontextprotocol/ext-apps";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import type { ShotData } from "./types";
+import { type ShotData } from "./types";
 import "./global.css";
 
 interface ToolArgs {

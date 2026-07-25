@@ -1,5 +1,5 @@
 import { HOST_THEMES } from "@gaggiuino/design-system/host-themes";
-import type { Meta, StoryObj } from "@storybook/react";
+import { type Meta, type StoryObj } from "@storybook/react";
 import "../src/tokens.css";
 
 const colorVars = [
