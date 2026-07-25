@@ -25,6 +25,11 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      # Required on PRIVATE repos: the analyze step reads workflow-run metadata
+      # when uploading SARIF, and fails with "Resource not accessible by
+      # integration" without it. Public repos get this implicitly, which is why
+      # the equivalent workflow in a public sibling repo does not need it.
+      actions: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 

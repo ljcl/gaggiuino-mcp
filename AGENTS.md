@@ -80,6 +80,15 @@ Plain `bun run test` no longer computes coverage — it is opt-in via `bun run t
 threshold numbers upward as coverage improves — that is the ratchet working, not drift. If a run
 dirties `vitest.config.ts`, commit the new numbers; never hand-edit them.
 
+**One exception, and it will bite you.** Only commit ratcheted numbers measured on a **clean
+checkout**. `loader.ts`'s `*.local.yaml` override-merge branches execute only when those files
+exist on disk, and they are gitignored — so a dev machine with a local override reports roughly
+two points higher than CI can ever reach. Committing those numbers turns `autoUpdate` into a
+foot-gun: the thresholds rise above what a clean checkout achieves and every subsequent CI run
+fails on `main`. This happened once already (the first CI run on this repo). If you have any
+`apps/server/src/data/*.local.yaml`, either move it aside before running `test:coverage`, or take
+the numbers from CI rather than locally.
+
 `packages/ui`, `packages/design-system`, and `packages/shot-graph` are **intentionally
 unthresholded**. Their coverage is the story render path measured by `bun run
 test:stories:coverage` (see Storybook below), not per-package unit coverage. Do not "fix" this by
