@@ -14,6 +14,7 @@ Remote MCP server for integrating a Gaggiuino espresso machine with AI tools.
 - `apps/server/` - MCP server (tools, prompts, resources, client)
 - `apps/storybook/` - Standalone Storybook app, serves stories from all packages
 - `packages/shot-graph/` - React + Recharts MCP App for interactive shot graphs
+- `packages/ui/` - Shared presentational React components (Legend, Skeleton, Tooltip)
 - `packages/design-system/` - Shared design tokens, components, and host theme presets
 - `packages/vite-config/` - Shared Vite config helpers for MCP Apps
 - `packages/tsconfig/` - Shared TypeScript configurations
