@@ -18,7 +18,7 @@ Remote MCP server for integrating a Gaggiuino espresso machine with AI tools.
 - `packages/design-system/` - Shared design tokens, components, and host theme presets
 - `packages/vite-config/` - Shared Vite config helpers for MCP Apps
 - `packages/tsconfig/` - Shared TypeScript configurations
-- `apps/server/src/data/profiles/` - YAML profile documentation (not machine profiles)
+- `apps/server/src/data/profiles.yaml` - YAML profile documentation (not machine profiles)
 - `apps/server/src/data/prompts.yaml` - System prompt for espresso dial-in guidance
 - `apps/server/src/data/*.example-local.yaml` - Templates for user-specific overrides (copy to `*.local.yaml`)
 - `docs/plans/` - Design docs and implementation plans
@@ -35,7 +35,8 @@ via symlinks in `.claude/skills/`. Externally-sourced skills are tracked in `ski
 - `backlog-sweep` — locally-authored procedure for re-verifying open GitHub issues against the
   current code and fixing drift. Run it after an epic, breaking change, or wide refactor merges.
 - `bun` — Bun runtime, package manager, test runner, and bundler usage (well-known source).
-- `github-actions-docs` — docs-grounded help for the workflows under `.github/` (GitHub source).
+- `github-actions-docs` — docs-grounded help for authoring GitHub Actions workflows (GitHub
+  source). This repo has no `.github/` yet; a later phase adds CI and release workflows.
 
 ## MCP Tools
 
