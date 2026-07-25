@@ -3,7 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "echo 'server ready'",
     "dev": "bun --watch run src/index.ts",
     "start": "bun run src/index.ts",
     "test": "vitest run",
