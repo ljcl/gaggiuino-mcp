@@ -180,6 +180,45 @@ mcp-apps cannot cross-import, `design-system` sits at the bottom. There is no
 
 Do NOT change root `lint` to `turbo run lint` (infinite loop).
 
+## Docker
+
+Built via `turbo prune @gaggiuino/server --docker`. The build stage uses
+`--filter=@gaggiuino/server^...` to build only the server's workspace
+dependencies (the shot-graph MCP App), excluding the server itself since it is
+JIT. The runner is distroless and runs as UID 65534 with no shell.
+
+The server resolves the MCP App at runtime via
+`createRequire(...).resolve("@gaggiuino/shot-graph/app.html")`, so the package
+must declare an `./app.html` export and a `dist/` build output, and the runner
+stage must `COPY` that `dist/` explicitly.
+
+The turbo version installed in the toolchain stage is read from root
+`package.json`, so a Dependabot turbo bump cannot drift from the image. The Bun
+base image version is pinned separately and is watched by Dependabot's docker
+ecosystem (added in a later phase).
+
+`*.local.yaml` is excluded from the build context — those files carry personal
+equipment configuration and must never be baked into a published image.
+
+### Verifying the image locally
+
+`docker-compose.yml` uses `network_mode: host`, which works as intended on a
+Linux Docker host but does **not** publish the port to the host on macOS
+(Docker Desktop runs containers in a VM). On a Mac, `curl
+http://localhost:8000/health` fails even when the container is perfectly
+healthy — do not read that as a broken image. Check the container's own view
+instead:
+
+```bash
+docker compose up -d
+docker inspect --format '{{.State.Health.Status}}' gaggiuino-mcp   # -> healthy
+docker exec gaggiuino-mcp /usr/local/bin/bun --eval \
+  'fetch("http://localhost:8000/health").then(r=>console.log(r.status))'
+```
+
+The runner has no shell, so `docker exec ... /bin/sh` fails by design; exec the
+bun binary directly (it is the image's ENTRYPOINT) as above.
+
 ## Storybook
 
 `apps/storybook` renders co-located stories: story files live next to their component in
