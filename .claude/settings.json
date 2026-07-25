@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @biomejs/biome format --write \"$CLAUDE_PROJECT_DIR\""
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,8 +1,16 @@
 {
   "mcpServers": {
     "storybook": {
-      "url": "http://localhost:6006/mcp",
-      "type": "http"
+      "type": "http",
+      "url": "http://localhost:6006/mcp"
+    },
+    "github-projects": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer ${GH_MCP_PAT}",
+        "X-MCP-Toolsets": "projects,issues"
+      }
     }
   }
 }
