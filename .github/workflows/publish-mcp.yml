@@ -1,0 +1,87 @@
+name: Publish MCP Registry
+
+# Publishes server.json to the MCP registry on the same v* tag push that makes
+# docker.yml build and ship ghcr.io/ljcl/gaggiuino-mcp. The registry proves
+# ownership of OCI packages by pulling the image and checking its
+# io.modelcontextprotocol.server.name label (set in apps/server/Dockerfile), so
+# this job waits for the multi-arch manifest to appear on GHCR before
+# publishing. Auth is GitHub OIDC (io.github.ljcl namespace) — no long-lived
+# registry token secret.
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY_IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # OIDC token for mcp-publisher login github-oidc
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Stamp version and image tag into server.json
+        # release-please keeps $.version current in-repo, but the OCI
+        # identifier embeds the image tag, which release-please's json updater
+        # cannot template — so both are derived from the pushed tag here.
+        run: |
+          version="${GITHUB_REF#refs/tags/v}"
+          jq --arg v "$version" --arg image "$REGISTRY_IMAGE" '
+            .version = $v
+            | .packages[0].identifier = $image + ":" + $v
+          ' server.json > server.json.tmp
+          mv server.json.tmp server.json
+          jq . server.json
+
+      - name: Wait for the GHCR image
+        # docker.yml builds both arches and pushes the manifest on this same
+        # tag push; registry validation fails until that manifest exists.
+        run: |
+          version="${GITHUB_REF#refs/tags/v}"
+          for attempt in $(seq 1 40); do
+            if docker manifest inspect "$REGISTRY_IMAGE:$version" >/dev/null 2>&1; then
+              echo "$REGISTRY_IMAGE:$version is available."
+              exit 0
+            fi
+            echo "$REGISTRY_IMAGE:$version not available yet (attempt $attempt/40); retrying in 30s..."
+            sleep 30
+          done
+          echo "Timed out waiting for $REGISTRY_IMAGE:$version — did the Docker workflow fail?" >&2
+          exit 1
+
+      - name: Install mcp-publisher
+        # Deliberately unpinned: the registry rejects stale publisher binaries
+        # outright ("invalid audience"), so latest is the supported version.
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+
+      - name: Log in to the MCP registry (GitHub OIDC)
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish
+        run: ./mcp-publisher publish
+
+      # Record what was published in the run summary. server.json was stamped
+      # with the tag's version and image identifier earlier in this job.
+      - name: Publish summary
+        if: success()
+        run: |
+          {
+            echo "## MCP registry"
+            echo ""
+            echo "Published \`$(jq -r '.name' server.json)\` version \`$(jq -r '.version' server.json)\`."
+            echo ""
+            echo "- Package: \`$(jq -r '.packages[0].identifier' server.json)\`"
+          } >> "$GITHUB_STEP_SUMMARY"

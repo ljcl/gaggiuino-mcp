@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "include-component-in-tag": false,
+  "exclude-paths": ["docs", ".agents", ".claude"],
+  "pull-request-header": ":robot: Release PR. Merging it pushes the version tag, which publishes the ghcr.io Docker image and the MCP registry entry.",
+  "pull-request-footer": "Squash-merge with the title above unchanged — the title becomes the release commit. To ship a different version, do not edit this PR; land an empty commit on main with a `Release-As: x.y.z` footer and this PR will retarget.",
+  "packages": {
+    ".": {
+      "extra-files": [
+        { "type": "json", "path": "server.json", "jsonpath": "$.version" }
+      ]
+    }
+  }
+}

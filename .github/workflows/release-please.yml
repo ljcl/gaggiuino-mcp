@@ -1,0 +1,31 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+  # Manual re-run for when a push run failed transiently or a release needs
+  # forcing (e.g. after fixing a mislabeled squash title with a Release-As
+  # commit) without pushing an empty commit to main.
+  workflow_dispatch:
+
+# Serialize runs: release-please mutates the release PR and tags, so two runs
+# from rapid main pushes must queue rather than race (never cancel a run that
+# may be mid-tag-push).
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_PAT }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
