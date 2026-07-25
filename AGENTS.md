@@ -69,6 +69,28 @@ Gaggiuino API returns values scaled by 10 (e.g., pressure 91 = 9.1 bar). The `no
 - `SCALE_BY_10`: pressure, pumpFlow, targetPressure, targetPumpFlow, weightFlow, temperature, shotWeight
 - Time is in 10ths of seconds (350 = 35.0s)
 
+## Test coverage
+
+Plain `bun run test` no longer computes coverage — it is opt-in via `bun run test:coverage`
+(`turbo run test:coverage`), which writes each package's `coverage/coverage-summary.json`.
+
+`apps/server` is the only package with a coverage threshold, defined in `apps/server/vitest.config.ts`
+(`coverage.thresholds`, `autoUpdate: true`). Each `bun run test:coverage` run can rewrite those
+threshold numbers upward as coverage improves — that is the ratchet working, not drift. If a run
+dirties `vitest.config.ts`, commit the new numbers; never hand-edit them.
+
+`packages/ui`, `packages/design-system`, and `packages/shot-graph` are **intentionally
+unthresholded**. Their coverage is the story render path measured by `bun run
+test:stories:coverage` (see Storybook below), not per-package unit coverage. Do not "fix" this by
+adding empty test files just to get a `coverage/` directory — there is nothing to threshold there.
+
+`bun run coverage:summary` (`scripts/coverage-summary.ts`) globs every `apps/*/coverage/coverage-summary.json`
+and `packages/*/coverage/coverage-summary.json`, plus `coverage-stories/coverage-summary.json` when
+present, into one markdown table. Packages without a report (no tests, or coverage not run) are
+simply absent from the table. It also diffs against a `coverage-baseline/` directory when one
+exists, for a future CI job to show deltas vs `main` — there is no `.github/` in this repo yet, so
+nothing runs this automatically today.
+
 ## Verification sweep
 
 Run this gate before declaring a task complete or opening a PR.
@@ -88,6 +110,8 @@ bun install               # Install all deps (workspace-aware)
 bun run build             # Build all packages (via Turborepo)
 bun run build:affected    # Build only packages affected by the diff
 bun run test              # Run all tests (via Turborepo)
+bun run test:coverage     # Run tests with coverage (apps/server only has thresholds)
+bun run coverage:summary  # Aggregate coverage-summary.json reports into a markdown table
 bun run test:stories      # Run every Storybook story as a Vitest browser-mode smoke test
 bun run test:stories:coverage # Same, plus render-path coverage into coverage-stories/
 bun run typecheck         # TS across every workspace package

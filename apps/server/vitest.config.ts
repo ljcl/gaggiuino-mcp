@@ -6,7 +6,8 @@ export default defineConfig({
     include: ["src/**/*.test.ts"],
     setupFiles: ["./src/test-setup.ts"],
     coverage: {
-      enabled: true,
+      enabled: false,
+      reporter: ["text", "json-summary"],
       thresholds: {
         autoUpdate: true,
         branches: 67,
