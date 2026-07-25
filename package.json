@@ -26,7 +26,8 @@
     "knip": "knip",
     "knip:summary": "knip --reporter json --no-exit-code | bun scripts/knip-summary.ts",
     "storybook": "turbo run storybook --filter=@gaggiuino/storybook",
-    "build-storybook": "turbo run build:storybook --filter=@gaggiuino/storybook"
+    "build-storybook": "turbo run build:storybook --filter=@gaggiuino/storybook",
+    "shots": "bun scripts/story-shots.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.4",

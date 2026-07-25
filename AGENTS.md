@@ -124,6 +124,8 @@ bun run check:affected     # same, scoped to packages affected by the diff
 bun run dev                # Dev mode (via Turborepo)
 bun run storybook          # Storybook on port 6006 (via Turborepo)
 bun run build-storybook    # Static Storybook build to apps/storybook/storybook-static/
+bun run shots --list       # List story ids
+bun run shots <id>...      # Screenshot stories to PNGs under gitignored story-shots/
 
 # Server only
 cd apps/server
@@ -218,6 +220,20 @@ does not currently fail on an accessibility defect. Treat the panel as a review 
 stricter `test: "error"` gate is a candidate for a later phase.
 
 There is intentionally **no pixel-level visual-regression gate**.
+
+### Story screenshots
+
+`bun run shots --list` prints every story id; `bun run shots <id>...` renders one or more to PNGs
+under the gitignored `story-shots/` directory (`scripts/story-shots.ts`). It builds (or reuses) a
+static Storybook and drives headless Chromium via Playwright, sharing the same
+`resolveChromiumExecutablePath()` fallback as the story smoke tests. Useful flags: `--width`/`--height`,
+`--dark`, `--hover <selector>` (with `--hover-at x,y`), `--globals`, and `--url` to shoot a running
+`bun run storybook` dev server instead of the static build.
+
+These are **look-at-it artifacts for visual review, never committed baselines** — there is
+deliberately no pixel-level visual-regression gate (see above), so nothing diffs these PNGs against
+a prior run. They exist so a human or an agent without a reachable browser tab can see what a story
+actually renders.
 
 ### Autodocs
 
