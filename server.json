@@ -1,0 +1,42 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.ljcl/gaggiuino-mcp",
+  "description": "Remote MCP server for your Gaggiuino espresso machine's shots and profiles",
+  "repository": {
+    "url": "https://github.com/ljcl/gaggiuino-mcp",
+    "source": "github"
+  },
+  "version": "1.0.0",
+  "websiteUrl": "https://github.com/ljcl/gaggiuino-mcp#readme",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/ljcl/gaggiuino-mcp:1.0.0",
+      "runtimeHint": "docker",
+      "transport": {
+        "type": "streamable-http",
+        "url": "http://localhost:8000/mcp"
+      },
+      "environmentVariables": [
+        {
+          "name": "GAGGIUINO_URL",
+          "description": "Gaggiuino machine URL (default http://gaggiuino.local)",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "PORT",
+          "description": "Server port (default 8000)",
+          "isRequired": false,
+          "format": "number"
+        },
+        {
+          "name": "HOST",
+          "description": "Bind address (default 0.0.0.0)",
+          "isRequired": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

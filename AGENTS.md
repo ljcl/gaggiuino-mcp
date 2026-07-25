@@ -373,6 +373,40 @@ database id `24741338`.
 
 ## Releases
 
-No release automation exists yet: no `server.json`, no published Docker image, no
-release-please. Versioning is manual (`package.json` version fields). A later phase adds
-release-please, an MCP registry `server.json`, and a Docker publish workflow.
+Releases are automated by release-please (`.github/workflows/release-please.yml`).
+
+- PRs are squash-merged, so the **PR title becomes the only commit on `main`**. The PR
+  title therefore must be a Conventional Commit, or release-please sees no releasable
+  change and silently skips (the run still reports success). The `pr-title.yml` workflow
+  enforces this on every PR, and the repo squash setting is pinned to `PR_TITLE` so the
+  title is always what lands. Branch commits can be messy; only the PR title matters.
+- Use Conventional Commits: `fix:` gives a patch bump, `feat:` a minor bump,
+  `feat!:` or a `BREAKING CHANGE:` footer a major bump. `chore:`, `docs:`, `refactor:`,
+  and `ci:` are valid titles but produce no release.
+- release-please opens a `chore: release X.Y.Z` PR that bumps root `package.json`,
+  the top-level `server.json` version, and `CHANGELOG.md`. (The OCI package tag inside
+  `server.json` is NOT templated — `publish-mcp.yml` stamps it from the git tag at
+  publish time, since release-please's json updater cannot rewrite part of a string.)
+- Merging that PR pushes the `vX.Y.Z` tag (via the `RELEASE_PLEASE_PAT` secret), which
+  triggers `docker.yml` to publish `ghcr.io/ljcl/gaggiuino-mcp:X.Y.Z` and `:X.Y`, and
+  `publish-mcp.yml` to publish `server.json` to the MCP registry via GitHub OIDC.
+  The registry proves image ownership by pulling the GHCR image and checking its
+  `io.modelcontextprotocol.server.name` label (set in `apps/server/Dockerfile`, must
+  match `name` in `server.json`); `publish-mcp.yml` therefore polls GHCR until
+  `docker.yml`'s manifest exists before publishing.
+- Manual `git tag vX.Y.Z` still works as a fallback; both `docker.yml` and
+  `publish-mcp.yml` trigger on `v*` tags regardless of how they are created.
+- Commits that only touch `docs/`, `.agents/`, or `.claude/` are excluded from release
+  parsing (`exclude-paths` in `release-please-config.json`), so a mislabeled `fix:` on a
+  planning doc cannot cut an empty release. A commit touching excluded and non-excluded
+  paths still counts.
+- Dependabot uses `fix(deps):` for production npm deps and Docker base images (they ship
+  inside the published image, so a bump must cut a patch release to reach users) and
+  `chore(deps)`/`chore(ci)` for dev tooling and GitHub Actions (no shipped artifact, no
+  release). The npm groups are split by dependency-type so one grouped PR never mixes
+  the two prefixes.
+- To force a specific version, land an empty commit on `main` with a `Release-As` footer
+  (`git commit --allow-empty -m "chore: force release" -m "Release-As: X.Y.Z"`); the
+  release PR retargets on the next run. `release-please.yml` also has a
+  `workflow_dispatch` trigger for re-running after a transient failure or a Release-As
+  commit without pushing anything.
