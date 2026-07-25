@@ -1,0 +1,41 @@
+name: PR Title
+
+# Squash-merge uses the PR title as the commit subject on main, and
+# release-please only bumps versions for Conventional Commit subjects.
+# This gate keeps PR titles parseable so releases are not silently skipped.
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize]
+
+permissions:
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Keep in sync with release-please: types that produce no release
+          # (chore, docs, refactor, ci) are still allowed as valid titles.
+          types: |
+            feat
+            fix
+            chore
+            docs
+            refactor
+            ci
+            perf
+            test
+            build
+            style
+            revert
+          requireScope: false

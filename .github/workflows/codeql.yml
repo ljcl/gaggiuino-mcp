@@ -1,0 +1,43 @@
+name: CodeQL
+
+# Static analysis for the TypeScript workspace. Alerts land in the Security
+# tab; this is a signal, not a merge gate.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "41 7 * * 4" # weekly, catches new queries against unchanged code
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+      # Required on PRIVATE repos: the analyze step reads workflow-run metadata
+      # when uploading SARIF, and fails with "Resource not accessible by
+      # integration" without it. Public repos get this implicitly, which is why
+      # the equivalent workflow in a public sibling repo does not need it.
+      actions: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: github/codeql-action/init@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+        with:
+          languages: javascript-typescript
+          build-mode: none
+
+      - uses: github/codeql-action/analyze@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+        with:
+          category: "/language:javascript-typescript"

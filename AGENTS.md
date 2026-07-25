@@ -36,7 +36,8 @@ via symlinks in `.claude/skills/`. Externally-sourced skills are tracked in `ski
   current code and fixing drift. Run it after an epic, breaking change, or wide refactor merges.
 - `bun` — Bun runtime, package manager, test runner, and bundler usage (well-known source).
 - `github-actions-docs` — docs-grounded help for authoring GitHub Actions workflows (GitHub
-  source). This repo has no `.github/` yet; a later phase adds CI and release workflows.
+  source). `.github/workflows/ci.yml` runs CI on every PR and main push; release and
+  publish workflows are still a later phase.
 
 ## MCP Tools
 
@@ -79,6 +80,15 @@ Plain `bun run test` no longer computes coverage — it is opt-in via `bun run t
 threshold numbers upward as coverage improves — that is the ratchet working, not drift. If a run
 dirties `vitest.config.ts`, commit the new numbers; never hand-edit them.
 
+**One exception, and it will bite you.** Only commit ratcheted numbers measured on a **clean
+checkout**. `loader.ts`'s `*.local.yaml` override-merge branches execute only when those files
+exist on disk, and they are gitignored — so a dev machine with a local override reports roughly
+two points higher than CI can ever reach. Committing those numbers turns `autoUpdate` into a
+foot-gun: the thresholds rise above what a clean checkout achieves and every subsequent CI run
+fails on `main`. This happened once already (the first CI run on this repo). If you have any
+`apps/server/src/data/*.local.yaml`, either move it aside before running `test:coverage`, or take
+the numbers from CI rather than locally.
+
 `packages/ui`, `packages/design-system`, and `packages/shot-graph` are **intentionally
 unthresholded**. Their coverage is the story render path measured by `bun run
 test:stories:coverage` (see Storybook below), not per-package unit coverage. Do not "fix" this by
@@ -88,8 +98,8 @@ adding empty test files just to get a `coverage/` directory — there is nothing
 and `packages/*/coverage/coverage-summary.json`, plus `coverage-stories/coverage-summary.json` when
 present, into one markdown table. Packages without a report (no tests, or coverage not run) are
 simply absent from the table. It also diffs against a `coverage-baseline/` directory when one
-exists, for a future CI job to show deltas vs `main` — there is no `.github/` in this repo yet, so
-nothing runs this automatically today.
+exists. `.github/workflows/ci.yml`'s `check` job restores that baseline from cache before calling
+this script and re-saves it after main pushes, so PR job summaries show deltas vs `main`.
 
 ## Verification sweep
 
@@ -157,8 +167,8 @@ step.
 
 Biome runs as a root task (`//#lint`) — fast enough not to need decomposing.
 Knip runs as a root task (`//#knip`) too: it is a whole-graph dead-code
-analyzer, not something that decomposes per-package. There is no `.github/`
-in this repo yet, so CI does not run knip. That lands in a later phase.
+analyzer, not something that decomposes per-package. `.github/workflows/ci.yml` runs knip as
+part of the turbo `check` job, plus an informational JSON summary into the job summary.
 
 The `react`, `test`, and `turborepo` lint domains are active and were verified
 firing (`useJsxKeyInIterable`, `noFocusedTests`, `noUndeclaredEnvVars`).
@@ -219,6 +229,27 @@ docker exec gaggiuino-mcp /usr/local/bin/bun --eval \
 The runner has no shell, so `docker exec ... /bin/sh` fails by design; exec the
 bun binary directly (it is the image's ENTRYPOINT) as above.
 
+## CI
+
+`.github/workflows/ci.yml` runs two jobs on every pull request against `main`, every push to
+`main`, and a weekly schedule.
+
+- **`check`** — checkout, the composite `.github/actions/setup` action (Bun, Turborepo cache,
+  `bun install --frozen-lockfile`), then Biome as a dedicated step outside turbo
+  (`bun run lint --reporter=github`) so its GitHub reporter's `::error`/`::warning` annotations
+  land inline on the PR diff — a turbo task-name prefix would stop GitHub parsing them. PRs then
+  run `turbo run test typecheck build knip --affected` plus `turbo boundaries`; pushes to `main`
+  run the same tasks unscoped (full check). Both continue with Playwright Chromium setup,
+  `turbo run test:stories:coverage`, `turbo run test:coverage`, a coverage-baseline restore/publish
+  (`coverage:summary` into the job summary, with a delta vs the cached `main` baseline), a baseline
+  save on `main` pushes, and an informational knip JSON summary into the job summary.
+- **`audit`** — `bun audit --audit-level=high`. Advisory (`continue-on-error`) on PRs and `main`
+  pushes, since most findings are transitive deps with no local fix; hard-failing on the weekly
+  `schedule` trigger so new advisories still surface between PRs.
+
+Only `GITHUB_TOKEN` is required. Docker publishing, release-please, and GitHub Pages are still
+later phases.
+
 ## Storybook
 
 `apps/storybook` renders co-located stories: story files live next to their component in
@@ -230,7 +261,7 @@ bun binary directly (it is the image's ENTRYPOINT) as above.
 
 Every story also runs as a Vitest browser-mode smoke test: `bun run test:stories` locally, cached
 as the `//#test:stories` turbo root task (inputs: story/package sources and the Storybook config).
-There is no `.github/` yet, so this does not run in CI — a later phase wires it in. The root
+`.github/workflows/ci.yml`'s `check` job runs this on every PR and main push. The root
 `vitest.stories.config.ts` (deliberately not `vitest.config.ts` — vitest searches parent
 directories for a config, so a default-named root config would hijack `apps/server`'s bare
 `vitest run`) defines a single `storybook` project via `@storybook/addon-vitest`'s `storybookTest`
