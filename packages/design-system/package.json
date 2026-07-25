@@ -10,6 +10,7 @@
   },
   "devDependencies": {
     "@gaggiuino/tsconfig": "workspace:*",
+    "@storybook/addon-docs": "10.3.5",
     "@storybook/react": "10.3.5",
     "@types/react": "19.2.14",
     "react": "19.2.5"

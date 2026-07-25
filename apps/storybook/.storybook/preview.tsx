@@ -2,6 +2,8 @@ import {
   HOST_THEMES,
   type HostThemePreset,
 } from "@gaggiuino/design-system/host-themes";
+import a11y from "@storybook/addon-a11y";
+import docs from "@storybook/addon-docs";
 import { definePreview } from "@storybook/react-vite";
 import "@gaggiuino/design-system/tokens.css";
 import "@gaggiuino/shot-graph/global.css";
@@ -14,7 +16,7 @@ const ALL_HOST_KEYS = new Set(
 );
 
 export default definePreview({
-  addons: [],
+  addons: [a11y(), docs()],
   parameters: {
     layout: "padded",
     viewport: {
@@ -78,3 +80,10 @@ export default definePreview({
     },
   ],
 });
+
+/**
+ * Project-wide autodocs. Must be a literal named export in the project's own
+ * preview file. Storybook merges named preview exports with the default, and
+ * the docs indexer reads the tag from here.
+ */
+export const tags = ["autodocs"];
