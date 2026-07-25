@@ -247,8 +247,10 @@ bun binary directly (it is the image's ENTRYPOINT) as above.
   pushes, since most findings are transitive deps with no local fix; hard-failing on the weekly
   `schedule` trigger so new advisories still surface between PRs.
 
-Only `GITHUB_TOKEN` is required. Docker publishing, release-please, and GitHub Pages are still
-later phases.
+Only `GITHUB_TOKEN` is required for `ci.yml` itself. Docker publishing (`docker.yml`),
+release-please (`release-please.yml`), and the MCP registry publish (`publish-mcp.yml`) are
+wired up in this phase — see Releases below. GitHub Pages (`storybook.yml`) is wired up too,
+but cannot actually deploy until the repo goes public, in the final phase of this plan.
 
 ## Storybook
 
@@ -316,6 +318,19 @@ named preview exports with the default `definePreview(...)` export, but the docs
 picks up project tags declared there, not tags nested inside the `definePreview` call itself. The
 addon is registered in both `main.ts` (manager UI) and the `definePreview` `addons` array (docs
 rendering), mirroring how `addon-a11y` is wired.
+
+### Agent access
+
+- Storybook ships a Model Context Protocol server (via `@storybook/addon-mcp`)
+  with story, docs, and test tools. The endpoint is pre-wired in `.mcp.json`:
+  `storybook` at `http://localhost:6006/mcp` (while `bun run storybook` runs).
+- The `main` Storybook is hosted on GitHub Pages (`storybook.yml`) for browsing;
+  it is a static build with no MCP endpoint.
+
+`storybook.yml` cannot succeed yet: GitHub Pages deployment requires the repo to be
+public and Pages set to build from GitHub Actions. Both land in the final phase of
+this plan (Task 21). Until then, pushes to `main` will run this workflow and it will
+fail at the Pages deployment step — that is expected, not a regression to chase.
 
 ## Testing the MCP endpoint
 
