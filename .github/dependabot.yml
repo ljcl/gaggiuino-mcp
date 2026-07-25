@@ -1,0 +1,73 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Australia/Melbourne
+    open-pull-requests-limit: 5
+    # fix(deps), not chore(deps): production deps ship inside the published
+    # Docker image (server runtime plus the bundled MCP App HTML), so a bump
+    # must cut a patch release or users never receive it. Dev-only tooling
+    # stays chore(deps) and produces no release. The groups are split by
+    # dependency-type so a grouped PR never mixes the two prefixes.
+    commit-message:
+      prefix: "fix(deps)"
+      prefix-development: "chore(deps)"
+    groups:
+      production-minor-patch:
+        applies-to: version-updates
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
+      development-minor-patch:
+        applies-to: version-updates
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+    reviewers:
+      - ljcl
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Australia/Melbourne
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      actions-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+    reviewers:
+      - ljcl
+
+  - package-ecosystem: docker
+    directory: "/apps/server"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Australia/Melbourne
+    open-pull-requests-limit: 5
+    # fix(deps) for the same reason as npm: base-image bumps only reach users
+    # via a new release publishing a fresh image.
+    commit-message:
+      prefix: "fix(deps)"
+    groups:
+      docker-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+    reviewers:
+      - ljcl

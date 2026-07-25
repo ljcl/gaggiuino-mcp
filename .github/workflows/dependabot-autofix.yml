@@ -1,0 +1,84 @@
+name: Dependabot autofix
+
+# Dependabot bumps package.json but cannot fix the collateral damage a bump
+# causes elsewhere in the repo, so its PRs used to go red on failures only a
+# human could clear:
+#   - bun.lock drift: Dependabot's npm ecosystem does not reliably update
+#     Bun's text lockfile in a workspaces monorepo, so `bun install
+#     --frozen-lockfile` in the setup composite fails (dependabot-core#14223).
+#   - formatter bumps: a new Biome version can format existing code
+#     differently, so `bun run lint` fails on files the bump never touched.
+# This job regenerates bun.lock, applies formatter fixes, and pushes any
+# resulting fixup commit back to the PR branch so the bump lands green.
+#
+# Runs on pull_request_target because Dependabot PRs get a read-only token on
+# the plain pull_request event and so cannot push. Unlike the earlier
+# lockfile-only version of this job, `bun run lint:fix` executes a dependency
+# binary (Biome), so the privileged context is locked down:
+#   - the job only runs for dependabot[bot] PRs from THIS repo — the actor
+#     check alone is spoofable by enabling Dependabot on a fork, the
+#     head-repo check closes that hole;
+#   - checkout does not persist credentials, and the push token is exposed
+#     only to the final push step, after all dependency code has run;
+#   - bun does not run lifecycle scripts for untrusted dependencies.
+
+on:
+  pull_request_target:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  autofix:
+    if: >-
+      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          persist-credentials: false
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          # Single source of truth: the packageManager field in root
+          # package.json (matches .github/actions/setup).
+          bun-version-file: package.json
+
+      - name: Sync bun.lock and install dependencies
+        run: bun install
+
+      - name: Apply formatter fixes
+        # `biome check --write` exits non-zero when unfixable diagnostics
+        # remain; commit whatever it DID fix and let CI report the rest.
+        run: bun run lint:fix || true
+
+      - name: Commit and push fixes
+        env:
+          # A PAT (or app token) is needed for the push to re-trigger the
+          # required CI checks — GITHUB_TOKEN pushes deliberately do not.
+          # Falls back to GITHUB_TOKEN, which still fixes the PR but won't
+          # re-run CI on its own (a manual re-run or re-push is then needed).
+          PUSH_TOKEN: ${{ secrets.DEPENDABOT_PAT || secrets.GITHUB_TOKEN }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Lockfile and formatting already clean — nothing to do."
+            exit 0
+          fi
+          git config user.name 'dependabot[bot]'
+          git config user.email '49699333+dependabot[bot]@users.noreply.github.com'
+          git commit -m 'chore(deps): sync bun.lock and formatting with the bump'
+          git push "https://x-access-token:${PUSH_TOKEN}@github.com/${{ github.repository }}.git" HEAD:"$HEAD_REF"
