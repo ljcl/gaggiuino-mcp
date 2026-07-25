@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Project README
+    url: https://github.com/ljcl/gaggiuino-mcp#readme
+    about: Setup, configuration, and usage docs.
+  - name: Report a security vulnerability
+    url: https://github.com/ljcl/gaggiuino-mcp/security/advisories/new
+    about: Please report security issues privately — see SECURITY.md — not as public issues.
