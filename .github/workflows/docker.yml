@@ -1,0 +1,235 @@
+name: Docker
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ["v*"]
+  # Backfill: tag pushes run this workflow at the tag's commit, so a workflow
+  # bug baked into a release tag cannot be fixed by re-running that run. This
+  # dispatch builds an existing release tag with the workflow from main and
+  # publishes its X.Y.Z / X.Y image tags (it never moves `latest` or main-*).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing vX.Y.Z release tag to build and publish"
+        required: true
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  REGISTRY_IMAGE: ghcr.io/${{ github.repository }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Decides whether a PR actually touches anything the image consumes. The
+  # build legs are skipped (not path-filtered at the workflow level) so that a
+  # required Docker status still reports on docs-only PRs — skipped jobs count
+  # as passing for required checks, whereas a path-filtered workflow never
+  # reports and would block auto-merge. Tag and main pushes bypass the filter
+  # entirely, so releases always build.
+  changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # paths-filter lists the PR's changed files via the API
+    outputs:
+      image: ${{ steps.filter.outputs.image }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - id: filter
+        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
+        with:
+          # Everything `turbo prune @gaggiuino/server --docker` can pull into
+          # the build context, plus the Docker plumbing itself.
+          filters: |
+            image:
+              - "apps/server/**"
+              - "packages/**"
+              - "package.json"
+              - "bun.lock"
+              - "turbo.json"
+              - ".dockerignore"
+              - ".github/workflows/docker.yml"
+
+  build:
+    needs: [changes]
+    # Non-PR events skip `changes`, so !cancelled() is needed for this
+    # expression to be evaluated at all in that case.
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.image == 'true') }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Empty on pull_request/push (checks out the triggering ref); the
+          # backfill dispatch builds the requested release tag's sources.
+          ref: ${{ inputs.tag }}
+
+      - name: Prepare platform pair
+        id: prep
+        run: |
+          platform="${{ matrix.platform }}"
+          echo "pair=${platform//\//-}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Docker metadata (labels)
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY_IMAGE }}
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (push by digest on non-PR)
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: apps/server/Dockerfile
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
+          cache-from: type=gha,scope=${{ steps.prep.outputs.pair }}
+          cache-to: type=gha,mode=max,scope=${{ steps.prep.outputs.pair }}
+
+      - name: Export digest
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: digests-${{ steps.prep.outputs.pair }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Assembles the per-arch digests into one multi-arch manifest. The explicit
+  # `needs.build.result == 'success'` guard requires every build matrix leg to
+  # have succeeded, so a single-arch manifest can never ship. It must stay
+  # explicit: on push events `changes` is skipped, which makes the implicit
+  # success() check false for every downstream job, so a bare event-name `if`
+  # here would silently skip this job on the very pushes that publish releases.
+  merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [build]
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.build.result == 'success' }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      # No setup-buildx-action here on purpose: `imagetools create`/`inspect`
+      # talk to the registry directly and need no BuildKit builder. Setting one
+      # up only pulled moby/buildkit from Docker Hub, whose anonymous-pull rate
+      # limit intermittently failed this job (the build legs keep their builder).
+
+      - name: Log in to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata (tags)
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY_IMAGE }}
+          # The backfill dispatch runs on main's ref, so `latest`/main-* are
+          # pinned off there and the semver tags come from the tag input.
+          tags: |
+            type=raw,value=latest,enable=${{ github.event_name != 'workflow_dispatch' && '{{is_default_branch}}' || 'false' }}
+            type=sha,prefix=main-,enable=${{ github.event_name != 'workflow_dispatch' && '{{is_default_branch}}' || 'false' }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          set -euo pipefail
+          shopt -s failglob  # fail loudly if no digest files were downloaded
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.REGISTRY_IMAGE }}@sha256:%s ' *)
+
+      - name: Inspect image
+        run: docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.meta.outputs.version }}
+
+      # Record what shipped in the run summary: the tags applied and, per
+      # architecture, the manifest digest and compressed (download) size — the
+      # sum of the config blob and layer sizes from each arch manifest.
+      # Attestation manifests (platform os/arch "unknown") are filtered out.
+      - name: Image summary
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          ref="$REGISTRY_IMAGE:$VERSION"
+          {
+            echo "## Docker image"
+            echo ""
+            echo "Published \`$ref\`"
+            echo ""
+            echo "**Tags**"
+            while IFS= read -r tag; do
+              [ -n "$tag" ] && echo "- \`$tag\`"
+            done <<< "$TAGS"
+            echo ""
+            echo "| Platform | Digest | Compressed size |"
+            echo "| -------- | ------ | --------------- |"
+            docker buildx imagetools inspect "$ref" --raw \
+              | jq -r '.manifests[]
+                  | select(.platform.os != "unknown")
+                  | [.platform.os + "/" + .platform.architecture, .digest]
+                  | @tsv' \
+              | while IFS=$'\t' read -r platform digest; do
+                  bytes="$(docker buildx imagetools inspect "$REGISTRY_IMAGE@$digest" --raw \
+                    | jq '[.config.size] + [.layers[].size] | add')"
+                  human="$(numfmt --to=iec --suffix=B "$bytes")"
+                  short="${digest#sha256:}"
+                  echo "| $platform | \`${short:0:12}…\` | $human |"
+                done
+          } >> "$GITHUB_STEP_SUMMARY"
