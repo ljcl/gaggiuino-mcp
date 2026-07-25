@@ -72,6 +72,29 @@
         "!**/dist/**"
       ]
     },
+    "//#test:stories": {
+      "inputs": [
+        "vitest.stories.config.ts",
+        "apps/storybook/.storybook/**",
+        "packages/*/src/**",
+        "packages/design-system/stories/**",
+        "packages/*/package.json",
+        "apps/storybook/package.json",
+        "bun.lock"
+      ]
+    },
+    "//#test:stories:coverage": {
+      "inputs": [
+        "vitest.stories.config.ts",
+        "apps/storybook/.storybook/**",
+        "packages/*/src/**",
+        "packages/design-system/stories/**",
+        "packages/*/package.json",
+        "apps/storybook/package.json",
+        "bun.lock"
+      ],
+      "outputs": ["coverage-stories/**"]
+    },
     "dev": {
       "persistent": true,
       "cache": false

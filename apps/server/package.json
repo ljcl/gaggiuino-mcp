@@ -6,6 +6,7 @@
     "dev": "bun --watch run src/index.ts",
     "start": "bun run src/index.ts",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
     "generate-schemas": "bun run scripts/generate-schemas.ts"
   },

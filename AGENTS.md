@@ -69,6 +69,28 @@ Gaggiuino API returns values scaled by 10 (e.g., pressure 91 = 9.1 bar). The `no
 - `SCALE_BY_10`: pressure, pumpFlow, targetPressure, targetPumpFlow, weightFlow, temperature, shotWeight
 - Time is in 10ths of seconds (350 = 35.0s)
 
+## Test coverage
+
+Plain `bun run test` no longer computes coverage — it is opt-in via `bun run test:coverage`
+(`turbo run test:coverage`), which writes each package's `coverage/coverage-summary.json`.
+
+`apps/server` is the only package with a coverage threshold, defined in `apps/server/vitest.config.ts`
+(`coverage.thresholds`, `autoUpdate: true`). Each `bun run test:coverage` run can rewrite those
+threshold numbers upward as coverage improves — that is the ratchet working, not drift. If a run
+dirties `vitest.config.ts`, commit the new numbers; never hand-edit them.
+
+`packages/ui`, `packages/design-system`, and `packages/shot-graph` are **intentionally
+unthresholded**. Their coverage is the story render path measured by `bun run
+test:stories:coverage` (see Storybook below), not per-package unit coverage. Do not "fix" this by
+adding empty test files just to get a `coverage/` directory — there is nothing to threshold there.
+
+`bun run coverage:summary` (`scripts/coverage-summary.ts`) globs every `apps/*/coverage/coverage-summary.json`
+and `packages/*/coverage/coverage-summary.json`, plus `coverage-stories/coverage-summary.json` when
+present, into one markdown table. Packages without a report (no tests, or coverage not run) are
+simply absent from the table. It also diffs against a `coverage-baseline/` directory when one
+exists, for a future CI job to show deltas vs `main` — there is no `.github/` in this repo yet, so
+nothing runs this automatically today.
+
 ## Verification sweep
 
 Run this gate before declaring a task complete or opening a PR.
@@ -77,6 +99,7 @@ Run this gate before declaring a task complete or opening a PR.
 bun run check              # lint + test + typecheck + build + knip + boundaries (Turborepo)
 bun run check:affected     # same, scoped to packages affected by the diff
 bun run knip               # Dead code / unused export analysis
+bun run test:stories       # Every story renders in headless Chromium (needs Playwright browsers)
 docker compose build       # Server container builds from current sources
 ```
 
@@ -87,6 +110,10 @@ bun install               # Install all deps (workspace-aware)
 bun run build             # Build all packages (via Turborepo)
 bun run build:affected    # Build only packages affected by the diff
 bun run test              # Run all tests (via Turborepo)
+bun run test:coverage     # Run tests with coverage (apps/server only has thresholds)
+bun run coverage:summary  # Aggregate coverage-summary.json reports into a markdown table
+bun run test:stories      # Run every Storybook story as a Vitest browser-mode smoke test
+bun run test:stories:coverage # Same, plus render-path coverage into coverage-stories/
 bun run typecheck         # TS across every workspace package
 bun run typecheck:affected # Typecheck only packages affected by the diff
 bun run lint               # Biome, repo-wide (NOT `turbo run lint` — infinite loop)
@@ -97,6 +124,8 @@ bun run check:affected     # same, scoped to packages affected by the diff
 bun run dev                # Dev mode (via Turborepo)
 bun run storybook          # Storybook on port 6006 (via Turborepo)
 bun run build-storybook    # Static Storybook build to apps/storybook/storybook-static/
+bun run shots --list       # List story ids
+bun run shots <id>...      # Screenshot stories to PNGs under gitignored story-shots/
 
 # Server only
 cd apps/server
@@ -153,9 +182,70 @@ Do NOT change root `lint` to `turbo run lint` (infinite loop).
 
 ## Storybook
 
-`apps/storybook` renders co-located stories from `packages/shot-graph`, `packages/ui`, and
-`packages/design-system`. Only `@storybook/addon-mcp` is registered. There are no story smoke
-tests, no accessibility addon, no autodocs, and no hosted build yet. A later phase adds these.
+`apps/storybook` renders co-located stories: story files live next to their component in
+`packages/shot-graph/src` and `packages/ui/src`, plus standalone docs-style stories in
+`packages/design-system/stories`. `main.ts` registers `@storybook/addon-mcp`,
+`@storybook/addon-vitest`, `@storybook/addon-a11y`, and `@storybook/addon-docs`.
+
+### Story smoke tests
+
+Every story also runs as a Vitest browser-mode smoke test: `bun run test:stories` locally, cached
+as the `//#test:stories` turbo root task (inputs: story/package sources and the Storybook config).
+There is no `.github/` yet, so this does not run in CI — a later phase wires it in. The root
+`vitest.stories.config.ts` (deliberately not `vitest.config.ts` — vitest searches parent
+directories for a config, so a default-named root config would hijack `apps/server`'s bare
+`vitest run`) defines a single `storybook` project via `@storybook/addon-vitest`'s `storybookTest`
+plugin and renders each story in headless Chromium (Playwright). The project's `test.dir` must
+stay at the repo root: the addon pins the project root to `apps/storybook` (configDir's parent)
+but resolves the co-located story globs against `test.dir`, and with the two misaligned no story
+files are found. Needs Playwright browsers (`bunx playwright install chromium --with-deps`).
+Browser resolution: `launchOptions.executablePath` comes from
+`resolveChromiumExecutablePath()` (`scripts/playwright-chromium.ts`), which returns `undefined` —
+a no-op — whenever Playwright's own pinned build is installed (the normal case, local or CI). It
+only resolves a path in sandboxes that ship a *different* pre-installed Chromium and block the
+download (`PLAYWRIGHT_BROWSERS_PATH`/`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` pass through turbo for
+this).
+
+`bun run test:stories:coverage` runs the same smoke tests plus v8 render-path coverage of every
+`packages/*` source the stories execute in the browser, writing `coverage-stories/coverage-summary.json`
+(cached as `//#test:stories:coverage`, gitignored). The `storybookTest` addon pins the project root
+to `apps/storybook`, so `coverage.allowExternal: true` in `vitest.stories.config.ts` is
+load-bearing — without it every `packages/*` file is "external" and the report is empty. Plain
+`bun run test:stories` stays coverage-free for fast local runs.
+
+Each story also runs a per-story accessibility check via `addon-a11y`'s Vitest integration (axe-core),
+visible in Storybook's Accessibility panel and in each test's reporting output. The default
+`a11y.test: "todo"` parameter means a violation is recorded, not asserted — `bun run test:stories`
+does not currently fail on an accessibility defect. Treat the panel as a review aid today; a
+stricter `test: "error"` gate is a candidate for a later phase.
+
+There is intentionally **no pixel-level visual-regression gate**.
+
+### Story screenshots
+
+`bun run shots --list` prints every story id; `bun run shots <id>...` renders one or more to PNGs
+under the gitignored `story-shots/` directory (`scripts/story-shots.ts`). It builds (or reuses) a
+static Storybook and drives headless Chromium via Playwright, sharing the same
+`resolveChromiumExecutablePath()` fallback as the story smoke tests. Useful flags: `--width`/`--height`,
+`--dark`, `--hover <selector>` (with `--hover-at x,y`), `--globals`, and `--url` to shoot a running
+`bun run storybook` dev server instead of the static build.
+
+These are **look-at-it artifacts for visual review, never committed baselines** — there is
+deliberately no pixel-level visual-regression gate (see above), so nothing diffs these PNGs against
+a prior run. They exist so a human or an agent without a reachable browser tab can see what a story
+actually renders.
+
+### Autodocs
+
+`@storybook/addon-docs` generates a **Docs** page for every component from its stories, JSDoc, and
+react-docgen prop table, enabled with the `autodocs` tag applied project-wide.
+
+Placement is load-bearing: the tag must be a literal named export in the project's own
+`apps/storybook/.storybook/preview.tsx` (`export const tags = ["autodocs"]`) — Storybook merges
+named preview exports with the default `definePreview(...)` export, but the docs indexer only
+picks up project tags declared there, not tags nested inside the `definePreview` call itself. The
+addon is registered in both `main.ts` (manager UI) and the `definePreview` `addons` array (docs
+rendering), mirroring how `addon-a11y` is wired.
 
 ## Testing the MCP endpoint
 
