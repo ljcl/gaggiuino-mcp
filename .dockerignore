@@ -2,15 +2,58 @@
 **/node_modules/
 
 # Build artifacts (built inside container)
-dist/
+**/dist/
+**/.turbo/
 
-# Development files
+# Git
 .git/
-docs/
+.gitignore
+
+# Worktrees
+.worktrees/
+
+# Coverage
 coverage/
+coverage-stories/
+
+# Test artifacts
+test-results/
+story-shots/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# User local overrides — never bake personal config into the image
+*.local.yaml
+
+# Docs
+docs/
 *.md
 !README.md
-.env
 
-# Storybook
-ui/shot-graph/storybook-static/
+# Agent surface
+.agents/
+.claude/
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Docker
+**/Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Storybook build output
+**/storybook-static/

@@ -180,6 +180,26 @@ mcp-apps cannot cross-import, `design-system` sits at the bottom. There is no
 
 Do NOT change root `lint` to `turbo run lint` (infinite loop).
 
+## Docker
+
+Built via `turbo prune @gaggiuino/server --docker`. The build stage uses
+`--filter=@gaggiuino/server^...` to build only the server's workspace
+dependencies (the shot-graph MCP App), excluding the server itself since it is
+JIT. The runner is distroless and runs as UID 65534 with no shell.
+
+The server resolves the MCP App at runtime via
+`createRequire(...).resolve("@gaggiuino/shot-graph/app.html")`, so the package
+must declare an `./app.html` export and a `dist/` build output, and the runner
+stage must `COPY` that `dist/` explicitly.
+
+The turbo version installed in the toolchain stage is read from root
+`package.json`, so a Dependabot turbo bump cannot drift from the image. The Bun
+base image version is pinned separately and is watched by Dependabot's docker
+ecosystem (added in a later phase).
+
+`*.local.yaml` is excluded from the build context — those files carry personal
+equipment configuration and must never be baked into a published image.
+
 ## Storybook
 
 `apps/storybook` renders co-located stories: story files live next to their component in
