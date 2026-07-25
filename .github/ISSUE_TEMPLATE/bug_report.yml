@@ -1,0 +1,26 @@
+name: Bug report
+description: Report something that is not working
+title: "fix: "
+labels: ["type:fix"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Describe the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps, tool calls, or commands.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or image tag
+      description: e.g. ghcr.io/ljcl/gaggiuino-mcp:1.0.0 or a commit SHA.
+    validations:
+      required: false

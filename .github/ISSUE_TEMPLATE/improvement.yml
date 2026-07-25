@@ -1,0 +1,48 @@
+name: Improvement
+description: Propose an enhancement or change to gaggiuino-mcp
+title: "feat: "
+labels: ["type:feat"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What should change, in one or two sentences?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the monorepo does this touch?
+      options:
+        - server
+        - mcp-app
+        - ui
+        - design-system
+        - ci-release
+        - docker
+        - repo
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Why is this worth doing? What problem does it solve?
+    validations:
+      required: true
+  - type: textarea
+    id: approach
+    attributes:
+      label: Proposed approach
+      description: Optional sketch of how you would implement it.
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How do we know it is done?
+    validations:
+      required: false
