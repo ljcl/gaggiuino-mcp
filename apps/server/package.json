@@ -3,7 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "echo 'server ready'",
     "dev": "bun --watch run src/index.ts",
     "start": "bun run src/index.ts",
     "test": "vitest run",
@@ -11,8 +10,8 @@
     "generate-schemas": "bun run scripts/generate-schemas.ts"
   },
   "dependencies": {
+    "@gaggiuino/shot-graph": "workspace:*",
     "@modelcontextprotocol/sdk": "1.29.0",
-    "gaggiuino-shot-graph": "workspace:*",
     "yaml": "2.8.3",
     "zod": "4.3.6"
   },

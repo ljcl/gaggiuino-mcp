@@ -1,4 +1,4 @@
 {
   "extends": ["//"],
-  "tags": ["mcp-app"]
+  "tags": ["config"]
 }

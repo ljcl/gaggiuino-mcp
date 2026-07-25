@@ -13,8 +13,8 @@
     "apps/server": {
       "name": "@gaggiuino/server",
       "dependencies": {
+        "@gaggiuino/shot-graph": "workspace:*",
         "@modelcontextprotocol/sdk": "1.29.0",
-        "gaggiuino-shot-graph": "workspace:*",
         "yaml": "2.8.3",
         "zod": "4.3.6",
       },
@@ -32,7 +32,7 @@
       "version": "1.0.0",
       "dependencies": {
         "@gaggiuino/design-system": "workspace:*",
-        "gaggiuino-shot-graph": "workspace:*",
+        "@gaggiuino/shot-graph": "workspace:*",
       },
       "devDependencies": {
         "@gaggiuino/tsconfig": "workspace:*",
@@ -58,7 +58,7 @@
       },
     },
     "packages/shot-graph": {
-      "name": "gaggiuino-shot-graph",
+      "name": "@gaggiuino/shot-graph",
       "version": "1.0.0",
       "dependencies": {
         "@gaggiuino/design-system": "workspace:*",
@@ -227,6 +227,8 @@
     "@gaggiuino/design-system": ["@gaggiuino/design-system@workspace:packages/design-system"],
 
     "@gaggiuino/server": ["@gaggiuino/server@workspace:apps/server"],
+
+    "@gaggiuino/shot-graph": ["@gaggiuino/shot-graph@workspace:packages/shot-graph"],
 
     "@gaggiuino/storybook": ["@gaggiuino/storybook@workspace:apps/storybook"],
 
@@ -763,8 +765,6 @@
     "fsevents": ["fsevents@2.3.3", "", { "os": "darwin" }, "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw=="],
 
     "function-bind": ["function-bind@1.1.2", "", {}, "sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA=="],
-
-    "gaggiuino-shot-graph": ["gaggiuino-shot-graph@workspace:packages/shot-graph"],
 
     "gensync": ["gensync@1.0.0-beta.2", "", {}, "sha512-3hN7NaskYvMDLQY55gnW3NQ+mesEAepTqlg+VEbj7zzqEMBVNhzcGYYeqFo/TlYz6eQiFcp1HcsCZO+nGgS8zg=="],
 

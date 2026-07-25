@@ -9,13 +9,18 @@
   ],
   "scripts": {
     "build": "turbo run build",
+    "build:affected": "turbo run build --affected",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
+    "typecheck:affected": "turbo run typecheck --affected",
     "lint": "biome check .",
+    "lint:fix": "biome check --write .",
     "dev": "turbo run dev",
+    "boundaries": "turbo boundaries",
+    "check": "turbo run lint test typecheck build && turbo boundaries",
+    "check:affected": "turbo run lint test typecheck build --affected && turbo boundaries",
     "storybook": "turbo run storybook --filter=@gaggiuino/storybook",
-    "build-storybook": "turbo run build-storybook --filter=@gaggiuino/storybook",
-    "check": "biome check . && turbo run test"
+    "build-storybook": "turbo run build:storybook --filter=@gaggiuino/storybook"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.11",

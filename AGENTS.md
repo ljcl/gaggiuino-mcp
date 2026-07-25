@@ -74,23 +74,28 @@ Gaggiuino API returns values scaled by 10 (e.g., pressure 91 = 9.1 bar). The `no
 Run this gate before declaring a task complete or opening a PR.
 
 ```bash
-bun run lint              # Biome
-bun run test              # Vitest (server)
-bun run typecheck         # TS across every workspace package
-bun run build             # Turborepo build (produces the shot-graph single-file HTML)
-docker compose build      # Server container builds from current sources
+bun run check              # lint + test + typecheck + build + boundaries (Turborepo)
+bun run check:affected     # same, scoped to packages affected by the diff
+docker compose build       # Server container builds from current sources
 ```
 
 ## Commands
 
 ```bash
-bun install          # Install all deps (workspace-aware)
-bun run build            # Build all packages (via Turborepo)
-bun run test             # Run all tests (via Turborepo)
-bun run lint             # Lint all packages (via Turborepo)
-bun run dev              # Dev mode (via Turborepo)
-bun run storybook        # Storybook on port 6006 (via Turborepo)
-bun run build-storybook  # Static Storybook build to apps/storybook/storybook-static/
+bun install               # Install all deps (workspace-aware)
+bun run build             # Build all packages (via Turborepo)
+bun run build:affected    # Build only packages affected by the diff
+bun run test              # Run all tests (via Turborepo)
+bun run typecheck         # TS across every workspace package
+bun run typecheck:affected # Typecheck only packages affected by the diff
+bun run lint               # Biome, repo-wide (NOT `turbo run lint` — infinite loop)
+bun run lint:fix           # Biome, applying fixes
+bun run boundaries         # turbo boundaries (tag-based layering check)
+bun run check              # lint + test + typecheck + build + boundaries
+bun run check:affected     # same, scoped to packages affected by the diff
+bun run dev                # Dev mode (via Turborepo)
+bun run storybook          # Storybook on port 6006 (via Turborepo)
+bun run build-storybook    # Static Storybook build to apps/storybook/storybook-static/
 
 # Server only
 cd apps/server
@@ -114,10 +119,24 @@ docker compose logs -f
 
 ## Turborepo
 
-Root `turbo.json` defines `build`, `test`, `typecheck`, `//#lint`, `dev`, `storybook`, and
-`build-storybook` tasks. There are no package tags, no `turbo boundaries` enforcement, no
-`topo` transit node, and no `--affected`-scoped scripts yet. A later phase adds these once the
-package graph is deep enough to need them.
+A `topo` transit node in `turbo.json` makes `test` and `typecheck`
+cache-invalidate when upstream JIT packages change source. JIT packages
+(`ui`, `design-system`) export raw TypeScript; only `shot-graph` produces a
+build artifact (the single-file HTML bundle via Vite). The server has no build
+step.
+
+Biome runs as a root task (`//#lint`) — fast enough not to need decomposing.
+
+Storybook uses co-located stories: story files in `packages/` are excluded from
+the root `build` inputs (`!**/*.stories.{ts,tsx,mdx}`) so story edits do not
+bust unrelated build caches.
+
+Package boundaries are enforced via `turbo boundaries`. Five tags: `app`,
+`mcp-app`, `shared-ui`, `design-system`, `config`. Apps cannot cross-import,
+mcp-apps cannot cross-import, `design-system` sits at the bottom. There is no
+`shared-data` tag — `normalize.ts` lives in `apps/server`, not a shared package.
+
+Do NOT change root `lint` to `turbo run lint` (infinite loop).
 
 ## Storybook
 

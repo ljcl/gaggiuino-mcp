@@ -22,12 +22,12 @@ import { getAllProfilesText, getProfile, listProfileNames } from "./profiles";
 const GAGGIUINO_URL = process.env.GAGGIUINO_URL ?? "http://gaggiuino.local";
 
 /**
- * Resolved once at startup via the `gaggiuino-shot-graph` package's `./app.html`
+ * Resolved once at startup via the `@gaggiuino/shot-graph` package's `./app.html`
  * export. Works in dev (workspace symlink) and in the Docker runner (pruned
  * workspace tree with built dist/ copied in).
  */
 const SHOT_GRAPH_HTML_PATH = createRequire(import.meta.url).resolve(
-  "gaggiuino-shot-graph/app.html",
+  "@gaggiuino/shot-graph/app.html",
 );
 
 let _client: ReturnType<typeof createClient> | null = null;
