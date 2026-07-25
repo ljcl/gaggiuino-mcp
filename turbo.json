@@ -1,29 +1,75 @@
 {
   "$schema": "https://turborepo.dev/schema.v2.json",
+  "globalEnv": ["NODE_ENV"],
+  "globalPassThroughEnv": [
+    "GAGGIUINO_URL",
+    "PORT",
+    "HOST",
+    "PLAYWRIGHT_BROWSERS_PATH",
+    "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH"
+  ],
+  "globalDependencies": [".env", ".env.local"],
+  "boundaries": {
+    "tags": {
+      "app": {
+        "dependencies": {
+          "deny": ["app"]
+        }
+      },
+      "mcp-app": {
+        "dependencies": {
+          "deny": ["app", "mcp-app"]
+        }
+      },
+      "shared-ui": {
+        "dependencies": {
+          "allow": ["design-system", "config"]
+        }
+      },
+      "design-system": {
+        "dependencies": {
+          "allow": ["config"]
+        }
+      }
+    }
+  },
   "tasks": {
+    "topo": {
+      "dependsOn": ["^topo"]
+    },
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**"]
+      "outputs": ["dist/**"],
+      "inputs": ["$TURBO_DEFAULT$", "!**/*.stories.{ts,tsx,mdx}"],
+      "env": ["INPUT"]
     },
+    "build:storybook": {},
     "test": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["topo"]
     },
-    "typecheck": {},
+    "test:coverage": {
+      "dependsOn": ["topo"],
+      "outputs": ["coverage/**"]
+    },
+    "typecheck": {
+      "dependsOn": ["topo"]
+    },
     "//#lint": {
-      "outputs": []
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "biome.json",
+        ".gitignore",
+        "!**/dist/**",
+        "!**/storybook-static/**"
+      ]
     },
     "dev": {
       "persistent": true,
-      "cache": false,
-      "env": ["GAGGIUINO_URL", "PORT", "HOST"]
+      "cache": false
     },
     "storybook": {
       "persistent": true,
       "cache": false
-    },
-    "build-storybook": {
-      "dependsOn": ["^build"],
-      "outputs": ["storybook-static/**"]
     }
   }
 }
