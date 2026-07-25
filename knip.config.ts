@@ -1,11 +1,12 @@
 import { type KnipConfig } from "knip";
 
+// Only load-bearing overrides live here. Knip reports "configuration hints" for
+// entries it does not need; keep this file hint-free so every remaining line
+// documents something knip genuinely cannot work out on its own.
 export default {
   workspaces: {
     "apps/server": {
-      entry: ["src/index.ts", "scripts/generate-schemas.ts"],
       project: ["src/**/*.ts"],
-      ignore: ["**/*.test.ts", "**/__fixtures__/**"],
       // Resolved at runtime via createRequire(...).resolve("@gaggiuino/shot-graph/app.html"),
       // which knip cannot trace as a static import.
       ignoreDependencies: ["@gaggiuino/shot-graph"],
@@ -13,23 +14,19 @@ export default {
     "packages/shot-graph": {
       entry: ["src/main.tsx"],
       project: ["src/**/*.{ts,tsx}"],
-      ignore: ["vite-env.d.ts"],
     },
     "packages/ui": {
       project: ["src/**/*.{ts,tsx}"],
       // Consumed via `@import "@gaggiuino/design-system/tokens.css"` in this
-      // package's CSS Modules (Legend/Skeleton/Tooltip). Knip's css compiler
-      // does resolve and compile those files, but does not credit the
-      // resulting import back to this workspace's package.json, so the
-      // dependency still reports as unused without this override.
+      // package's CSS Modules (Legend/Skeleton/Tooltip). The css compiler below
+      // resolves those imports, but knip does not credit them back to this
+      // workspace's package.json, so the dependency reports as unused without
+      // this override.
       ignoreDependencies: ["@gaggiuino/design-system"],
     },
     "packages/design-system": {
       project: ["src/**/*.{ts,tsx}"],
       ignoreDependencies: ["@gaggiuino/tsconfig"],
-    },
-    "packages/vite-config": {
-      entry: ["mcp-app.ts"],
     },
     "apps/storybook": {
       storybook: {
@@ -42,10 +39,6 @@ export default {
         ],
         project: [".storybook/**/*.{js,jsx,ts,tsx,mts}"],
       },
-      // Consumed by Storybook's `stories` directory globs at build time (the
-      // story files are co-located in each package and import relatively), so
-      // there is no static import for knip to follow.
-      ignoreDependencies: ["@gaggiuino/shot-graph", "@gaggiuino/ui"],
     },
   },
   ignoreExportsUsedInFile: true,
