@@ -7,9 +7,29 @@ The grouping criterion is not topical similarity. Two issues belong together whe
 separately means *editing the same block twice*, or when one issue's acceptance criteria cannot be
 verified until another has landed. Batches that are merely thematic are called out as such.
 
+Each batch is tracked by an `epic`-labelled issue (#52–#62) with its members attached as GitHub
+sub-issues, so the hierarchy and progress roll up natively on the board.
+
 Board fields (Priority, Effort, Status) live on the
-[gaggiuino-mcp backlog](https://github.com/users/ljcl/projects/2) project, not on labels. The
-Priority/Effort columns below are recommendations to apply there.
+[gaggiuino-mcp backlog](https://github.com/users/ljcl/projects/2) project, not on labels. Projects
+v2 is GraphQL-only and unreachable from the cloud session that produced this batching, so the
+Priority/Effort recommendations below are applied by `scripts/backlog-board-sync.sh` — run it
+locally with `gh auth refresh -s project -h github.com`. It defaults to the eleven epics; pass
+`--children` to stamp the 36 child issues too, which overwrites any triage already on them.
+
+| Batch | Epic | Members | Priority | Effort |
+| --- | --- | --- | --- | --- |
+| 1 Typed tool contract | #52 | #20 #21 #23 #24 #31 | P1 | L |
+| 2 Runtime hardening | #53 | #18 #22 #19 #25 #26 | P1 | L |
+| 3 Upstream data layer | #54 | #30 #27 #28 #29 | P2 | L |
+| 4 Prompts and resources | #55 | #32 #33 | P3 | M |
+| 5 Design tokens | #56 | #42 #34 | P2 | M |
+| 6 App shell | #57 | #44 #35 #40 | P2 | L |
+| 7 Chart rendering | #58 | #41 #39 | P2 | M |
+| 8 Accessibility | #59 | #36 #37 | P2 | L |
+| 9 Test and coverage | #60 | #10 #43 | P3 | M |
+| 10 CI and supply chain | #61 | #17 #49 #45 #46 #50 #38 | P2 | M |
+| 11 Docs and hygiene | #62 | #47 #48 #51 | P3 | S |
 
 ---
 
