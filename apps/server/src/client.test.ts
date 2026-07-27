@@ -1,6 +1,10 @@
 import { delay, HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
-import { mockMachineStatus, mockShotData } from "./__fixtures__/api-responses";
+import {
+  mockMachineStatus,
+  mockMachineStatusFromHardware,
+  mockShotData,
+} from "./__fixtures__/api-responses";
 import { createClient } from "./client";
 import {
   MalformedUpstreamError,
@@ -23,6 +27,39 @@ describe("client", () => {
 
       expect(status.temperature).toBe(91);
       expect(status.profileName).toBe("Zer0");
+    });
+
+    it("coerces the stringly-typed numerics real firmware sends", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/system/status", () =>
+          HttpResponse.json([mockMachineStatusFromHardware]),
+        ),
+      );
+
+      const client = createClient({ baseUrl: "http://gaggiuino.local" });
+      const status = await client.getStatus();
+
+      expect(status.temperature).toBe(77.627335);
+      expect(status.targetTemperature).toBe(95);
+      expect(status.pressure).toBe(6.422525);
+      expect(status.weight).toBe(-0.1);
+      expect(status.waterLevel).toBe(79);
+      expect(status.upTime).toBe(56);
+      expect(status.profileName).toBe("Zer0");
+    });
+
+    it("still rejects a non-numeric string rather than yielding NaN", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/system/status", () =>
+          HttpResponse.json([
+            { ...mockMachineStatusFromHardware, temperature: "warming up" },
+          ]),
+        ),
+      );
+
+      const client = createClient({ baseUrl: "http://gaggiuino.local" });
+
+      await expect(client.getStatus()).rejects.toThrow(MalformedUpstreamError);
     });
   });
 

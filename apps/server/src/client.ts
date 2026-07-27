@@ -26,16 +26,27 @@ const IdSchema = z.union([z.string(), z.number()]).transform(String);
 /** The machine reports switch positions as the strings "true"/"false". */
 const SwitchStateSchema = z.union([z.string(), z.boolean()]);
 
+/**
+ * `/api/system/status` reports every numeric field as a decimal *string*
+ * ("temperature":"77.627335"), unlike the shot endpoints which send real
+ * numbers. Accept either and normalize to a number, the same way IdSchema
+ * and SwitchStateSchema already absorb this firmware's stringly-typed JSON.
+ */
+const NumericSchema = z
+  .union([z.number(), z.string()])
+  .transform((v) => (typeof v === "number" ? v : Number(v)))
+  .refine(Number.isFinite, { message: "expected a number or numeric string" });
+
 export const MachineStatusSchema = z.looseObject({
   brewSwitchState: SwitchStateSchema.optional(),
-  pressure: z.number(),
+  pressure: NumericSchema,
   profileName: z.string().optional(),
   steamSwitchState: SwitchStateSchema.optional(),
-  targetTemperature: z.number().optional(),
-  temperature: z.number(),
-  upTime: z.number().optional(),
-  waterLevel: z.number().optional(),
-  weight: z.number().optional(),
+  targetTemperature: NumericSchema.optional(),
+  temperature: NumericSchema,
+  upTime: NumericSchema.optional(),
+  waterLevel: NumericSchema.optional(),
+  weight: NumericSchema.optional(),
 });
 
 export type MachineStatus = z.output<typeof MachineStatusSchema>;
