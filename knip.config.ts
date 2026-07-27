@@ -26,7 +26,6 @@ export default {
     },
     "packages/design-system": {
       project: ["src/**/*.{ts,tsx}"],
-      ignoreDependencies: ["@gaggiuino/tsconfig"],
     },
     "apps/storybook": {
       storybook: {

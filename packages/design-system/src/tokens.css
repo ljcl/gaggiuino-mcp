@@ -1,5 +1,10 @@
 /* Design tokens from MCP Apps for Claude community Figma spec */
 /* Light theme defaults — overridden by host via useHostStyles() at runtime */
+/*
+ * This file is the single source of truth for token values. The Storybook
+ * "Token Reference" and "Colors" stories parse it (via src/tokens.ts) rather
+ * than restating the values, so the docs cannot drift from what ships.
+ */
 
 :root {
   /* Colors — Background */
@@ -48,7 +53,7 @@
   --font-heading-sm-size: 16px;
   --font-heading-md-size: 20px;
 
-  /* Border */
+  /* Border — radius and width */
   --border-radius-xs: 2px;
   --border-radius-sm: 4px;
   --border-radius-md: 8px;
@@ -65,8 +70,12 @@
   --chart-weight: rgba(107, 66, 38, 0.5);
 }
 
-/* Dark theme — applied via .dark class on container */
-.dark {
+/*
+ * Dark theme — keyed on the `data-theme` attribute that MCP hosts set on
+ * documentElement (`applyDocumentTheme` in @modelcontextprotocol/ext-apps,
+ * which useHostStyles() calls with hostContext.theme).
+ */
+[data-theme="dark"] {
   --color-background-primary: #30302e;
   --color-background-secondary: #262624;
   --color-background-tertiary: #141413;
@@ -92,4 +101,44 @@
   --chart-target-flow: rgba(96, 165, 250, 0.45);
   --chart-weight-flow: #e5a83d;
   --chart-weight: rgba(229, 168, 61, 0.65);
+  color-scheme: dark;
+}
+
+/*
+ * `hostContext.theme` is optional, so a host may render us inside a dark
+ * surface without ever setting `data-theme`. Fall back to the system
+ * preference unless the host explicitly asked for light.
+ *
+ * Every declaration below must stay identical to the [data-theme="dark"]
+ * block above; the Token Reference story asserts that in CI.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-background-primary: #30302e;
+    --color-background-secondary: #262624;
+    --color-background-tertiary: #141413;
+    --color-background-inverse: #faf9f5;
+
+    --color-text-primary: #faf9f5;
+    --color-text-secondary: #c2c0b6;
+    --color-text-tertiary: #9c9a92;
+    --color-text-inverse: #141413;
+
+    --color-text-danger: #ee8884;
+    --color-text-success: #7ab948;
+    --color-text-info: #80aadd;
+
+    --color-border-primary: rgba(222, 220, 209, 0.4);
+    --color-border-secondary: rgba(222, 220, 209, 0.3);
+    --color-border-tertiary: rgba(222, 220, 209, 0.15);
+
+    /* Chart colors — brighter for dark backgrounds */
+    --chart-pressure: #4ade80;
+    --chart-target-pressure: rgba(74, 222, 128, 0.45);
+    --chart-flow: #60a5fa;
+    --chart-target-flow: rgba(96, 165, 250, 0.45);
+    --chart-weight-flow: #e5a83d;
+    --chart-weight: rgba(229, 168, 61, 0.65);
+    color-scheme: dark;
+  }
 }
