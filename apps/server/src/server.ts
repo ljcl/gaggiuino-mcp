@@ -8,18 +8,14 @@ import {
   ListResourcesRequestSchema,
   ListToolsRequestSchema,
   ReadResourceRequestSchema,
+  type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
-import {
-  formatShotSummary,
-  generateShotSummary,
-  normalizeValue,
-  SCALE_BY_10,
-} from "./analysis";
-import { createClient } from "./client";
+import { z } from "zod";
+import { MACHINE_URL } from "./client";
+import { describeUpstreamError } from "./errors";
 import { loadPrompts } from "./loader";
-import { getAllProfilesText, getProfile, listProfileNames } from "./profiles";
-
-const GAGGIUINO_URL = process.env.GAGGIUINO_URL ?? "http://gaggiuino.local";
+import { getAllProfilesText, getProfile } from "./profiles";
+import { TOOL_DEFINITIONS, TOOLS_BY_NAME, type ToolDefinition } from "./tools";
 
 /**
  * Resolved once at startup via the `@gaggiuino/shot-graph` package's `./app.html`
@@ -30,247 +26,108 @@ const SHOT_GRAPH_HTML_PATH = createRequire(import.meta.url).resolve(
   "@gaggiuino/shot-graph/app.html",
 );
 
-let _client: ReturnType<typeof createClient> | null = null;
-function getClient() {
-  if (!_client) {
-    _client = createClient({ baseUrl: GAGGIUINO_URL });
+/**
+ * Turn a tool's zod schema into the JSON Schema advertised over the wire.
+ *
+ * Input schemas are generated in `io: "input"` mode and output schemas in
+ * `io: "output"` mode, which is what each side actually describes: the input
+ * schema documents what a caller may send (so a coercing id schema advertises
+ * both accepted forms), the output schema documents what we return.
+ */
+function toJsonSchema(
+  schema: z.ZodObject,
+  io: "input" | "output",
+): Tool["inputSchema"] {
+  const { $schema: _schema, ...rest } = z.toJSONSchema(schema, { io });
+  return rest as Tool["inputSchema"];
+}
+
+function toMcpTool(tool: ToolDefinition): Tool {
+  const mcpTool: Tool = {
+    annotations: tool.annotations,
+    description: tool.description,
+    inputSchema: toJsonSchema(tool.inputSchema, "input"),
+    name: tool.name,
+    title: tool.title,
+  };
+  if (tool.outputSchema) {
+    mcpTool.outputSchema = toJsonSchema(tool.outputSchema, "output");
   }
-  return _client;
-}
-
-export function resetClient() {
-  _client = null;
-}
-
-const TOOLS = [
-  {
-    name: "get_status",
-    description: "Get the current status of the Gaggiuino espresso machine.",
-    inputSchema: { type: "object", properties: {}, required: [] },
-  },
-  {
-    name: "get_latest_shot_id",
-    description: "Get the ID of the most recent espresso shot.",
-    inputSchema: { type: "object", properties: {}, required: [] },
-  },
-  {
-    name: "get_shot_data",
-    description: "Get a structured summary of a specific espresso shot.",
-    inputSchema: {
-      type: "object",
-      properties: { shot_id: { type: "string", description: "Shot ID" } },
-      required: ["shot_id"],
-    },
-  },
-  {
-    name: "get_shot_raw_data",
-    description: "Get complete raw datapoints for a shot.",
-    inputSchema: {
-      type: "object",
-      properties: { shot_id: { type: "string", description: "Shot ID" } },
-      required: ["shot_id"],
-    },
-  },
-  {
-    name: "list_profiles",
-    description: "List all available espresso brew profiles.",
-    inputSchema: { type: "object", properties: {}, required: [] },
-  },
-  {
-    name: "get_profile_info",
-    description: "Get detailed information about a specific brew profile.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        profile_id: { type: "string", description: "Profile ID" },
-      },
-      required: ["profile_id"],
-    },
-  },
-  {
-    name: "get_dial_in_guidance",
-    description: "Get expert guidance for dialing in espresso.",
-    inputSchema: { type: "object", properties: {}, required: [] },
-  },
-  {
-    name: "view_shot_graph",
-    description:
-      "Renders an interactive espresso shot graph. Shows pressure, flow, weight flow, and weight over time with target profiles overlaid. Automatically annotates key metrics (peak pressure, first drip) on the chart. Optionally compares two shots side by side — the user can also click 'Compare previous' in the graph to load the prior shot without a new tool call.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        shot_id: {
-          type: "string",
-          description: "ID of the shot to visualize",
-        },
-        compare_shot_id: {
-          type: "string",
-          description: "Optional ID of a second shot to overlay for comparison",
-        },
-      },
-      required: ["shot_id"],
-    },
-    _meta: {
-      ui: { resourceUri: "ui://shot-graph/app.html" },
-    },
-  },
-  {
-    name: "get_shot_raw_json",
-    description: "Get raw shot data as JSON for the shot graph UI.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        shot_id: { type: "string", description: "Shot ID" },
-      },
-      required: ["shot_id"],
-    },
-    _meta: {
-      ui: {
-        resourceUri: "ui://shot-graph/app.html",
-        visibility: ["app"],
-      },
-    },
-  },
-];
-
-function formatStatus(status: Record<string, unknown>): string {
-  const brewActive = String(status.brewSwitchState).toLowerCase() === "true";
-  const steamActive = String(status.steamSwitchState).toLowerCase() === "true";
-  return [
-    "Gaggiuino Machine Status:",
-    `  Profile: ${status.profileName ?? "N/A"}`,
-    `  Temperature: ${status.temperature ?? "N/A"}°C (target: ${status.targetTemperature ?? "N/A"}°C)`,
-    `  Pressure: ${status.pressure ?? "N/A"} bar`,
-    `  Weight: ${status.weight ?? "N/A"} g`,
-    `  Water Level: ${status.waterLevel ?? "N/A"}%`,
-    `  Brew Switch: ${brewActive ? "ON" : "OFF"}`,
-    `  Steam Switch: ${steamActive ? "ON" : "OFF"}`,
-    `  Uptime: ${status.upTime ?? "N/A"} seconds`,
-  ].join("\n");
-}
-
-function formatRawShotData(shot: Record<string, unknown>): string {
-  const profile = (shot.profile ?? {}) as Record<string, unknown>;
-  const globalStop = (profile.globalStopConditions ?? {}) as Record<
-    string,
-    unknown
-  >;
-  const duration = (shot.duration as number) ?? 0;
-  const lines = [
-    `Shot #${shot.id ?? "N/A"} Raw Data`,
-    `Duration: ${(duration / 10).toFixed(1)}s`,
-    "",
-    "Profile:",
-    `  Name: ${profile.name ?? "Unknown"}`,
-  ];
-  const stopParts: string[] = [];
-  if (globalStop.weight !== undefined)
-    stopParts.push(`weight: ${globalStop.weight}g`);
-  if (globalStop.time !== undefined)
-    stopParts.push(`time: ${(globalStop.time as number) / 1000}s`);
-  if (stopParts.length > 0)
-    lines.push(`  Stop Conditions: ${stopParts.join(", ")}`);
-  lines.push("", "Datapoints:");
-  const datapoints = (shot.datapoints ?? {}) as Record<string, number[]>;
-  for (const [fieldName, values] of Object.entries(datapoints)) {
-    if (Array.isArray(values) && values.length > 0) {
-      if (SCALE_BY_10.has(fieldName)) {
-        const normalized = values.map((v) => normalizeValue(v, fieldName));
-        lines.push(`  ${fieldName}: ${JSON.stringify(normalized)}`);
-      } else {
-        lines.push(`  ${fieldName}: ${JSON.stringify(values)}`);
-      }
-    }
+  if (tool.meta) {
+    mcpTool._meta = tool.meta;
   }
-  return lines.join("\n");
+  return mcpTool;
 }
 
-async function fetchShotSummary(shotId: string): Promise<string> {
-  const shot = await getClient().getShotData(shotId);
-  return formatShotSummary(generateShotSummary(shot));
+/** The advertised tool list, derived from the same schemas the dispatcher enforces. */
+export const TOOLS: Tool[] = TOOL_DEFINITIONS.map(toMcpTool);
+
+export interface ToolOutcome {
+  isError?: boolean;
+  structuredContent?: Record<string, unknown>;
+  text: string;
 }
 
+function describeInvalidInput(toolName: string, error: z.ZodError): string {
+  const fields = error.issues
+    .map((issue) => {
+      const path = issue.path.join(".");
+      return `  - ${path || "(arguments)"}: ${issue.message}`;
+    })
+    .join("\n");
+  return `Invalid arguments for ${toolName}:\n${fields}\nCheck the tool's input schema and call it again with corrected arguments.`;
+}
+
+/**
+ * The one place a tool call is validated and run.
+ *
+ * Input is parsed against the tool's zod schema before the handler sees it, so
+ * no handler casts or guesses. Expected failures — bad arguments, a shot that
+ * does not exist, a machine that will not answer — come back as `isError`
+ * outcomes the model can act on. Anything else is a bug and is allowed to
+ * throw.
+ */
 export async function handleToolCall(
   name: string,
   args: Record<string, unknown>,
-): Promise<string> {
-  switch (name) {
-    case "get_status": {
-      const status = await getClient().getStatus();
-      return formatStatus(status as unknown as Record<string, unknown>);
-    }
-    case "get_latest_shot_id": {
-      const shotId = await getClient().getLatestShotId();
-      if (!shotId) return "No shot history available.";
-      return `Latest shot ID: ${shotId}`;
-    }
-    case "get_shot_data": {
-      return fetchShotSummary(args.shot_id as string);
-    }
-    case "get_shot_raw_data": {
-      const shotId = args.shot_id as string;
-      const shot = await getClient().getShotData(shotId);
-      return formatRawShotData(shot as unknown as Record<string, unknown>);
-    }
-    case "list_profiles": {
-      return `# Available Brew Profiles\n\n${getAllProfilesText()}`;
-    }
-    case "get_profile_info": {
-      const profileId = args.profile_id as string;
-      const profile = getProfile(profileId);
-      if (!profile) {
-        return `Profile '${profileId}' not found. Available: ${listProfileNames().join(", ")}`;
-      }
-      return [
-        `# ${profile.name}`,
-        "",
-        `**Type:** ${profile.type}`,
-        `**Best for:** ${profile.roastLevel.join(", ")} roasts`,
-        `**Target ratio:** ${profile.targetRatio}`,
-        `**Target time:** ${profile.targetTime}`,
-        "",
-        "## Description",
-        "",
-        profile.description,
-      ].join("\n");
-    }
-    case "get_dial_in_guidance": {
-      const prompts = loadPrompts();
-      const prompt = prompts.espresso_shot_analyst;
-      if (!prompt) {
-        throw new Error("Missing prompt: espresso_shot_analyst");
-      }
-      const profilesText = getAllProfilesText();
-      const userContext = prompt.userContext ?? "";
-      return prompt.template
-        .replace("{user_context}", userContext)
-        .replace("{profiles_text}", profilesText);
-    }
-    case "view_shot_graph": {
-      const summary = await fetchShotSummary(args.shot_id as string);
-      const parts = [summary];
-      if (args.compare_shot_id) {
-        parts.push(
-          "",
-          "---",
-          "Comparison shot:",
-          await fetchShotSummary(args.compare_shot_id as string),
-        );
-      }
-      parts.push(
-        "",
-        `[Interactive shot graph rendered above${args.compare_shot_id ? " with comparison overlay" : ""}]`,
-      );
-      return parts.join("\n");
-    }
-    case "get_shot_raw_json": {
-      const shotId = args.shot_id as string;
-      const shot = await getClient().getShotData(shotId);
-      return JSON.stringify(shot);
-    }
-    default:
-      throw new Error(`Unknown tool: ${name}`);
+): Promise<ToolOutcome> {
+  const tool = TOOLS_BY_NAME.get(name);
+  if (!tool) {
+    throw new Error(`Unknown tool: ${name}`);
   }
+
+  const parsed = tool.inputSchema.safeParse(args);
+  if (!parsed.success) {
+    return { isError: true, text: describeInvalidInput(name, parsed.error) };
+  }
+
+  let reply: Awaited<ReturnType<ToolDefinition["handler"]>>;
+  try {
+    reply = await tool.handler(parsed.data);
+  } catch (error) {
+    const actionable = describeUpstreamError(error, MACHINE_URL);
+    if (actionable === null) throw error;
+    return { isError: true, text: actionable };
+  }
+
+  if ("isError" in reply) {
+    return { isError: true, text: reply.text };
+  }
+
+  if (!tool.outputSchema) {
+    return { text: reply.text };
+  }
+
+  // Parsing on the way out keeps `structuredContent` and the advertised
+  // `outputSchema` in lockstep: a handler that drifts from its schema fails
+  // here rather than shipping a payload the host cannot validate.
+  return {
+    structuredContent: tool.outputSchema.parse(reply.structured) as Record<
+      string,
+      unknown
+    >,
+    text: reply.text,
+  };
 }
 
 export function createServer() {
@@ -285,24 +142,22 @@ export function createServer() {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     try {
-      const result = await handleToolCall(name, args ?? {});
-      return { content: [{ type: "text", text: result }] };
+      const outcome = await handleToolCall(name, args ?? {});
+      const result: {
+        content: Array<{ text: string; type: "text" }>;
+        isError?: boolean;
+        structuredContent?: Record<string, unknown>;
+      } = { content: [{ text: outcome.text, type: "text" }] };
+      if (outcome.isError) result.isError = true;
+      if (outcome.structuredContent) {
+        result.structuredContent = outcome.structuredContent;
+      }
+      return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("Failed to connect")) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text: `Could not reach the Gaggiuino machine at ${GAGGIUINO_URL}. The machine may be powered off, asleep, or unreachable on the network. Ask the user to check that it is turned on and connected.`,
-            },
-          ],
-        };
-      }
       return {
+        content: [{ text: `Tool error: ${message}`, type: "text" }],
         isError: true,
-        content: [{ type: "text", text: `Tool error: ${message}` }],
       };
     }
   });

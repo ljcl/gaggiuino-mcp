@@ -10,6 +10,14 @@ export function listProfileNames(): string[] {
   return Object.keys(profiles);
 }
 
+/** Every profile, each carrying the id it is keyed by. */
+export function listProfileEntries(): Array<Profile & { id: string }> {
+  return Object.entries(loadProfiles()).map(([id, profile]) => ({
+    id,
+    ...profile,
+  }));
+}
+
 export function getAllProfilesText(): string {
   const profiles = loadProfiles();
   const lines: string[] = ["## Available Profiles\n"];

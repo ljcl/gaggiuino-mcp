@@ -45,10 +45,10 @@
     },
     "build:storybook": {},
     "test": {
-      "dependsOn": ["topo"]
+      "dependsOn": ["topo", "^build"]
     },
     "test:coverage": {
-      "dependsOn": ["topo"],
+      "dependsOn": ["topo", "^build"],
       "outputs": ["coverage/**"]
     },
     "typecheck": {

@@ -52,6 +52,48 @@ via symlinks in `.claude/skills/`. Externally-sourced skills are tracked in `ski
 | `get_profile_info`     | Detailed profile documentation                 |
 | `get_dial_in_guidance` | Expert dial-in system prompt                   |
 
+### The tool contract
+
+`apps/server/src/tools.ts` holds one `defineTool(...)` entry per tool: zod input
+schema, optional zod output schema, `title`, cold-model `description`,
+annotations, and the handler. Nothing about a tool is declared twice.
+
+- **Advertised schemas are generated, never hand-written.** `server.ts`'s
+  `toJsonSchema` runs `z.toJSONSchema` over the same schema the dispatcher
+  enforces — input schemas in `io: "input"` mode, output schemas in
+  `io: "output"` mode. Do not add a literal JSON Schema to a tool.
+- **`handleToolCall` is the only dispatch point.** It `safeParse`s the input
+  before the handler runs, so handlers receive typed arguments and there are no
+  `as string` casts. Invalid input returns an `isError` result naming the field.
+- **Output schemas are enforced on the way out.** When a tool declares one, the
+  handler's `structured` payload is `.parse()`d before it becomes
+  `structuredContent`, so a handler that drifts from its schema fails loudly
+  instead of shipping something the host will reject. `get_status`,
+  `get_latest_shot_id`, `get_shot_data`, `list_profiles`, and `get_profile_info`
+  carry output schemas; the raw/UI/prose tools are text-only by design.
+  `get_shot_raw_json` in particular must keep returning a JSON **text** block —
+  the shot-graph app does `JSON.parse` on it (`main.tsx:30`).
+- **Annotations are honest, not decorative.** Every tool is
+  `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`. The
+  only axis that varies is `openWorldHint`: true for the tools that reach the
+  machine, false for the three that read bundled YAML. A protocol-level test
+  asserts this for every tool, so a new tool without annotations fails CI.
+- **Expected failures are results, not exceptions.** `errors.ts` defines the
+  three upstream failure classes (`UpstreamUnreachableError`,
+  `UpstreamHttpError`, `MalformedUpstreamError`) and `describeUpstreamError`
+  turns each into text the model can act on — a 404 on a shot points at
+  `get_latest_shot_id` by name. Only genuine bugs are allowed to throw.
+- **Upstream payloads are validated at the client boundary.** `client.ts`
+  parses every machine response with zod. The schemas are deliberately loose
+  (unknown keys preserved, only crash-critical fields required) so a firmware
+  revision cannot take the server down, but an empty array or a truncated body
+  now fails with the offending path named instead of surfacing as
+  `Cannot read properties of undefined` several modules later.
+
+`resetClient(config?)` in `client.ts` is a labelled test seam: it drops the
+cached client and applies the config to the next one, which is how tests
+exercise the retry path without waiting out the real backoff.
+
 ## MCP App (Shot Graph)
 
 https://modelcontextprotocol.io/docs/extensions/apps
@@ -165,6 +207,13 @@ cache-invalidate when upstream JIT packages change source. JIT packages
 (`ui`, `design-system`) export raw TypeScript; only `shot-graph` produces a
 build artifact (the single-file HTML bundle via Vite). The server has no build
 step.
+
+`test` and `test:coverage` also depend on `^build`. This is load-bearing, not
+belt-and-braces: `server.ts` resolves `@gaggiuino/shot-graph/app.html` at module
+load, and that export points at `dist/`, so `apps/server`'s tests cannot even
+import the module until shot-graph has been built. Without the dependency,
+`turbo run test build` is free to start `test` first and fail on a clean
+checkout.
 
 Biome runs as a root task (`//#lint`) — fast enough not to need decomposing.
 Knip runs as a root task (`//#knip`) too: it is a whole-graph dead-code
