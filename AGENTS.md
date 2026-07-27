@@ -556,11 +556,110 @@ curl -X POST http://localhost:8000/mcp \
 
 ## Environment Variables
 
-| Variable        | Default                  | Description           |
-| --------------- | ------------------------ | --------------------- |
-| `GAGGIUINO_URL` | `http://gaggiuino.local` | Gaggiuino machine URL |
-| `PORT`          | `8000`                   | Server port           |
-| `HOST`          | `0.0.0.0`                | Bind address          |
+| Variable              | Default                  | Description                                       |
+| --------------------- | ------------------------ | ------------------------------------------------- |
+| `GAGGIUINO_URL`       | `http://gaggiuino.local` | Gaggiuino machine URL                             |
+| `PORT`                | `8000`                   | Server port                                       |
+| `HOST`                | `0.0.0.0`                | Bind address                                      |
+| `MCP_AUTH_TOKEN`      | _(unset)_                | Bearer secret for `/mcp`; unset serves it open    |
+| `MCP_ALLOWED_ORIGINS` | _(empty)_                | Browser origins allowed on `/mcp`; `*` allows any |
+| `MCP_ALLOWED_HOSTS`   | _(empty)_                | `Host` values to accept; empty disables the check |
+| `LOG_LEVEL`           | `info`                   | `debug`/`info`/`warn`/`error`/`silent`            |
+
+## The HTTP surface
+
+`index.ts` is bootstrap only — read the environment, serve, wire the signals —
+which is why it stays out of the coverage set. Everything it delegates to is
+covered:
+
+- `http.ts` — `createFetchHandler({ security })` returns a `fetch` plus the live
+  session map. Tests drive it with real `Request` objects and never bind a port.
+- `mcpAuth.ts` — `loadSecurityConfig` / `checkRequest` / `describeSecurity`.
+  `checkRequest` returns the `Response` to send, or `undefined` to proceed.
+- `mcpSession.ts` — the bounded, expiring transport registry. Generic over a
+  minimal `ClosableSession`, and its clock is injected, so its tests assert
+  "after 31 minutes of silence" without a timer or a wait.
+
+Three things about the gate are load-bearing:
+
+- **`/health` is routed before it.** The container HEALTHCHECK presents no
+  credential and no `Origin`; a liveness probe that needs a token reports the
+  token's health.
+- **Origin is checked before the token.** Otherwise the 401/403 split tells an
+  unauthenticated cross-origin prober whether a token is configured at all.
+- **An absent `Origin` always passes.** Non-browser clients (Claude Desktop,
+  `curl`) send none, so the empty default allowlist blocks exactly the
+  browser-initiated cross-origin case and nothing else. That is what lets the
+  default be deny-all without breaking every install.
+
+Validation runs as middleware in `fetch` rather than through the transport's
+`enableDnsRebindingProtection` / `allowedHosts` / `allowedOrigins` options:
+those are all `@deprecated` as of SDK 1.30.0 in favour of external middleware,
+and doing it here rejects a request before the body is read or a transport is
+allocated.
+
+`secretsMatch` hashes both values before `timingSafeEqual`. That is not
+decoration — `timingSafeEqual` throws on a length mismatch, and the obvious
+guard (`a.length !== b.length`) leaks the secret's length. Two SHA-256 digests
+are always 32 bytes.
+
+`scripts/test-auth.sh` probes a running server for all of the above. It tests
+bearer auth, not OAuth — the server implements no OAuth and advertises no
+discovery document.
+
+### Session lifetime
+
+Sessions expire on an idle TTL (30 min) and are capped (64). The two are not
+redundant: the TTL reclaims sessions whose client vanished without a DELETE — a
+dropped tunnel, a restarted host — and the cap bounds anything that outruns it.
+`tryReserve()` sweeps *before* it refuses, so a burst of abandoned sessions
+cannot lock out a client that arrives later; over the cap the handler answers
+503 rather than allocating.
+
+Two ordering details in `sweep()` are load-bearing. It deletes each entry before
+calling `close()`, because the real transport's `onclose` calls straight back
+into `delete` — closing first means mutating the map mid-iteration. And each
+`close()` is individually caught, so one transport that refuses to die does not
+strand the rest of the sweep. Both have tests named after the failure.
+
+`index.ts` handles **SIGTERM as well as SIGINT** — `docker stop` sends SIGTERM,
+so handling only SIGINT meant the container was killed after the grace period
+with every session still open. It stops the listener before draining, so nothing
+lands on a transport that is closing.
+
+### Logging, health, and startup validation
+
+`logging.ts` writes one JSON object per line to stderr, each with an `event`
+name (`tool.call`, `session.opened`, `security.unauthenticated`,
+`config.invalid`, …). The level resolves **lazily on first use**, not at module
+load — that is what lets `test-setup.ts` call `setLogLevel("silent")` and have
+it apply regardless of import order. `createLogger` takes an injectable sink and
+clock so `logging.test.ts` asserts whole records without capturing stderr; the
+tool-call assertions in `server.test.ts` deliberately spy on the real
+`console.error` instead, so the default sink stays in the loop.
+
+Every tool call is one record with `tool`, `durationMs`, and `outcome`. On an
+expected failure it also carries `reason` — the same actionable text the model
+got, because a bare `"error"` throws away the only useful part. A genuine bug
+logs `tool.error` at error level with the stack.
+
+`/health` returns JSON (`buildHealth` in `health.ts`) and **stays 200 while the
+machine is unreachable**. That is load-bearing: the container HEALTHCHECK reads
+the status code, and the espresso machine is switched off most of the day.
+Upstream state is a field, never the status code.
+
+`machine.state` is observed from the requests the server already makes
+(`recordUpstream` in `client.ts`), not from a probe — the upstream is an ESP32
+on Wi-Fi and a timer-driven ping would load the one device the caching work in
+#30 is trying to spare. So an unused server honestly reports `unknown`. Any HTTP
+response counts as reachable, including a 404: it proves the network path works.
+`resetClient` clears the observed state along with the client, so one test's
+failed fetch cannot leak into the next.
+
+`config.ts` validates `PORT` and `GAGGIUINO_URL` before the port is bound and
+names the offending variable. `PORT` previously went through a bare `Number()`
+with no NaN guard, and `GAGGIUINO_URL` was never parsed — a missing `http://`
+surfaced much later as a failed fetch blamed on the machine being offline.
 
 ## Backlog and issue tracking
 

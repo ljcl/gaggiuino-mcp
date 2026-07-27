@@ -1,107 +1,68 @@
-import { randomUUID } from "node:crypto";
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { createServer } from "./server";
+import { ConfigError, loadServerConfig } from "./config";
+import { createFetchHandler } from "./http";
+import { logger } from "./logging";
+import { describeSecurity, loadSecurityConfig } from "./mcpAuth";
+import { SERVER_VERSION } from "./version";
 
-const PORT = Number(process.env.PORT ?? 8000);
-const HOST = process.env.HOST ?? "0.0.0.0";
+/**
+ * Bootstrap only: validate the environment, serve, wire the signals. Everything
+ * with behaviour worth asserting lives in a module this imports, which is why
+ * this file is the one exclusion from the coverage set.
+ */
 
-// Map of session ID -> transport
-const transports = new Map<string, WebStandardStreamableHTTPServerTransport>();
-
-function createTransport(): WebStandardStreamableHTTPServerTransport {
-  const transport = new WebStandardStreamableHTTPServerTransport({
-    sessionIdGenerator: () => randomUUID(),
-    onsessioninitialized: (sessionId) => {
-      console.error(`Session initialized: ${sessionId}`);
-      transports.set(sessionId, transport);
-    },
-  });
-  transport.onclose = () => {
-    if (transport.sessionId) {
-      console.error(`Session closed: ${transport.sessionId}`);
-      transports.delete(transport.sessionId);
-    }
-  };
-  return transport;
+let config: ReturnType<typeof loadServerConfig>;
+try {
+  config = loadServerConfig();
+} catch (error) {
+  if (!(error instanceof ConfigError)) throw error;
+  // Fail before binding a port, and name the variable. A bad PORT used to bind
+  // NaN and a bad GAGGIUINO_URL used to surface much later as a failed fetch
+  // inside a tool call, blamed on the machine being offline.
+  logger.error("config.invalid", { message: error.message });
+  process.exit(1);
 }
 
-async function handleMcp(req: Request): Promise<Response> {
-  const sessionId = req.headers.get("mcp-session-id");
+const security = loadSecurityConfig();
+const handler = createFetchHandler({ security });
 
-  if (req.method === "GET" || req.method === "DELETE") {
-    const transport = sessionId ? transports.get(sessionId) : undefined;
-    if (!transport) {
-      return new Response("Invalid or missing session ID", { status: 400 });
-    }
-    return transport.handleRequest(req);
-  }
-
-  if (req.method === "POST") {
-    const body = await req.json();
-
-    // Reuse existing session
-    if (sessionId) {
-      const transport = transports.get(sessionId);
-      if (!transport) {
-        return new Response("Invalid session ID", { status: 404 });
-      }
-      return transport.handleRequest(req, { parsedBody: body });
-    }
-
-    // New session — must be an initialize request
-    if (isInitializeRequest(body)) {
-      const transport = createTransport();
-      const server = createServer();
-      await server.connect(transport);
-      return transport.handleRequest(req, { parsedBody: body });
-    }
-
-    return new Response(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        error: { code: -32000, message: "Bad Request: No valid session ID" },
-        id: null,
-      }),
-      { status: 400, headers: { "Content-Type": "application/json" } },
-    );
-  }
-
-  return new Response("Method not allowed", { status: 405 });
+logger.info("server.starting", {
+  machineUrl: config.machineUrl,
+  version: SERVER_VERSION,
+});
+for (const report of describeSecurity(security)) {
+  logger[report.level](report.event, report.fields);
 }
 
-console.error("Starting Gaggiuino MCP server...");
-console.error(
-  `Connecting to: ${process.env.GAGGIUINO_URL ?? "http://gaggiuino.local"}`,
-);
-
-Bun.serve({
-  port: PORT,
-  hostname: HOST,
-  fetch(req) {
-    const url = new URL(req.url);
-
-    if (url.pathname === "/mcp") {
-      return handleMcp(req);
-    }
-
-    if (url.pathname === "/health") {
-      return new Response("ok");
-    }
-
-    return new Response("Not found", { status: 404 });
-  },
+const server = Bun.serve({
+  fetch: handler.fetch,
+  hostname: config.host,
+  port: config.port,
 });
 
-console.error(`Listening on http://${HOST}:${PORT}`);
-console.error(`MCP endpoint: http://${HOST}:${PORT}/mcp`);
+const stopReaper = handler.startReaper();
 
-// Graceful shutdown
-process.on("SIGINT", async () => {
-  console.error("Shutting down...");
-  for (const [id, transport] of transports) {
-    console.error(`Closing session ${id}`);
-    await transport.close();
-  }
+logger.info("server.listening", {
+  host: config.host,
+  mcpEndpoint: `http://${config.host}:${config.port}/mcp`,
+  port: config.port,
+});
+
+/**
+ * `docker stop` sends SIGTERM, so handling only SIGINT meant the container was
+ * killed after the grace period with every session still open. Stop accepting
+ * first, then drain, so nothing lands on a transport that is being closed.
+ */
+let shuttingDown = false;
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info("server.stopping", { sessions: handler.sessions.size, signal });
+  stopReaper();
+  await server.stop();
+  await handler.shutdown();
+  logger.info("server.stopped", { signal });
   process.exit(0);
-});
+}
+
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));
