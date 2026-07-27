@@ -1,0 +1,74 @@
+@import "@gaggiuino/design-system/tokens.css";
+
+.root {
+  font-family: var(--font-sans);
+}
+
+/* Whole-view failure: the app has nothing else to show. */
+.root[data-variant="block"] {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 24px;
+  background: var(--color-background-secondary);
+  border-radius: var(--border-radius-md);
+}
+
+/* Partial failure: the view is still useful, one piece of it is not. */
+.root[data-variant="banner"] {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-sm);
+}
+
+.title {
+  font-size: var(--font-text-sm-size);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-danger);
+}
+
+.message {
+  font-size: var(--font-text-sm-size);
+  line-height: var(--font-text-sm-line-height);
+  color: var(--color-text-secondary);
+}
+
+.root[data-variant="banner"] .message {
+  font-size: var(--font-text-xs-size);
+  color: var(--color-text-danger);
+}
+
+.retry {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: var(--font-text-sm-size);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  background: none;
+  border: 1px solid var(--color-border-secondary);
+  border-radius: var(--border-radius-sm);
+}
+
+.root[data-variant="banner"] .retry {
+  padding: 2px 8px;
+  font-size: var(--font-text-xs-size);
+}
+
+.retry:hover:not(:disabled) {
+  background: var(--color-background-tertiary);
+}
+
+.retry:disabled {
+  cursor: default;
+  opacity: 0.5;
+}

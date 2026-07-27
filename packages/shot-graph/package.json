@@ -10,6 +10,7 @@
   "scripts": {
     "build": "INPUT=app.html vite build",
     "dev": "INPUT=app.html vite build --watch",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -29,6 +30,7 @@
     "@types/react-dom": "19.2.3",
     "storybook": "10.5.5",
     "typescript": "7.0.2",
-    "vite": "8.1.5"
+    "vite": "8.1.5",
+    "vitest": "4.1.10"
   }
 }

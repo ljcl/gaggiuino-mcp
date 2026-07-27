@@ -42,3 +42,10 @@
   border-radius: var(--border-radius-full);
   animation: shimmer 1.6s ease-in-out infinite;
 }
+
+.message {
+  font-family: var(--font-sans);
+  font-size: var(--font-text-sm-size);
+  color: var(--color-text-tertiary);
+  text-align: center;
+}

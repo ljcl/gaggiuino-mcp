@@ -16,3 +16,19 @@ export const Chart: Story = {
     </div>
   ),
 };
+
+/**
+ * Slow-fetch state: once a request has run long enough that a silent shimmer
+ * starts to read as a hang, the skeleton says what it is waiting for.
+ */
+export const SlowFetch: Story = {
+  args: {
+    message: "Still waiting on the machine…",
+    variant: "chart",
+  },
+  render: (args) => (
+    <div style={{ maxWidth: 720 }}>
+      <Skeleton {...args} />
+    </div>
+  ),
+};

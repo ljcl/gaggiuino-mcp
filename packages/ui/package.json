@@ -7,16 +7,21 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@gaggiuino/design-system": "workspace:*",
+    "@modelcontextprotocol/ext-apps": "1.7.5",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "react": "19.2.8"
   },
   "devDependencies": {
     "@gaggiuino/tsconfig": "workspace:*",
     "@storybook/react": "10.5.5",
     "@types/react": "19.2.17",
-    "typescript": "7.0.2"
+    "storybook": "10.5.5",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
   }
 }
