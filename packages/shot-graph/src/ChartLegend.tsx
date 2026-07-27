@@ -3,7 +3,8 @@ import { COLORS, METRICS } from "./constants";
 
 interface ChartLegendProps {
   hidden: Set<string>;
-  onToggle: (key: string) => void;
+  /** Toggles every key in one update, so paired series never race each other. */
+  onToggle: (keys: readonly string[]) => void;
   hasComparison: boolean;
   mode: "mobile" | "desktop";
 }
@@ -22,8 +23,7 @@ export function ChartLegend({
 }: ChartLegendProps) {
   if (mode === "mobile") {
     const handleClick = (key: string) => {
-      onToggle(key);
-      if (hasComparison) onToggle(`${key}Cmp`);
+      onToggle(hasComparison ? [key, `${key}Cmp`] : [key]);
     };
     return (
       <div
@@ -65,7 +65,7 @@ export function ChartLegend({
             color={color}
             label={label}
             hidden={hidden.has(key)}
-            onClick={() => onToggle(key)}
+            onClick={() => onToggle([key])}
           />
         ))}
       </Legend>
@@ -76,28 +76,28 @@ export function ChartLegend({
             label="Pressure (cmp)"
             faded
             hidden={hidden.has("pressureCmp")}
-            onClick={() => onToggle("pressureCmp")}
+            onClick={() => onToggle(["pressureCmp"])}
           />
           <LegendItem
             color={COLORS.pumpFlow}
             label="Flow (cmp)"
             faded
             hidden={hidden.has("pumpFlowCmp")}
-            onClick={() => onToggle("pumpFlowCmp")}
+            onClick={() => onToggle(["pumpFlowCmp"])}
           />
           <LegendItem
             color={COLORS.weightFlow}
             label="Weight Flow (cmp)"
             faded
             hidden={hidden.has("weightFlowCmp")}
-            onClick={() => onToggle("weightFlowCmp")}
+            onClick={() => onToggle(["weightFlowCmp"])}
           />
           <LegendItem
             color={COLORS.shotWeight}
             label="Weight (cmp)"
             faded
             hidden={hidden.has("shotWeightCmp")}
-            onClick={() => onToggle("shotWeightCmp")}
+            onClick={() => onToggle(["shotWeightCmp"])}
           />
         </Legend>
       )}

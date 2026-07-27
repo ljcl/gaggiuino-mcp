@@ -1,36 +1,62 @@
-import { Skeleton } from "@gaggiuino/ui";
 import {
-  type App as McpApp,
-  type McpUiHostContext,
-} from "@modelcontextprotocol/ext-apps";
-import { useApp, useHostStyles } from "@modelcontextprotocol/ext-apps/react";
+  AppShell,
+  CollapseIcon,
+  callServerToolData,
+  canDownloadFiles,
+  DownloadIcon,
+  describeToolError,
+  downloadTextFile,
+  ErrorState,
+  ExpandIcon,
+  type LayoutMode,
+  readToolJson,
+  type ShellHostContext,
+  Skeleton,
+  ToolbarButton,
+  useDisplayMode,
+  useHostRoot,
+  useModelContextSync,
+  useServerToolData,
+} from "@gaggiuino/ui";
+import { type App as McpApp } from "@modelcontextprotocol/ext-apps";
 import { type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import {
-  StrictMode,
-  useCallback,
-  useEffect,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { StrictMode, useCallback, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { buildShotContextSummary } from "./contextSummary";
+import { shotCsv, shotCsvFilename } from "./csv";
 import { extractAnnotations, extractMeta, toChartData } from "./normalize";
 import { ShotGraph } from "./ShotGraph";
 import { type ShotData } from "./types";
 import "./global.css";
+
+/** App-visibility tool that serves the raw shot JSON this chart plots. */
+const RAW_JSON_TOOL = "get_shot_raw_json";
+
+const NO_HIDDEN_SERIES: ReadonlySet<string> = new Set();
 
 interface ToolArgs {
   shot_id: string;
   compare_shot_id?: string;
 }
 
-function parseShotFromResult(result: CallToolResult): ShotData | null {
-  const text = result.content?.find((c) => c.type === "text")?.text;
-  if (!text) return null;
-  try {
-    return JSON.parse(text) as ShotData;
-  } catch {
-    return null;
-  }
+/**
+ * Narrow the host's tool arguments. Returning `null` keeps the app in its
+ * "waiting for shot data" state rather than mounting a chart with no shot.
+ */
+function parseToolArgs(
+  args: Record<string, unknown> | undefined,
+): ToolArgs | null {
+  const shotId = args?.shot_id;
+  if (typeof shotId !== "string" || shotId === "") return null;
+  const compareId = args?.compare_shot_id;
+  return {
+    compare_shot_id: typeof compareId === "string" ? compareId : undefined,
+    shot_id: shotId,
+  };
+}
+
+function parseShot(result: CallToolResult, toolName: string): ShotData {
+  return readToolJson<ShotData>(result, toolName);
 }
 
 function extractPhaseBoundaries(shot: ShotData): number[] {
@@ -64,326 +90,253 @@ function extractPhaseBoundaries(shot: ShotData): number[] {
 interface AppContentProps {
   app: McpApp;
   toolArgs: ToolArgs;
-  safeAreaInsets?: McpUiHostContext["safeAreaInsets"];
-  mode: "mobile" | "desktop";
+  hostContext: ShellHostContext;
+  mode: LayoutMode;
 }
 
-function AppContent({ app, toolArgs, safeAreaInsets, mode }: AppContentProps) {
-  const [primaryShot, setPrimaryShot] = useState<ShotData | null>(null);
-  const [comparisonShot, setComparisonShot] = useState<ShotData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+function AppContent({ app, toolArgs, hostContext, mode }: AppContentProps) {
+  const primary = useServerToolData<ShotData>({
+    app,
+    arguments: { shot_id: toolArgs.shot_id },
+    parse: parseShot,
+    toolName: RAW_JSON_TOOL,
+  });
+
+  // A comparison the host asked for up front, versus one the user asked for by
+  // clicking "Compare previous". They are tracked apart so a failure in either
+  // can name itself.
+  const hostComparison = useServerToolData<ShotData>({
+    app,
+    arguments: toolArgs.compare_shot_id
+      ? { shot_id: toolArgs.compare_shot_id }
+      : null,
+    parse: parseShot,
+    toolName: RAW_JSON_TOOL,
+  });
+
+  const [userComparison, setUserComparison] = useState<ShotData | null>(null);
   const [compareLoading, setCompareLoading] = useState(false);
   const [compareError, setCompareError] = useState<string | null>(null);
+  const [comparisonDismissed, setComparisonDismissed] = useState(false);
+  const [hiddenSeries, setHiddenSeries] =
+    useState<ReadonlySet<string>>(NO_HIDDEN_SERIES);
 
-  const fetchShot = useCallback(
-    async (shotId: string): Promise<ShotData | null> => {
-      const result = await app.callServerTool({
-        name: "get_shot_raw_json",
-        arguments: { shot_id: shotId },
-      });
-      return parseShotFromResult(result);
-    },
-    [app],
-  );
+  const { canFullscreen, displayMode, isFullscreen, toggleFullscreen } =
+    useDisplayMode(app, hostContext);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        setLoading(true);
-        setError(null);
-        const primary = await fetchShot(toolArgs.shot_id);
-        if (cancelled) return;
-        if (!primary) {
-          setError("Failed to load shot data");
-          return;
-        }
-        setPrimaryShot(primary);
+  const primaryShot = primary.data;
+  const comparisonShot = comparisonDismissed
+    ? null
+    : (userComparison ?? hostComparison.data);
 
-        if (toolArgs.compare_shot_id) {
-          const comparison = await fetchShot(toolArgs.compare_shot_id);
-          if (cancelled) return;
-          setComparisonShot(comparison);
-        }
-      } catch (err) {
-        if (!cancelled) setError(String(err));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-    load();
-    return () => {
-      cancelled = true;
+  const view = useMemo(() => {
+    if (!primaryShot) return null;
+    return {
+      annotations: extractAnnotations(primaryShot),
+      chartData: toChartData(primaryShot, comparisonShot ?? undefined),
+      comparisonAnnotations: comparisonShot
+        ? extractAnnotations(comparisonShot)
+        : undefined,
+      comparisonMeta: comparisonShot ? extractMeta(comparisonShot) : undefined,
+      phaseBoundaries: extractPhaseBoundaries(primaryShot),
+      primaryMeta: extractMeta(primaryShot),
     };
-  }, [toolArgs.shot_id, toolArgs.compare_shot_id, fetchShot]);
+  }, [primaryShot, comparisonShot]);
+
+  const contextSummary = useMemo(
+    () =>
+      view
+        ? buildShotContextSummary({
+            annotations: view.annotations,
+            comparison: view.comparisonMeta,
+            comparisonAnnotations: view.comparisonAnnotations,
+            hidden: hiddenSeries,
+            primary: view.primaryMeta,
+          })
+        : null,
+    [view, hiddenSeries],
+  );
+  useModelContextSync(app, contextSummary);
 
   const handleRequestCompare = useCallback(async () => {
-    if (!primaryShot) return;
+    if (!view) return;
     setCompareLoading(true);
     setCompareError(null);
     try {
-      const prevId = String(Number(primaryShot.id) - 1);
-      const shot = await fetchShot(prevId);
-      if (shot) {
-        setComparisonShot(shot);
+      const previousId = String(Number(view.primaryMeta.id) - 1);
+      const shot = await callServerToolData(
+        app,
+        RAW_JSON_TOOL,
+        { shot_id: previousId },
+        parseShot,
+      );
+      setComparisonDismissed(false);
+      setUserComparison(shot);
 
-        // Build a concise comparison summary for the AI
-        const pm = extractMeta(primaryShot);
-        const cm = extractMeta(shot);
-        const summary = [
-          `Shot #${pm.id} (${pm.profileName}): ${pm.weight.toFixed(1)}g in ${pm.duration.toFixed(1)}s`,
-          `Shot #${cm.id} (${cm.profileName}): ${cm.weight.toFixed(1)}g in ${cm.duration.toFixed(1)}s`,
-        ].join("\n");
-
-        // Provide comparison context for the model's next turn
-        app
-          .updateModelContext({
-            content: [
-              {
-                type: "text",
-                text: `The user is comparing two espresso shots side-by-side in the shot graph:\n${summary}`,
-              },
-            ],
-          })
-          .catch(() => {});
-
-        // Send a message to trigger AI analysis
-        app
-          .sendMessage({
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: `I'm now comparing shot #${pm.id} with the previous shot #${cm.id}. Can you briefly analyze the differences between these two shots?`,
-              },
-            ],
-          })
-          .catch(() => {});
-      } else {
-        setCompareError("No previous shot found");
-      }
-    } catch (err) {
-      setCompareError(String(err));
+      // The model gets the numbers from useModelContextSync; this only asks it
+      // to say something about them.
+      app
+        .sendMessage({
+          content: [
+            {
+              text: `I'm now comparing shot #${view.primaryMeta.id} with the previous shot #${shot.id}. Can you briefly analyze the differences between these two shots?`,
+              type: "text",
+            },
+          ],
+          role: "user",
+        })
+        .catch(() => {});
+    } catch (error) {
+      setCompareError(describeToolError(error));
     } finally {
       setCompareLoading(false);
     }
-  }, [primaryShot, app, fetchShot]);
+  }, [app, view]);
 
   const handleDismissCompare = useCallback(() => {
-    setComparisonShot(null);
+    setComparisonDismissed(true);
+    setUserComparison(null);
     setCompareError(null);
   }, []);
 
-  if (loading) {
+  const handleExport = useCallback(() => {
+    if (!view) return;
+    // A declined or cancelled download is a normal outcome of the host's own
+    // save dialog, so there is nothing to report back to the user.
+    downloadTextFile(app, {
+      filename: shotCsvFilename(view.primaryMeta, view.comparisonMeta),
+      mimeType: "text/csv",
+      text: shotCsv(view.chartData, view.comparisonMeta !== undefined),
+    }).catch(() => {});
+  }, [app, view]);
+
+  const canExport = canDownloadFiles(app) && view !== null;
+  const shell = {
+    actions:
+      canExport || canFullscreen ? (
+        <>
+          {canExport && (
+            <ToolbarButton
+              label="Export CSV"
+              mode={mode}
+              onClick={handleExport}
+            >
+              <DownloadIcon />
+            </ToolbarButton>
+          )}
+          {canFullscreen && (
+            <ToolbarButton
+              label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+              mode={mode}
+              onClick={toggleFullscreen}
+              pressed={isFullscreen}
+            >
+              {isFullscreen ? <CollapseIcon /> : <ExpandIcon />}
+            </ToolbarButton>
+          )}
+        </>
+      ) : undefined,
+    displayMode,
+    mode,
+    safeAreaInsets: hostContext.safeAreaInsets,
+  };
+
+  if (primary.status !== "ready" && primary.status !== "error") {
     return (
-      <div style={{ padding: "24px" }}>
-        <Skeleton variant="chart" />
-      </div>
+      <AppShell {...shell}>
+        <Skeleton
+          message={
+            primary.status === "slow"
+              ? "Still waiting on the machine…"
+              : undefined
+          }
+        />
+      </AppShell>
     );
   }
 
-  if (error || !primaryShot) {
+  if (!view) {
     return (
-      <div style={{ padding: "24px", color: "var(--color-text-danger, #c00)" }}>
-        {error ?? "No shot data available"}
-      </div>
+      <AppShell {...shell}>
+        <ErrorState
+          message={
+            primary.error ?? "The machine returned no data for this shot."
+          }
+          onRetry={primary.retry}
+          title="Couldn't load this shot"
+        />
+      </AppShell>
     );
   }
 
-  const chartData = toChartData(primaryShot, comparisonShot ?? undefined);
-  const primaryMeta = extractMeta(primaryShot);
-  const comparisonMeta = comparisonShot
-    ? extractMeta(comparisonShot)
-    : undefined;
-  const phaseBoundaries = extractPhaseBoundaries(primaryShot);
-  const annotations = extractAnnotations(primaryShot);
-  const comparisonAnnotations = comparisonShot
-    ? extractAnnotations(comparisonShot)
-    : undefined;
+  // A failed comparison leaves the primary chart perfectly readable, so it is
+  // reported in a banner rather than replacing the view.
+  const comparisonFailure = compareError
+    ? { message: compareError, onRetry: handleRequestCompare }
+    : hostComparison.status === "error" && hostComparison.error
+      ? { message: hostComparison.error, onRetry: hostComparison.retry }
+      : null;
 
-  // Host-initiated comparison: allow dismiss but not "compare previous"
-  const hostInitiatedCompare = !!toolArgs.compare_shot_id;
+  // Host-initiated comparison: the user can dismiss it, but "compare previous"
+  // would fight the argument the tool was called with.
+  const hostInitiatedCompare = toolArgs.compare_shot_id !== undefined;
 
-  const basePad = mode === "mobile" ? { y: 16, x: 14 } : { y: 24, x: 20 };
-  // Small outer margin on mobile so the card's border isn't clipped by
-  // the host iframe edge (seen on Claude iOS, where the chat card gives
-  // the app iframe zero surrounding padding).
-  const outerMargin = mode === "mobile" ? 3 : 0;
   return (
-    <div
-      style={{
-        margin: outerMargin,
-        background: "var(--color-background-primary)",
-        border: "1px solid var(--color-border-tertiary)",
-        borderRadius: "var(--border-radius-lg)",
-        paddingTop: `calc(${basePad.y}px + ${safeAreaInsets?.top ?? 0}px)`,
-        paddingRight: `calc(${basePad.x}px + ${safeAreaInsets?.right ?? 0}px)`,
-        paddingBottom: `calc(${basePad.y}px + ${safeAreaInsets?.bottom ?? 0}px)`,
-        paddingLeft: `calc(${basePad.x}px + ${safeAreaInsets?.left ?? 0}px)`,
-      }}
-    >
-      {compareError && (
-        <div
-          style={{
-            padding: "4px 8px",
-            fontSize: "var(--font-text-xs-size)",
-            color: "var(--color-text-danger, #c00)",
-          }}
-        >
-          {compareError}
-        </div>
+    <AppShell {...shell}>
+      {comparisonFailure && (
+        <ErrorState
+          message={comparisonFailure.message}
+          onRetry={comparisonFailure.onRetry}
+          retrying={compareLoading}
+          variant="banner"
+        />
       )}
       <ShotGraph
-        data={chartData}
-        primaryMeta={primaryMeta}
-        comparisonMeta={comparisonMeta}
-        phaseBoundaries={phaseBoundaries}
-        annotations={annotations}
-        comparisonAnnotations={comparisonAnnotations}
+        annotations={view.annotations}
+        comparisonAnnotations={view.comparisonAnnotations}
+        comparisonMeta={view.comparisonMeta}
+        compareLoading={compareLoading}
+        data={view.chartData}
+        mode={mode}
+        onDismissCompare={comparisonShot ? handleDismissCompare : undefined}
         onRequestCompare={
           hostInitiatedCompare ? undefined : handleRequestCompare
         }
-        onDismissCompare={comparisonShot ? handleDismissCompare : undefined}
-        compareLoading={compareLoading}
-        mode={mode}
+        onVisibilityChange={setHiddenSeries}
+        phaseBoundaries={view.phaseBoundaries}
+        primaryMeta={view.primaryMeta}
       />
+    </AppShell>
+  );
+}
+
+/** Full-bleed message for the states before the chart can exist at all. */
+function Notice({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ color: "var(--color-text-secondary)", padding: "24px" }}>
+      {children}
     </div>
   );
 }
 
-/**
- * Width (in px) below which the shot graph renders in mobile layout.
- * Chosen to comfortably cover iPhone Pro Max (~430 CSS px), rotated iPads
- * in split view, and narrow desktop side panels where the desktop legend
- * with comparison rows would wrap and collide.
- */
-const MOBILE_BREAKPOINT_PX = 640;
-
-type HostCtx = Pick<
-  McpUiHostContext,
-  | "platform"
-  | "containerDimensions"
-  | "safeAreaInsets"
-  | "deviceCapabilities"
-  | "userAgent"
->;
-
-/**
- * Extract a width hint (in px) from host-reported container dimensions.
- * Supports both fixed `width` and bounded `maxWidth` forms per the MCP
- * Apps spec.
- */
-function widthFromHost(
-  dims: McpUiHostContext["containerDimensions"],
-): number | undefined {
-  if (!dims) return undefined;
-  if ("width" in dims && typeof dims.width === "number") return dims.width;
-  if ("maxWidth" in dims && typeof dims.maxWidth === "number")
-    return dims.maxWidth;
-  return undefined;
-}
-
-/**
- * Subscribe to window.innerWidth so we re-render when the iframe is
- * resized. This is our most reliable mobile signal when the host doesn't
- * populate `platform` or `containerDimensions` (e.g. current Claude iOS
- * builds).
- */
-function useViewportWidth(): number {
-  return useSyncExternalStore(
-    (notify) => {
-      window.addEventListener("resize", notify);
-      return () => window.removeEventListener("resize", notify);
-    },
-    () => window.innerWidth,
-    () => MOBILE_BREAKPOINT_PX + 1,
-  );
-}
-
-/**
- * Decide whether to render the mobile layout. Combines every signal the
- * host is willing to give us:
- *
- * 1. Explicit `platform === "mobile"` (strongest)
- * 2. Touch-only device (touch && !hover) via deviceCapabilities
- * 3. Host-reported container width/maxWidth under the breakpoint
- * 4. Actual iframe `window.innerWidth` under the breakpoint (fallback)
- * 5. UA sniff for iPhone/iPad/Android (last resort)
- *
- * Any single signal triggers mobile. This is intentional: falsely rendering
- * mobile on desktop is a minor cosmetic issue, but falsely rendering
- * desktop on mobile (what we're seeing today) squishes the chart into an
- * unreadable state.
- */
-function detectMobile(host: HostCtx, viewportWidth: number): boolean {
-  if (host.platform === "mobile") return true;
-
-  const caps = host.deviceCapabilities;
-  if (caps?.touch === true && caps?.hover === false) return true;
-
-  const hostWidth = widthFromHost(host.containerDimensions);
-  if (hostWidth !== undefined && hostWidth < MOBILE_BREAKPOINT_PX) return true;
-
-  if (viewportWidth < MOBILE_BREAKPOINT_PX) return true;
-
-  const ua = host.userAgent ?? navigator.userAgent ?? "";
-  if (/iPhone|iPad|iPod|Android|Mobile/i.test(ua)) return true;
-
-  return false;
-}
-
 function Root() {
-  const [toolArgs, setToolArgs] = useState<ToolArgs | null>(null);
-  const [hostCtx, setHostCtx] = useState<HostCtx>({});
-
-  const { app, error: connectError } = useApp({
-    appInfo: { name: "Shot Graph", version: "1.0.0" },
-    capabilities: {},
-    onAppCreated: (app) => {
-      app.ontoolinput = (input) => {
-        const args = input.arguments as ToolArgs | undefined;
-        if (args?.shot_id) {
-          setToolArgs(args);
-        }
-      };
-      app.onhostcontextchanged = (ctx) => {
-        setHostCtx({
-          platform: ctx.platform,
-          containerDimensions: ctx.containerDimensions,
-          safeAreaInsets: ctx.safeAreaInsets,
-          deviceCapabilities: ctx.deviceCapabilities,
-          userAgent: ctx.userAgent,
-        });
-      };
-      app.onerror = console.error;
-    },
-  });
-
-  const viewportWidth = useViewportWidth();
-
-  useHostStyles(app, app?.getHostContext());
+  const { app, connectError, hostContext, mode, toolInput } =
+    useHostRoot<ToolArgs>({
+      appInfo: { name: "Shot Graph", version: "1.0.0" },
+      parseToolInput: parseToolArgs,
+    });
 
   if (connectError)
-    return (
-      <div style={{ padding: "24px" }}>
-        Connection error: {connectError.message}
-      </div>
-    );
-  if (!app) return <div style={{ padding: "24px" }}>Connecting...</div>;
-  if (!toolArgs)
-    return <div style={{ padding: "24px" }}>Waiting for shot data...</div>;
-
-  const mode: "mobile" | "desktop" = detectMobile(hostCtx, viewportWidth)
-    ? "mobile"
-    : "desktop";
+    return <Notice>Connection error: {connectError.message}</Notice>;
+  if (!app) return <Notice>Connecting…</Notice>;
+  if (!toolInput) return <Notice>Waiting for shot data…</Notice>;
 
   return (
     <AppContent
       app={app}
-      toolArgs={toolArgs}
-      safeAreaInsets={hostCtx.safeAreaInsets}
+      hostContext={hostContext}
       mode={mode}
+      toolArgs={toolInput}
     />
   );
 }

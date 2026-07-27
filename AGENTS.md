@@ -14,7 +14,7 @@ Remote MCP server for integrating a Gaggiuino espresso machine with AI tools.
 - `apps/server/` - MCP server (tools, prompts, resources, client)
 - `apps/storybook/` - Standalone Storybook app, serves stories from all packages
 - `packages/shot-graph/` - React + Recharts MCP App for interactive shot graphs
-- `packages/ui/` - Shared presentational React components (Legend, Skeleton, Tooltip)
+- `packages/ui/` - Shared MCP app shell: host plumbing (`src/host/`) plus presentational components (AppShell, ErrorState, ToolbarButton, Legend, Skeleton, Tooltip)
 - `packages/design-system/` - Shared design tokens, components, and host theme presets
 - `packages/vite-config/` - Shared Vite config helpers for MCP Apps
 - `packages/tsconfig/` - Shared TypeScript configurations
@@ -73,7 +73,7 @@ annotations, and the handler. Nothing about a tool is declared twice.
   `get_latest_shot_id`, `get_shot_data`, `list_profiles`, and `get_profile_info`
   carry output schemas; the raw/UI/prose tools are text-only by design.
   `get_shot_raw_json` in particular must keep returning a JSON **text** block —
-  the shot-graph app does `JSON.parse` on it (`main.tsx:30`).
+  the shot-graph app parses it with `readToolJson` (`packages/ui/src/host/toolResult.ts`).
 - **Annotations are honest, not decorative.** Every tool is
   `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`. The
   only axis that varies is `openWorldHint`: true for the tools that reach the
@@ -102,10 +102,46 @@ https://modelcontextprotocol.io/docs/extensions/apps
 The `view_shot_graph` tool renders an interactive Recharts chart in MCP-compatible hosts.
 
 - Uses `@modelcontextprotocol/ext-apps` SDK with React hooks (`useApp`, `useHostStyles`)
-- Bundled as single HTML file via `vite-plugin-singlefile` (~930KB)
+- Bundled as single HTML file via `vite-plugin-singlefile` (~1MB)
 - Served as MCP resource at `ui://shot-graph/app.html`
 - Calls `get_shot_raw_json` (app-only visibility) to fetch data after render
 - Supports shot comparison overlay
+
+### The app shell (`packages/ui`)
+
+Host plumbing lives in `packages/ui/src/host/` so a second espresso view (steam
+dashboard, shot trends) starts from the shell rather than a copy of `main.tsx`.
+`main.tsx` is now composition: parse tool input, fetch, render.
+
+| Module | Responsibility |
+| --- | --- |
+| `useHostRoot` | `useApp` + `useHostStyles`, tool-input parsing, host-context tracking, mobile/desktop detection |
+| `useServerToolData` | Fetch/slow/ready/error/retry state machine over `callServerTool` |
+| `useDisplayMode` | `requestDisplayMode`, gated on the host's `availableDisplayModes` |
+| `useModelContextSync` | Debounced, deduplicated `updateModelContext` |
+| `toolResult.ts` | `readToolJson` / `describeToolError` — the only place a tool result is read |
+| `download.ts` | `canDownloadFiles`, `downloadTextFile`, `toCsv` |
+| `layoutMode.ts` | Pure mobile-detection signals, unit-tested |
+
+Three rules the shell exists to enforce:
+
+- **Never invent an error message.** `readToolJson` throws `ServerToolError`
+  carrying the server's own text, and `describeToolError` passes it through
+  untouched. The server writes its diagnostics to be actionable ("the machine
+  may be powered off"); replacing them with "Failed to load shot data" throws
+  that away.
+- **Every host capability is gated before it is offered.** Fullscreen renders
+  only when `availableDisplayModes` includes it; export only when the host
+  advertises `downloadFile`. A button that silently does nothing is worse than
+  no button.
+- **Components stay presentational.** `AppShell`, `ErrorState`, and
+  `ToolbarButton` take props, not an `App`, so Storybook renders every state
+  and the hooks stay the only thing that touches the host.
+
+`useHostRoot` seeds host context from `app.getHostContext()` on connect as well
+as from `host-context-changed`. This is load-bearing: hosts send
+`availableDisplayModes` in the initialize result and may never send it again,
+so an app that only listens for the notification never offers fullscreen.
 
 ## Design tokens and theming
 
@@ -173,9 +209,22 @@ the numbers from CI rather than locally.
 unthresholded**. Their coverage is the story render path measured by `bun run
 test:stories:coverage` (see Storybook below), not per-package unit coverage. Do not "fix" this by
 adding empty test files just to get a `coverage/` directory — there is nothing to threshold there.
-When one of these packages needs a real assertion (the token invariants in
-`packages/design-system`, for instance), it goes in a story `play` function so it runs under
-`test:stories`, rather than bringing a second test runner into the package.
+
+Where an assertion lives depends on what it needs, not on which package it is in:
+
+- **Anything a browser has to resolve** goes in a story `play` function so it runs under
+  `test:stories`. The token invariants in `packages/design-system` are the case that defines
+  the rule — they assert what the *browser* computes for a token, which no headless runner can
+  answer. The same goes for component behaviour: the retry loop in `ErrorState` and the
+  visibility callback in `ShotGraph` are `play` functions for exactly this reason.
+- **Pure functions with no DOM** run under a plain `vitest run`. `packages/ui` and
+  `packages/shot-graph` each have one, covering `layoutMode`, `toolResult`, `download`, `csv`,
+  and `contextSummary`. This is not a second test runner — it is the same vitest the story
+  tests and `apps/server` already use, just without a browser it has no reason to boot.
+
+Neither package has a `test:coverage` script, so neither produces a `coverage/` directory and
+the unthresholded rule above still holds. What does *not* belong anywhere is a jsdom harness for
+components: if it renders, it belongs in a story.
 
 `packages/design-system` has no `test` script but does have `typecheck`, and its `tsconfig.json`
 includes `stories` as well as `src` — the parser in `tokens.ts` and the stories that consume it are

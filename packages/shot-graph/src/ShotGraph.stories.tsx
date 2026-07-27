@@ -1,6 +1,12 @@
+import {
+  AppShell,
+  DownloadIcon,
+  ExpandIcon,
+  ToolbarButton,
+} from "@gaggiuino/ui";
 import { type Meta, type StoryObj } from "@storybook/react";
 import { useState } from "react";
-import { fn } from "storybook/test";
+import { expect, fn, userEvent, within } from "storybook/test";
 import {
   londiniumShot32,
   londiniumShot33,
@@ -188,23 +194,11 @@ export const Interactive: Story = {
 };
 
 /**
- * Renders the story inside the same bordered card shell that `main.tsx`
- * uses in the MCP app, so mobile previews reflect what ships to hosts.
+ * Renders the story inside the same shell `main.tsx` mounts in the MCP app,
+ * so mobile previews reflect what ships to hosts.
  */
 function MobileCardShell({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        margin: 3,
-        background: "var(--color-background-primary)",
-        border: "1px solid var(--color-border-tertiary)",
-        borderRadius: "var(--border-radius-lg)",
-        padding: "16px 14px",
-      }}
-    >
-      {children}
-    </div>
-  );
+  return <AppShell mode="mobile">{children}</AppShell>;
 }
 
 export const MobileSingle: Story = {
@@ -250,4 +244,57 @@ export const MobileComparison: Story = {
       </MobileCardShell>
     ),
   ],
+};
+
+/**
+ * The composition that actually ships: the shared shell, its toolbar of host
+ * capabilities, and the chart inside it.
+ */
+export const InAppShell: Story = {
+  parameters: { layout: "fullscreen" },
+  render: () => (
+    <AppShell
+      actions={
+        <>
+          <ToolbarButton label="Export CSV" onClick={fn()}>
+            <DownloadIcon />
+          </ToolbarButton>
+          <ToolbarButton
+            label="Enter fullscreen"
+            onClick={fn()}
+            pressed={false}
+          >
+            <ExpandIcon />
+          </ToolbarButton>
+        </>
+      }
+      mode="desktop"
+    >
+      <ShotGraph
+        annotations={extractAnnotations(londiniumShot33)}
+        data={toChartData(londiniumShot33)}
+        primaryMeta={extractMeta(londiniumShot33)}
+      />
+    </AppShell>
+  ),
+};
+
+/**
+ * Toggling a legend entry reports the new hidden set upward — the signal the
+ * app debounces into `updateModelContext` so the model knows what is plotted.
+ */
+export const ReportsVisibilityChanges: Story = {
+  args: {
+    annotations: extractAnnotations(londiniumShot33),
+    data: toChartData(londiniumShot33),
+    onVisibilityChange: fn(),
+    primaryMeta: extractMeta(londiniumShot33),
+  },
+  play: async ({ args, canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(await canvas.findByText("Pressure"));
+    await expect(args.onVisibilityChange).toHaveBeenCalledWith(
+      new Set(["pressure"]),
+    );
+  },
 };

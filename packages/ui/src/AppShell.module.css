@@ -1,0 +1,36 @@
+@import "@gaggiuino/design-system/tokens.css";
+
+.card {
+  font-family: var(--font-sans);
+  background: var(--color-background-primary);
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-lg);
+}
+
+/*
+ * Small outer margin on mobile so the card's border isn't clipped by the host
+ * iframe edge (seen on Claude iOS, where the chat card gives the app iframe
+ * zero surrounding padding).
+ */
+.card[data-mode="mobile"] {
+  margin: 3px;
+}
+
+/*
+ * Fullscreen hosts hand over the whole viewport, where a rounded card floating
+ * in the middle reads as a mistake. Fill it instead.
+ */
+.card[data-display-mode="fullscreen"] {
+  min-height: 100vh;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+}
+
+.toolbar {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  justify-content: flex-end;
+  margin-bottom: 4px;
+}

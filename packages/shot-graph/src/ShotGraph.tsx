@@ -30,6 +30,12 @@ interface ShotGraphProps {
   onDismissCompare?: () => void;
   compareLoading?: boolean;
   mode?: "mobile" | "desktop";
+  /**
+   * Fired with the new set of hidden series keys whenever the user toggles the
+   * legend. The chart still owns the state; this only lets the app tell the
+   * model what is on screen.
+   */
+  onVisibilityChange?: (hidden: ReadonlySet<string>) => void;
 }
 
 export function ShotGraph({
@@ -43,16 +49,20 @@ export function ShotGraph({
   onDismissCompare,
   compareLoading,
   mode = "desktop",
+  onVisibilityChange,
 }: ShotGraphProps) {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
 
-  const toggle = (key: string) => {
-    setHidden((prev) => {
-      const next = new Set(prev);
+  // Takes a list rather than a single key so the mobile legend, which toggles
+  // a metric and its comparison series together, lands both in one update.
+  const toggle = (keys: readonly string[]) => {
+    const next = new Set(hidden);
+    for (const key of keys) {
       if (next.has(key)) next.delete(key);
       else next.add(key);
-      return next;
-    });
+    }
+    setHidden(next);
+    onVisibilityChange?.(next);
   };
 
   const show = (key: string) => !hidden.has(key);
