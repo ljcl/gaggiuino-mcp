@@ -129,6 +129,19 @@ jobs:
           path: coverage-baseline
           key: coverage-baseline-${{ github.sha }}
 
+      # Bundle size budget for the MCP App. The build is requested explicitly
+      # because the PR path above runs `--affected`, which legitimately skips
+      # shot-graph on a PR that does not touch it — and a size gate that
+      # silently no-ops is not a gate. It is a turbo cache hit in that case.
+      # --strict therefore makes a missing artifact an error rather than a
+      # notice. Run outside turbo so the markdown reaches the job summary
+      # without a task-name prefix on every line.
+      - name: Bundle size
+        run: |
+          set -o pipefail
+          bun run turbo run build --filter=@gaggiuino/shot-graph
+          bun run size --strict | tee -a "$GITHUB_STEP_SUMMARY"
+
       # Informational dead-code readout beside the turbo `knip` gate above (a
       # green build already means zero issues). Re-runs the analysis with the
       # JSON reporter; --no-exit-code plus the script's always-zero exit keep it

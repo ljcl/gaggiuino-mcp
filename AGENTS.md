@@ -193,7 +193,7 @@ this script and re-saves it after main pushes, so PR job summaries show deltas v
 Run this gate before declaring a task complete or opening a PR.
 
 ```bash
-bun run check              # lint + test + typecheck + build + knip + boundaries (Turborepo)
+bun run check              # lint + test + typecheck + build + knip + boundaries + size (Turborepo)
 bun run check:affected     # same, scoped to packages affected by the diff
 bun run knip               # Dead code / unused export analysis
 bun run test:stories       # Every story renders in headless Chromium (needs Playwright browsers)
@@ -209,6 +209,7 @@ bun run build:affected    # Build only packages affected by the diff
 bun run test              # Run all tests (via Turborepo)
 bun run test:coverage     # Run tests with coverage (apps/server only has thresholds)
 bun run coverage:summary  # Aggregate coverage-summary.json reports into a markdown table
+bun run size              # Assert the MCP App bundle size budget (--strict to require the artifact)
 bun run test:stories      # Run every Storybook story as a Vitest browser-mode smoke test
 bun run test:stories:coverage # Same, plus render-path coverage into coverage-stories/
 bun run typecheck         # TS across every workspace package
@@ -216,7 +217,7 @@ bun run typecheck:affected # Typecheck only packages affected by the diff
 bun run lint               # Biome, repo-wide (NOT `turbo run lint` — infinite loop)
 bun run lint:fix           # Biome, applying fixes
 bun run boundaries         # turbo boundaries (tag-based layering check)
-bun run check              # lint + test + typecheck + build + knip + boundaries
+bun run check              # lint + test + typecheck + build + knip + boundaries + size
 bun run check:affected     # same, scoped to packages affected by the diff
 bun run dev                # Dev mode (via Turborepo)
 bun run storybook          # Storybook on port 6006 (via Turborepo)
@@ -360,10 +361,41 @@ bun binary directly (it is the image's ENTRYPOINT) as above.
   run the same tasks unscoped (full check). Both continue with Playwright Chromium setup,
   `turbo run test:stories:coverage`, `turbo run test:coverage`, a coverage-baseline restore/publish
   (`coverage:summary` into the job summary, with a delta vs the cached `main` baseline), a baseline
-  save on `main` pushes, and an informational knip JSON summary into the job summary.
+  save on `main` pushes, the bundle size budget, and an informational knip JSON summary into the
+  job summary.
 - **`audit`** — `bun audit --audit-level=high`. Advisory (`continue-on-error`) on PRs and `main`
   pushes, since most findings are transitive deps with no local fix; hard-failing on the weekly
   `schedule` trigger so new advisories still surface between PRs.
+
+### Bundle size budget
+
+`scripts/bundle-size.ts` asserts raw and gzip ceilings on
+`packages/shot-graph/dist/app.html` — the body re-sent as the `ui://shot-graph/app.html`
+resource on every render — and prints a markdown table for the job summary. Budgets sit
+~10% over the measured size; raising one is a deliberate one-line diff.
+
+Two details are load-bearing. It runs **outside turbo** so the markdown reaches the job
+summary without a task-name prefix on every line (same reason Biome does). And the CI step
+builds shot-graph explicitly before calling it with `--strict`, because the PR path runs
+`--affected` and would otherwise skip the build — the default is lenient so
+`check:affected` does not fail locally, but a gate that silently no-ops in CI is not a gate.
+
+Why recharts is not being replaced, with the measured per-dependency split, is recorded in
+`docs/plans/2026-07-27-shot-graph-bundle-budget.md`.
+
+### Required status checks
+
+Branch protection requires three contexts, applied by `scripts/setup-branch-protection.sh`:
+`check` (ci.yml), `docker` (docker.yml), and `pr-title` (pr-title.yml).
+
+`docker` is an aggregate job that reports the matrix build's result rather than the build
+legs themselves — a matrix job's status context embeds its parameters (`build (linux/amd64,
+ubuntu-latest)`), so requiring those directly would leave protection waiting forever on a
+context that stops reporting the day a runner label changes. It passes on `skipped`, which
+is the docs-only PR case the `changes` path filter exists to produce.
+
+`pr-title` runs on `pull_request_target`; its check run still attaches to the PR head SHA,
+so requiring it works (verified against the live API).
 
 Only `GITHUB_TOKEN` is required for `ci.yml` itself. Docker publishing (`docker.yml`),
 release-please (`release-please.yml`), and the MCP registry publish (`publish-mcp.yml`) are
@@ -447,8 +479,18 @@ rendering), mirroring how `addon-a11y` is wired.
   static build with no MCP endpoint.
 
 `storybook.yml` deploys on every push to `main` that touches `packages/**`,
-`apps/storybook/**`, `bun.lock`, or the workflow itself. It is live and green, so a
-failed Pages deploy is a real regression to chase, not an expected state.
+`apps/storybook/**`, `bun.lock`, root `package.json` or `turbo.json`, the composite
+setup action, or the workflow itself. It is live and green, so a failed Pages deploy
+is a real regression to chase, not an expected state. It also carries a
+`workflow_dispatch` trigger, so a transient Pages failure can be retried without
+pushing a dummy commit.
+
+`apps/storybook` depends on `@gaggiuino/ui` even though nothing in that workspace
+imports it: Storybook finds ui's stories by directory glob in `main.ts`, and the
+dependency is what puts ui in turbo's `build:storybook` task graph. Without it a
+ui-only merge cache-hit and redeployed the previous `storybook-static` — the change
+never reached Pages. `knip.config.ts` carries a matching `ignoreDependencies` entry,
+and `apps/storybook/turbo.json` uses the repo's `dependsOn: ["topo", ...]` JIT pattern.
 
 ## Testing the MCP endpoint
 
@@ -527,6 +569,17 @@ Releases are automated by release-please (`.github/workflows/release-please.yml`
   `io.modelcontextprotocol.server.name` label (set in `apps/server/Dockerfile`, must
   match `name` in `server.json`); `publish-mcp.yml` therefore polls GHCR until
   `docker.yml`'s manifest exists before publishing.
+- That GHCR wait distinguishes three states, and the distinction is the whole point.
+  The **existence** poll is authenticated (GHCR creates packages private even under a
+  public repo, so an unauthenticated poll answers `unauthorized` forever and times out
+  blaming a Docker run that succeeded). Once the manifest exists, a second request with
+  an **anonymous** pull token decides: 200 proceeds, 401/403 fails immediately telling
+  you to make the package public, 404 retries briefly for tag propagation. Package
+  visibility is UI-only — GitHub exposes no REST endpoint for it.
+- Published manifests carry supply-chain attestations: an SPDX SBOM and max-mode
+  provenance per architecture from BuildKit, plus a Sigstore-signed provenance statement
+  for the multi-arch index pushed to GHCR as a referrer. Verification commands are in
+  `SECURITY.md`.
 - Manual `git tag vX.Y.Z` still works as a fallback; both `docker.yml` and
   `publish-mcp.yml` trigger on `v*` tags regardless of how they are created.
 - Commits that only touch `docs/`, `.agents/`, or `.claude/` are excluded from release

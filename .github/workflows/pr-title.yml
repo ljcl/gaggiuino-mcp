@@ -16,7 +16,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint:
+  # Job name is the status context branch protection requires, so it is
+  # explicit here rather than left to default to the job key `lint` — which
+  # says nothing about what it gates and collides with every other lint job.
+  pr-title:
+    name: pr-title
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

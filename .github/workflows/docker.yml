@@ -117,6 +117,13 @@ jobs:
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
+          # Registry attestations, one per arch. buildx defaults to
+          # provenance=mode=min, which records only the build's identity; max
+          # adds the materials and build arguments an SBOM consumer needs.
+          # These ride into the merged manifest as extra `unknown/unknown`
+          # entries — which is what the summary step below filters out.
+          sbom: true
+          provenance: mode=max
           cache-from: type=gha,scope=${{ steps.prep.outputs.pair }}
           cache-to: type=gha,mode=max,scope=${{ steps.prep.outputs.pair }}
 
@@ -136,6 +143,38 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # The single status context branch protection requires. The build legs cannot
+  # be required directly: a matrix job's name embeds its parameters ("build
+  # (linux/amd64, ubuntu-latest)"), so the day a runner label changes, branch
+  # protection would sit waiting forever on a context that no longer reports.
+  # This name never changes.
+  #
+  # `skipped` passes on purpose — that is the docs-only PR case the `changes`
+  # filter above exists to produce, and it is why the build legs skip rather
+  # than the workflow path-filtering itself.
+  docker:
+    needs: [build]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report build result
+        env:
+          RESULT: ${{ needs.build.result }}
+        run: |
+          case "$RESULT" in
+            success)
+              echo "Image build passed on every platform."
+              ;;
+            skipped)
+              echo "Image build skipped: nothing in this PR reaches the build context."
+              ;;
+            *)
+              echo "::error::Image build did not pass (build legs: $RESULT)." >&2
+              exit 1
+              ;;
+          esac
+
   # Assembles the per-arch digests into one multi-arch manifest. The explicit
   # `needs.build.result == 'success'` guard requires every build matrix leg to
   # have succeeded, so a single-arch manifest can never ship. It must stay
@@ -150,6 +189,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write # Sigstore signing for the provenance attestation
+      attestations: write
     steps:
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -197,6 +238,40 @@ jobs:
       - name: Inspect image
         run: docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.meta.outputs.version }}
 
+      # The multi-arch index is what users pull and what the MCP registry
+      # verifies, so it — not the per-arch digests exported by the build legs —
+      # is the subject of the attestation below. `imagetools create` does not
+      # report the digest it pushed, hence the read-back.
+      - name: Resolve manifest digest
+        id: digest
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          digest="$(docker buildx imagetools inspect "$REGISTRY_IMAGE:$VERSION" --format '{{json .Manifest}}' | jq -r '.digest // empty')"
+          case "$digest" in
+            sha256:*) ;;
+            *)
+              echo "::error::Could not read the manifest digest for $REGISTRY_IMAGE:$VERSION (got '${digest:-<empty>}')." >&2
+              exit 1
+              ;;
+          esac
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Manifest digest: $digest"
+
+      # GitHub artifact attestation (Sigstore), pushed to GHCR as a referrer so
+      # `gh attestation verify oci://ghcr.io/ljcl/gaggiuino-mcp:TAG --repo
+      # ljcl/gaggiuino-mcp` works against a pulled image. Complementary to the
+      # buildx SBOM/provenance attestations set on the build legs: those
+      # describe each architecture, this signs the index that ties them
+      # together.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-name: ${{ env.REGISTRY_IMAGE }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          push-to-registry: true
+
       # Record what shipped in the run summary: the tags applied and, per
       # architecture, the manifest digest and compressed (download) size — the
       # sum of the config blob and layer sizes from each arch manifest.
@@ -205,6 +280,7 @@ jobs:
         env:
           VERSION: ${{ steps.meta.outputs.version }}
           TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.digest.outputs.digest }}
         run: |
           set -euo pipefail
           ref="$REGISTRY_IMAGE:$VERSION"
@@ -232,4 +308,11 @@ jobs:
                   short="${digest#sha256:}"
                   echo "| $platform | \`${short:0:12}…\` | $human |"
                 done
+            echo ""
+            echo "**Supply chain**"
+            echo ""
+            echo "- Index digest: \`$DIGEST\`"
+            echo "- SBOM and max-mode provenance attested per architecture (buildx)"
+            echo "- Signed provenance for the index, pushed to GHCR as a referrer"
+            echo "- Verify: \`gh attestation verify oci://$ref --repo $GITHUB_REPOSITORY\`"
           } >> "$GITHUB_STEP_SUMMARY"

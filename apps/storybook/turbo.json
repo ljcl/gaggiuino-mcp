@@ -3,7 +3,7 @@
   "tags": ["app"],
   "tasks": {
     "build:storybook": {
-      "dependsOn": ["^build:storybook"],
+      "dependsOn": ["topo", "^build:storybook"],
       "outputs": ["storybook-static/**"]
     }
   }

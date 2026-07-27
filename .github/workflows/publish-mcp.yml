@@ -28,6 +28,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      packages: read # authenticated GHCR manifest poll below
       id-token: write # OIDC token for mcp-publisher login github-oidc
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -45,20 +46,90 @@ jobs:
           mv server.json.tmp server.json
           jq . server.json
 
+      - name: Log in to GHCR
+        # The existence poll below has to see what a package owner sees. GHCR
+        # creates new packages private even under a public repository, and an
+        # unauthenticated `docker manifest inspect` against a private package
+        # answers `unauthorized` forever — so the poll used to time out after
+        # 20 minutes blaming docker.yml for a run that had actually succeeded.
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Wait for the GHCR image
-        # docker.yml builds both arches and pushes the manifest on this same
-        # tag push; registry validation fails until that manifest exists.
+        # Three states, three outcomes — polling blindly conflates them:
+        #
+        #   manifest absent      -> keep polling; docker.yml builds both arches
+        #                           on this same tag push, so this is a real race
+        #   present, not public  -> fail now; the MCP registry pulls the image
+        #                           *anonymously* to check its
+        #                           io.modelcontextprotocol.server.name label, so
+        #                           waiting only defers the same failure
+        #   present and public   -> proceed
         run: |
+          set -uo pipefail
           version="${GITHUB_REF#refs/tags/v}"
+          repository="$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          ref="$REGISTRY_IMAGE:$version"
+          pushed=false
+
           for attempt in $(seq 1 40); do
-            if docker manifest inspect "$REGISTRY_IMAGE:$version" >/dev/null 2>&1; then
-              echo "$REGISTRY_IMAGE:$version is available."
-              exit 0
+            if docker manifest inspect "$ref" >/dev/null 2>&1; then
+              echo "$ref exists on GHCR."
+              pushed=true
+              break
             fi
-            echo "$REGISTRY_IMAGE:$version not available yet (attempt $attempt/40); retrying in 30s..."
+            echo "$ref not on GHCR yet (attempt $attempt/40); retrying in 30s..."
             sleep 30
           done
-          echo "Timed out waiting for $REGISTRY_IMAGE:$version — did the Docker workflow fail?" >&2
+
+          if [ "$pushed" != true ]; then
+            echo "::error::Timed out after 20 minutes waiting for $ref to appear on GHCR. This poll is authenticated, so the manifest genuinely is not there — check the Docker workflow run for tag v$version." >&2
+            exit 1
+          fi
+
+          # Re-ask for the same manifest with an anonymous pull token. A private
+          # package answers 403 here while the authenticated poll above answers
+          # 200, which is exactly the state that has to fail fast. A public
+          # package whose tag has not propagated yet answers 404, so that one
+          # gets a short retry rather than a verdict.
+          anon_status() {
+            local token
+            # -f, quietly: a private package 403s the token endpoint too, and
+            # the manifest status below is the signal worth reporting.
+            token="$(curl -fs "https://ghcr.io/token?service=ghcr.io&scope=repository:${repository}:pull" | jq -r '.token // empty')" || token=""
+            curl -sS -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer ${token}" \
+              -H 'Accept: application/vnd.oci.image.index.v1+json' \
+              -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
+              "https://ghcr.io/v2/${repository}/manifests/${version}"
+          }
+
+          for attempt in $(seq 1 6); do
+            status="$(anon_status)"
+            case "$status" in
+              200)
+                echo "$ref is anonymously pullable; the registry will be able to verify it."
+                exit 0
+                ;;
+              401 | 403)
+                echo "::error::$ref exists but is not anonymously pullable (HTTP $status). GHCR creates packages private, and the MCP registry pulls the image with no credentials to verify its io.modelcontextprotocol.server.name label, so publishing cannot succeed. GitHub exposes no API for package visibility — set it by hand at https://github.com/users/${repository%%/*}/packages/container/${repository##*/}/settings (Danger Zone -> Change visibility -> Public), then re-run this workflow." >&2
+                exit 1
+                ;;
+              404)
+                echo "$ref is public but the tag is not visible anonymously yet (attempt $attempt/6); retrying in 10s..."
+                sleep 10
+                ;;
+              *)
+                echo "::error::Unexpected HTTP $status from ghcr.io for $ref on an anonymous pull. Neither a missing manifest nor a private package — inspect https://ghcr.io/v2/${repository}/manifests/${version} before re-running." >&2
+                exit 1
+                ;;
+            esac
+          done
+
+          echo "::error::$ref is visible to this job but still returns 404 anonymously after a minute. The manifest exists, so this is a registry propagation problem rather than a failed build — re-run this workflow." >&2
           exit 1
 
       - name: Install mcp-publisher

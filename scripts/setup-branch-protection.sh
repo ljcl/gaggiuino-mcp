@@ -1,7 +1,19 @@
 #!/usr/bin/env bash
 # Apply branch protection and repo settings for gaggiuino-mcp.
 # Safe to re-run. Requires: gh authenticated with admin on the repo, repo already public,
-# and the CI "check" job to have run at least once (so the status context exists).
+# and the required status contexts below to have run at least once (so they exist).
+#
+# Required contexts and what each one stops from merging:
+#   check     ci.yml        lint, test, typecheck, build, knip, boundaries
+#   docker    docker.yml    a PR that breaks the image build (it only surfaced
+#                           at release time before, after merge)
+#   pr-title  pr-title.yml  a non-Conventional-Commit PR title, which squashes
+#                           onto main as an unparseable subject and silently
+#                           skips the release
+#
+# `docker` and `pr-title` are aggregate/renamed job names introduced alongside
+# this change — apply this script only once they are on main, or protection
+# will wait on contexts that never report.
 set -euo pipefail
 
 REPO="$(gh repo view --json nameWithOwner --jq '.nameWithOwner')"
@@ -24,7 +36,7 @@ gh api -X POST "repos/${REPO}/pages" -f build_type=workflow >/dev/null 2>&1 ||
   echo "  - Pages: already configured or needs manual enable in Settings > Pages"
 
 # 4. Branch protection on main.
-#    - require the "check" status to pass (strict / up to date)
+#    - require the "check", "docker" and "pr-title" statuses to pass (strict / up to date)
 #    - require a PR before merging, 0 approvals (solo maintainer can self-merge)
 #    - block force pushes and deletions; require conversation resolution
 gh api -X PUT "repos/${REPO}/branches/main/protection" \
@@ -33,7 +45,7 @@ gh api -X PUT "repos/${REPO}/branches/main/protection" \
 {
   "required_status_checks": {
     "strict": true,
-    "contexts": ["check"]
+    "contexts": ["check", "docker", "pr-title"]
   },
   "enforce_admins": false,
   "required_pull_request_reviews": {
