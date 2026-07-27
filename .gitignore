@@ -18,8 +18,10 @@ coverage-stories/
 # Git worktrees
 .worktrees/
 
-# Environment variables
+# Environment variables — these can carry a machine's address (see SECURITY.md)
 .env
+.env.local
+.env.*.local
 
 # User local overrides
 *.local.yaml

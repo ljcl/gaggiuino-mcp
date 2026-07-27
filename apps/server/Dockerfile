@@ -1,7 +1,11 @@
 # syntax=docker/dockerfile:1
 # Requires BuildKit (RUN --mount=type=cache, multi-stage COPY --from).
 
-# Shell base: bun + a shell, used by every build-time stage
+# Shell base: bun + a shell, used by every build-time stage.
+# Both oven/bun pins in this file must match root package.json's
+# `packageManager` — CI installs Bun from that field, so a skew runs the tests on
+# a different runtime than the one that ships. Dependabot's docker ecosystem only
+# bumps these lines, so ci.yml's "Bun version skew" step guards the pairing.
 FROM oven/bun:1.3.14 AS base
 WORKDIR /app
 
@@ -41,9 +45,9 @@ RUN chown -R 65534:65534 /app
 FROM oven/bun:1.3.14-distroless AS runner
 WORKDIR /app
 
-# MCP registry ownership proof: a later phase publishes server.json as an OCI
-# package, and the registry pulls the image to check this label matches the
-# server name. Must stay in sync with `name` in server.json.
+# MCP registry ownership proof: publish-mcp.yml publishes server.json listing
+# this image as its OCI package, and the registry pulls the image to check this
+# label matches the server name. Must stay in sync with `name` in server.json.
 LABEL io.modelcontextprotocol.server.name="io.github.ljcl/gaggiuino-mcp"
 COPY --from=prod-deps --chown=65534:65534 /app ./
 COPY --from=builder  --chown=65534:65534 /app/apps/server/src ./apps/server/src

@@ -26,7 +26,9 @@ A Remote [MCP](https://modelcontextprotocol.io) server for integrating a [Gaggiu
 
 The server is published as a multi-arch image (linux/amd64, linux/arm64) at
 [`ghcr.io/ljcl/gaggiuino-mcp`](https://github.com/ljcl/gaggiuino-mcp/pkgs/container/gaggiuino-mcp),
-so there is nothing to clone or build.
+so there is nothing to clone or build. It is also listed in the
+[MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=io.github.ljcl/gaggiuino-mcp)
+as `io.github.ljcl/gaggiuino-mcp`.
 
 ### 1. Download and Configure
 
@@ -187,6 +189,7 @@ bun install          # Install all dependencies
 bun run build        # Build all packages (Turborepo)
 bun run test         # Run all tests
 bun run lint         # Lint all packages
+bun run check        # lint + test + typecheck + build + knip + boundaries
 
 # Server
 cd apps/server
@@ -200,6 +203,10 @@ bun run storybook    # Storybook on port 6006
 cd apps/server
 bun run generate-schemas
 ```
+
+The `main` branch Storybook is published to GitHub Pages at
+[ljcl.github.io/gaggiuino-mcp](https://ljcl.github.io/gaggiuino-mcp/) — a static build for
+browsing the shot-graph and UI components without running anything locally.
 
 ### Docker
 
@@ -231,4 +238,4 @@ The container uses `network_mode: host` to share the host's network stack. If yo
 
 ## License
 
-MIT
+[MIT](LICENSE) © Luke Clark
