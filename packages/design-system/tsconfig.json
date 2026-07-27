@@ -1,4 +1,4 @@
 {
   "extends": "@gaggiuino/tsconfig/react.json",
-  "include": ["src"]
+  "include": ["src", "stories"]
 }

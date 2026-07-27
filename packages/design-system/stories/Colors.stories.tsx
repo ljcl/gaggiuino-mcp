@@ -1,35 +1,27 @@
+import {
+  DESIGN_TOKENS,
+  isColorValue,
+  TOKEN_GROUPS,
+} from "@gaggiuino/design-system/tokens";
 import { type Meta, type StoryObj } from "@storybook/react";
+import { expect } from "storybook/test";
 import "../src/tokens.css";
 
-const colorTokens = {
-  Background: [
-    { var: "--color-background-primary", label: "Primary" },
-    { var: "--color-background-secondary", label: "Secondary" },
-    { var: "--color-background-tertiary", label: "Tertiary" },
-    { var: "--color-background-inverse", label: "Inverse" },
-  ],
-  Text: [
-    { var: "--color-text-primary", label: "Primary" },
-    { var: "--color-text-secondary", label: "Secondary" },
-    { var: "--color-text-tertiary", label: "Tertiary" },
-    { var: "--color-text-danger", label: "Danger" },
-    { var: "--color-text-success", label: "Success" },
-    { var: "--color-text-info", label: "Info" },
-  ],
-  Border: [
-    { var: "--color-border-primary", label: "Primary" },
-    { var: "--color-border-secondary", label: "Secondary" },
-    { var: "--color-border-tertiary", label: "Tertiary" },
-  ],
-  Chart: [
-    { var: "--chart-pressure", label: "Pressure" },
-    { var: "--chart-flow", label: "Flow" },
-    { var: "--chart-weight-flow", label: "Weight Flow" },
-    { var: "--chart-weight", label: "Weight" },
-  ],
-};
+/** Only the groups whose values are colors — typography and radii have no swatch. */
+const colorGroups = TOKEN_GROUPS.map(({ group, tokens }) => ({
+  group,
+  tokens: tokens.filter(
+    (t) => t.name.startsWith("--color-") || t.name.startsWith("--chart-"),
+  ),
+})).filter(({ tokens }) => tokens.length > 0);
 
-function Swatch({ variable, label }: { variable: string; label: string }) {
+/** `--color-background-primary` → `Background primary`. */
+function label(name: string): string {
+  const words = name.replace(/^--(color|chart)-/, "").split("-");
+  return words.join(" ").replace(/^./, (c) => c.toUpperCase());
+}
+
+function Swatch({ variable, name }: { variable: string; name: string }) {
   return (
     <div
       style={{
@@ -56,7 +48,7 @@ function Swatch({ variable, label }: { variable: string; label: string }) {
             color: "var(--color-text-primary)",
           }}
         >
-          {label}
+          {name}
         </div>
         <code
           style={{
@@ -74,7 +66,7 @@ function Swatch({ variable, label }: { variable: string; label: string }) {
 function ColorGrid() {
   return (
     <div style={{ fontFamily: "var(--font-sans)", padding: "24px" }}>
-      {Object.entries(colorTokens).map(([group, tokens]) => (
+      {colorGroups.map(({ group, tokens }) => (
         <div key={group} style={{ marginBottom: "32px" }}>
           <h3
             style={{
@@ -94,13 +86,51 @@ function ColorGrid() {
             }}
           >
             {tokens.map((t) => (
-              <Swatch key={t.var} variable={t.var} label={t.label} />
+              <Swatch key={t.name} variable={t.name} name={label(t.name)} />
             ))}
           </div>
         </div>
       ))}
     </div>
   );
+}
+
+/**
+ * Assert the browser resolves every token to the value the stylesheet declares
+ * for `theme`. This is what catches a dark palette keyed on a selector nothing
+ * applies — the bug that made every dark host render light-mode chart colors.
+ */
+function expectResolvedTheme(theme: "light" | "dark") {
+  const computed = getComputedStyle(document.documentElement);
+  expect(document.documentElement.dataset.theme).toBe(theme);
+
+  // A CSS minifier may rewrite `rgba(222, 220, 209, 0.4)` to `#dedcd166`, so
+  // compare colors by what the browser parses them to, not by source text.
+  const probe = document.createElement("div");
+  probe.style.display = "none";
+  document.body.appendChild(probe);
+  const asColor = (value: string) => {
+    probe.style.backgroundColor = "";
+    probe.style.backgroundColor = value;
+    return getComputedStyle(probe).backgroundColor;
+  };
+
+  try {
+    for (const token of DESIGN_TOKENS) {
+      if (theme === "dark" && token.dark === null) continue;
+      const declared = (theme === "dark" ? token.dark : token.light) as string;
+      const resolved = computed.getPropertyValue(token.name).trim();
+      const [expected, actual] = isColorValue(declared)
+        ? [asColor(declared), asColor(resolved)]
+        : [declared, resolved];
+      // An unparseable color canonicalises to transparent on both sides, which
+      // would compare equal and hide the failure this story exists to catch.
+      if (isColorValue(declared)) expect(expected).not.toBe("rgba(0, 0, 0, 0)");
+      expect(`${token.name}: ${actual}`).toBe(`${token.name}: ${expected}`);
+    }
+  } finally {
+    probe.remove();
+  }
 }
 
 const meta: Meta = {
@@ -113,8 +143,10 @@ type Story = StoryObj;
 
 export const Light: Story = {
   globals: { backgrounds: { value: "light" } },
+  play: () => expectResolvedTheme("light"),
 };
 
 export const Dark: Story = {
   globals: { backgrounds: { value: "dark" } },
+  play: () => expectResolvedTheme("dark"),
 };

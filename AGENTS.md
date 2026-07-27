@@ -107,6 +107,43 @@ The `view_shot_graph` tool renders an interactive Recharts chart in MCP-compatib
 - Calls `get_shot_raw_json` (app-only visibility) to fetch data after render
 - Supports shot comparison overlay
 
+## Design tokens and theming
+
+`packages/design-system/src/tokens.css` is the **single source of truth** for token
+values. Nothing restates them: `src/tokens.ts` parses the stylesheet (`?raw`) into
+`DESIGN_TOKENS` / `TOKEN_GROUPS`, and the Colors and Token Reference stories render
+from that, so the docs cannot drift from what ships. There is deliberately no
+`COLORS`/`CHART_COLORS` constant object — that was a hand-synced third copy and it
+is gone. `shot-graph/src/constants.ts` references the tokens as `var(--chart-*)`
+strings, which is the one indirection that stays.
+
+Dark mode is keyed on **`[data-theme="dark"]`**, the attribute
+`@modelcontextprotocol/ext-apps` sets on `documentElement` (`applyDocumentTheme`,
+called by `useHostStyles` with `hostContext.theme`). It is not a `.dark` class —
+nothing in the stack applies one, which is why the dark palette used to be dead code
+in every real host.
+
+`hostContext.theme` is optional, so a second copy of the dark block lives under
+`@media (prefers-color-scheme: dark)` on `:root:not([data-theme="light"])` for hosts
+that never send a theme. CSS cannot share one block between a selector and a media
+query, so those two blocks are hand-duplicated — `assertDarkRulesAgree()` fails the
+Token Reference story if they drift, naming the offending token.
+
+Two gates run as Storybook `play` functions in `bun run test:stories` (design-system
+has no unit-test runner by design — see Test coverage below):
+
+- **Token Reference** asserts the dark blocks agree, that every dark override exists
+  in `:root`, and that the table renders a row per token.
+- **Colors** (`Light` and `Dark`) asserts the *browser* resolves every token to the
+  value the stylesheet declares for that theme. This is the regression test for the
+  dead-selector bug: point the dark block at anything the host does not set and the
+  `Dark` story fails with the computed light value.
+
+The Storybook decorator in `apps/storybook/.storybook/preview.tsx` sets `data-theme`
+and `color-scheme` on `documentElement`, mirroring `applyDocumentTheme`. Do not
+reintroduce a wrapper element — a hand-applied class makes dark stories pass while
+every real host renders light.
+
 ## Data Format
 
 Gaggiuino API returns values scaled by 10 (e.g., pressure 91 = 9.1 bar). The `normalize.ts` module handles conversion:
@@ -136,6 +173,13 @@ the numbers from CI rather than locally.
 unthresholded**. Their coverage is the story render path measured by `bun run
 test:stories:coverage` (see Storybook below), not per-package unit coverage. Do not "fix" this by
 adding empty test files just to get a `coverage/` directory — there is nothing to threshold there.
+When one of these packages needs a real assertion (the token invariants in
+`packages/design-system`, for instance), it goes in a story `play` function so it runs under
+`test:stories`, rather than bringing a second test runner into the package.
+
+`packages/design-system` has no `test` script but does have `typecheck`, and its `tsconfig.json`
+includes `stories` as well as `src` — the parser in `tokens.ts` and the stories that consume it are
+both type-checked in CI.
 
 `bun run coverage:summary` (`scripts/coverage-summary.ts`) globs every `apps/*/coverage/coverage-summary.json`
 and `packages/*/coverage/coverage-summary.json`, plus `coverage-stories/coverage-summary.json` when

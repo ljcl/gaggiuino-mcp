@@ -60,8 +60,14 @@ export default definePreview({
       const theme = HOST_THEMES[hostKey] ?? null;
       const vars = theme ? (isDark ? theme.dark : theme.light) : {};
 
-      // Apply host CSS variables to :root (mirrors what useHostStyles does in production)
+      // Mirror what useHostStyles does in production: applyDocumentTheme sets
+      // `data-theme` plus `color-scheme` on documentElement, and
+      // applyHostStyleVariables sets the host's overrides there too. Stories
+      // must exercise the same mechanism, or a dark palette keyed on a
+      // selector no host applies still looks correct here.
       const root = document.documentElement;
+      root.setAttribute("data-theme", isDark ? "dark" : "light");
+      root.style.colorScheme = isDark ? "dark" : "light";
       for (const key of ALL_HOST_KEYS) root.style.removeProperty(key);
       for (const [key, value] of Object.entries(vars)) {
         root.style.setProperty(key, value);
@@ -71,12 +77,7 @@ export default definePreview({
         ? "background: var(--color-background-primary) !important;"
         : "";
 
-      // Gaggiuino's design-system uses `.dark` class (not [data-theme="dark"])
-      return (
-        <div className={isDark ? "dark" : ""}>
-          <StoryFn />
-        </div>
-      );
+      return <StoryFn />;
     },
   ],
 });
