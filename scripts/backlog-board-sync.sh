@@ -31,8 +31,28 @@ FIELD_PRIORITY="PVTSSF_lAHOABzAhM4BeYXazhYzCzg"
 FIELD_EFFORT="PVTSSF_lAHOABzAhM4BeYXazhYzCzk"
 
 STATUS_BACKLOG="f75ad846"
-declare -A PRIORITY=([P1]=fc38b480 [P2]=d2ef2472 [P3]=5197fbf4)
-declare -A EFFORT=([S]=ed6278ac [M]=c5c30106 [L]=7270adf2)
+
+# Single-select option ids, looked up via case rather than an associative array:
+# macOS still ships bash 3.2, where `declare -A` does not exist and `([P1]=x)` is
+# parsed as an arithmetic index, so `set -u` aborts on the unset variable P1.
+# Keep this script bash-3.2 clean — do not reintroduce `declare -A`.
+priority_option() {
+  case "$1" in
+    P1) echo "fc38b480" ;;
+    P2) echo "d2ef2472" ;;
+    P3) echo "5197fbf4" ;;
+    *)  echo "" ;;
+  esac
+}
+
+effort_option() {
+  case "$1" in
+    S) echo "ed6278ac" ;;
+    M) echo "c5c30106" ;;
+    L) echo "7270adf2" ;;
+    *) echo "" ;;
+  esac
+}
 
 # epic-number : priority : effort : child issue numbers
 BATCHES=(
@@ -95,10 +115,17 @@ set_field() {
 # the caller can apply further fields (Status, on epics).
 apply() {
   local number="$1" priority="$2" effort="$3" label="$4"
+  local pri_opt eff_opt
+  pri_opt="$(priority_option "$priority")"
+  eff_opt="$(effort_option "$effort")"
+  if [ -z "$pri_opt" ] || [ -z "$eff_opt" ]; then
+    echo "bad field mapping for #${number}: priority='${priority}' effort='${effort}'" >&2
+    exit 1
+  fi
   echo "  #${number} ${label} -> Priority ${priority}, Effort ${effort}"
   resolve_item "$number"
-  set_field "$ITEM_ID" "$FIELD_PRIORITY" "${PRIORITY[$priority]}"
-  set_field "$ITEM_ID" "$FIELD_EFFORT" "${EFFORT[$effort]}"
+  set_field "$ITEM_ID" "$FIELD_PRIORITY" "$pri_opt"
+  set_field "$ITEM_ID" "$FIELD_EFFORT" "$eff_opt"
 }
 
 echo "Syncing backlog batching to project ${PROJECT_NUMBER} (${OWNER})"
