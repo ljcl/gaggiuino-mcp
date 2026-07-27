@@ -2,6 +2,11 @@ import { randomUUID } from "node:crypto";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { checkRequest, type SecurityConfig } from "./mcpAuth";
+import {
+  createSessionManager,
+  type SessionManager,
+  type SessionManagerOptions,
+} from "./mcpSession";
 import { createServer } from "./server";
 
 /**
@@ -13,22 +18,39 @@ import { createServer } from "./server";
 
 export interface FetchHandlerOptions {
   security: SecurityConfig;
+  sessions?: SessionManagerOptions;
 }
 
 export interface FetchHandler {
-  /** Live transports keyed by session id. Exposed for shutdown draining. */
-  readonly sessions: Map<string, WebStandardStreamableHTTPServerTransport>;
   fetch(req: Request): Promise<Response>;
+  /** Close every live session. Called on SIGTERM/SIGINT after the port stops. */
+  shutdown(): Promise<void>;
+  /** Start the idle-session reaper. Returns a function that stops it. */
+  startReaper(): () => void;
+  /** The live session registry, for assertions and shutdown. */
+  readonly sessions: SessionManager<WebStandardStreamableHTTPServerTransport>;
+}
+
+function jsonRpcError(status: number, code: number, message: string): Response {
+  return new Response(
+    JSON.stringify({ error: { code, message }, id: null, jsonrpc: "2.0" }),
+    { headers: { "Content-Type": "application/json" }, status },
+  );
 }
 
 export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
-  const sessions = new Map<string, WebStandardStreamableHTTPServerTransport>();
+  const sessions =
+    createSessionManager<WebStandardStreamableHTTPServerTransport>({
+      onEvicted: (sessionId, reason) =>
+        console.error(`Session evicted (${reason}): ${sessionId}`),
+      ...options.sessions,
+    });
 
   function createTransport(): WebStandardStreamableHTTPServerTransport {
     const transport = new WebStandardStreamableHTTPServerTransport({
       onsessioninitialized: (sessionId) => {
         console.error(`Session initialized: ${sessionId}`);
-        sessions.set(sessionId, transport);
+        sessions.add(sessionId, transport);
       },
       sessionIdGenerator: () => randomUUID(),
     });
@@ -53,7 +75,14 @@ export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
     }
 
     if (req.method === "POST") {
-      const body = await req.json();
+      // Unguarded, this rejected out of the fetch handler on any malformed
+      // body — an unhandled rejection from anything that could reach the port.
+      let body: unknown;
+      try {
+        body = await req.json();
+      } catch {
+        return jsonRpcError(400, -32700, "Parse error: body is not valid JSON");
+      }
 
       // Reuse existing session
       if (sessionId) {
@@ -66,20 +95,20 @@ export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
 
       // New session — must be an initialize request
       if (isInitializeRequest(body)) {
+        if (!(await sessions.tryReserve())) {
+          return jsonRpcError(
+            503,
+            -32000,
+            "Server at session capacity; retry shortly",
+          );
+        }
         const transport = createTransport();
         const server = createServer();
         await server.connect(transport);
         return transport.handleRequest(req, { parsedBody: body });
       }
 
-      return new Response(
-        JSON.stringify({
-          error: { code: -32000, message: "Bad Request: No valid session ID" },
-          id: null,
-          jsonrpc: "2.0",
-        }),
-        { headers: { "Content-Type": "application/json" }, status: 400 },
-      );
+      return jsonRpcError(400, -32000, "Bad Request: No valid session ID");
     }
 
     return new Response("Method not allowed", { status: 405 });
@@ -104,6 +133,13 @@ export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
 
       return new Response("Not found", { status: 404 });
     },
+
     sessions,
+
+    async shutdown() {
+      await sessions.closeAll();
+    },
+
+    startReaper: sessions.startReaper,
   };
 }

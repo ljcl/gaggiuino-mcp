@@ -14,21 +14,32 @@ console.error(
 );
 for (const line of describeSecurity(security)) console.error(line);
 
-Bun.serve({
+const server = Bun.serve({
   fetch: handler.fetch,
   hostname: HOST,
   port: PORT,
 });
 
+const stopReaper = handler.startReaper();
+
 console.error(`Listening on http://${HOST}:${PORT}`);
 console.error(`MCP endpoint: http://${HOST}:${PORT}/mcp`);
 
-// Graceful shutdown
-process.on("SIGINT", async () => {
-  console.error("Shutting down...");
-  for (const [id, transport] of handler.sessions) {
-    console.error(`Closing session ${id}`);
-    await transport.close();
-  }
+/**
+ * `docker stop` sends SIGTERM, so handling only SIGINT meant the container was
+ * killed after the grace period with every session still open. Stop accepting
+ * first, then drain, so nothing lands on a transport that is being closed.
+ */
+let shuttingDown = false;
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.error(`${signal} received, shutting down...`);
+  stopReaper();
+  await server.stop();
+  await handler.shutdown();
   process.exit(0);
-});
+}
+
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));

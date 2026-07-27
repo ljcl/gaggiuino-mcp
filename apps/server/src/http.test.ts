@@ -58,7 +58,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  for (const transport of handler.sessions.values()) await transport.close();
+  await handler.shutdown();
 });
 
 describe("/health", () => {
@@ -166,6 +166,59 @@ describe("/mcp routing", () => {
       }),
     );
     expect(response.status).toBe(405);
+  });
+
+  it("answers a malformed body with a JSON-RPC parse error", async () => {
+    // Unguarded this rejected out of the fetch handler — an unhandled
+    // rejection from anything that could reach the port.
+    const response = await handler.fetch(post("{not json", authorized()));
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: { code: number } };
+    expect(body.error.code).toBe(-32700);
+  });
+});
+
+describe("session capacity", () => {
+  it("refuses a new session with 503 once the cap is reached", async () => {
+    handler = createFetchHandler({
+      security: GATED,
+      sessions: { maxSessions: 1 },
+    });
+    const first = await handler.fetch(post(initializeBody(), authorized()));
+    expect(first.status).toBe(200);
+
+    const second = await handler.fetch(post(initializeBody(), authorized()));
+    expect(second.status).toBe(503);
+    const body = (await second.json()) as { error: { message: string } };
+    expect(body.error.message).toContain("capacity");
+    expect(handler.sessions.size).toBe(1);
+  });
+
+  it("admits a new session once an abandoned one ages out", async () => {
+    // The leak this bounds is a client that vanishes without a DELETE: a
+    // dropped tunnel, a restarted host. Its session must not hold a slot
+    // forever.
+    let now = 1_000_000;
+    handler = createFetchHandler({
+      security: GATED,
+      sessions: { idleTimeoutMs: 1_000, maxSessions: 1, now: () => now },
+    });
+    await handler.fetch(post(initializeBody(), authorized()));
+    expect(handler.sessions.size).toBe(1);
+
+    now += 2_000;
+    const second = await handler.fetch(post(initializeBody(), authorized()));
+    expect(second.status).toBe(200);
+    expect(handler.sessions.size).toBe(1);
+  });
+});
+
+describe("shutdown", () => {
+  it("closes every live session", async () => {
+    await handler.fetch(post(initializeBody(), authorized()));
+    expect(handler.sessions.size).toBe(1);
+    await handler.shutdown();
+    expect(handler.sessions.size).toBe(0);
   });
 });
 

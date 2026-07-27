@@ -575,6 +575,9 @@ covered:
   session map. Tests drive it with real `Request` objects and never bind a port.
 - `mcpAuth.ts` — `loadSecurityConfig` / `checkRequest` / `describeSecurity`.
   `checkRequest` returns the `Response` to send, or `undefined` to proceed.
+- `mcpSession.ts` — the bounded, expiring transport registry. Generic over a
+  minimal `ClosableSession`, and its clock is injected, so its tests assert
+  "after 31 minutes of silence" without a timer or a wait.
 
 Three things about the gate are load-bearing:
 
@@ -602,6 +605,26 @@ are always 32 bytes.
 `scripts/test-auth.sh` probes a running server for all of the above. It tests
 bearer auth, not OAuth — the server implements no OAuth and advertises no
 discovery document.
+
+### Session lifetime
+
+Sessions expire on an idle TTL (30 min) and are capped (64). The two are not
+redundant: the TTL reclaims sessions whose client vanished without a DELETE — a
+dropped tunnel, a restarted host — and the cap bounds anything that outruns it.
+`tryReserve()` sweeps *before* it refuses, so a burst of abandoned sessions
+cannot lock out a client that arrives later; over the cap the handler answers
+503 rather than allocating.
+
+Two ordering details in `sweep()` are load-bearing. It deletes each entry before
+calling `close()`, because the real transport's `onclose` calls straight back
+into `delete` — closing first means mutating the map mid-iteration. And each
+`close()` is individually caught, so one transport that refuses to die does not
+strand the rest of the sweep. Both have tests named after the failure.
+
+`index.ts` handles **SIGTERM as well as SIGINT** — `docker stop` sends SIGTERM,
+so handling only SIGINT meant the container was killed after the grace period
+with every session still open. It stops the listener before draining, so nothing
+lands on a transport that is closing.
 
 ## Backlog and issue tracking
 
