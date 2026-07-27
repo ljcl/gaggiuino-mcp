@@ -10,6 +10,26 @@ export const mockMachineStatus = {
   upTime: 3600,
 };
 
+/**
+ * Captured verbatim from a real machine's `/api/system/status` on 2026-07-27.
+ * Every numeric field arrives as a decimal *string*, and the switch states as
+ * real booleans — the opposite of `mockMachineStatus` above on both counts.
+ * Keep this fixture byte-faithful to the firmware: a schema that only satisfies
+ * the hand-written fixture passes CI and still fails against hardware.
+ */
+export const mockMachineStatusFromHardware = {
+  upTime: "56",
+  profileId: "15",
+  profileName: "Zer0",
+  targetTemperature: "95.000000",
+  temperature: "77.627335",
+  pressure: "6.422525",
+  waterLevel: "79",
+  weight: "-0.100000",
+  brewSwitchState: false,
+  steamSwitchState: false,
+};
+
 export const mockLatestShotResponse = {
   lastShotId: "1706547890",
 };

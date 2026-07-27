@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { type ShotData } from "./client";
 
 export const SCALE_BY_10 = new Set([
@@ -31,34 +32,85 @@ function getMaxNormalized(values: number[], fieldName: string): number {
   return normalizeValue(Math.max(...values), fieldName);
 }
 
-export interface OutcomeMetrics {
-  shotId: string;
-  profileName: string;
-  totalDurationSec: number;
-  finalWeightG: number;
-  peakPressureBar: number;
-  waterPumpedMl: number;
-  timeToFirstDripSec: number | null;
-  tempStability: string;
-  targetWeightG: number | null;
-}
+/**
+ * The shot summary is both this module's return type and the advertised
+ * `outputSchema` of the `get_shot_data` tool, so it is defined once here as a
+ * zod schema and the TypeScript types are derived from it. Descriptions carry
+ * the unit of every numeric field, since the values are already normalized out
+ * of the machine's scaled-by-10 wire format.
+ */
+export const OutcomeMetricsSchema = z.object({
+  finalWeightG: z
+    .number()
+    .describe("Weight in the cup at the end of the shot, in grams"),
+  peakPressureBar: z
+    .number()
+    .describe("Highest pressure reached during the shot, in bar"),
+  profileName: z.string().describe("Name of the brew profile used"),
+  shotId: z.string().describe("Id of the shot this summary describes"),
+  targetWeightG: z
+    .number()
+    .nullable()
+    .describe(
+      "Weight the profile was set to stop at, in grams; null when the profile has no weight stop condition",
+    ),
+  tempStability: z
+    .string()
+    .describe(
+      'Human-readable temperature verdict: "stable", or "drifted +N.NC" when the spread exceeded 1°C',
+    ),
+  timeToFirstDripSec: z
+    .number()
+    .nullable()
+    .describe(
+      "Seconds from shot start until the scale first read above 0.5 g; null when no drip was detected",
+    ),
+  totalDurationSec: z.number().describe("Total shot duration, in seconds"),
+  waterPumpedMl: z
+    .number()
+    .describe("Total water pushed through the puck, in millilitres"),
+});
 
-export interface PhaseSummary {
-  phaseNumber: number;
-  type: string;
-  durationSec: number;
-  samples: {
-    entry: { pressure: number; flow: number; weight: number };
-    mid: { pressure: number; flow: number; weight: number };
-    exit: { pressure: number; flow: number; weight: number };
-  };
-  events: string[];
-}
+export type OutcomeMetrics = z.output<typeof OutcomeMetricsSchema>;
 
-export interface ShotSummary {
-  outcomeMetrics: OutcomeMetrics;
-  phases: PhaseSummary[];
-}
+const PhaseSampleSchema = z.object({
+  flow: z.number().describe("Pump flow at this point, in ml/s"),
+  pressure: z.number().describe("Pressure at this point, in bar"),
+  weight: z.number().describe("Weight in the cup at this point, in grams"),
+});
+
+export const PhaseSummarySchema = z.object({
+  durationSec: z.number().describe("Length of this phase, in seconds"),
+  events: z
+    .array(z.string())
+    .describe("Notable events detected within this phase"),
+  phaseNumber: z.number().describe("1-based position of the phase in the shot"),
+  samples: z
+    .object({
+      entry: PhaseSampleSchema.describe("Reading at the start of the phase"),
+      exit: PhaseSampleSchema.describe("Reading at the end of the phase"),
+      mid: PhaseSampleSchema.describe("Reading at the midpoint of the phase"),
+    })
+    .describe("Readings sampled at the start, midpoint, and end of the phase"),
+  type: z
+    .string()
+    .describe(
+      'Phase type as named by the profile, e.g. "FLOW" or "PRESSURE"; "UNKNOWN" when the profile does not name it',
+    ),
+});
+
+export type PhaseSummary = z.output<typeof PhaseSummarySchema>;
+
+export const ShotSummarySchema = z.object({
+  outcomeMetrics: OutcomeMetricsSchema.describe(
+    "Headline numbers for the whole shot",
+  ),
+  phases: z
+    .array(PhaseSummarySchema)
+    .describe("Phase-by-phase breakdown, in shot order"),
+});
+
+export type ShotSummary = z.output<typeof ShotSummarySchema>;
 
 export function extractOutcomeMetrics(shotData: ShotData): OutcomeMetrics {
   const { datapoints, profile } = shotData;

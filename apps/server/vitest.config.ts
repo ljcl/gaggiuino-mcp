@@ -15,10 +15,10 @@ export default defineConfig({
       // reach, and CI then fails on main. See AGENTS.md "Test coverage".
       thresholds: {
         autoUpdate: true,
-        branches: 63.5,
-        functions: 80.95,
-        lines: 81.13,
-        statements: 80.27,
+        branches: 82.44,
+        functions: 100,
+        lines: 95.41,
+        statements: 95.33,
       },
       include: ["src/**/*.ts"],
       exclude: ["src/**/*.test.ts", "src/test-setup.ts", "src/index.ts"],
