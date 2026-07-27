@@ -8,7 +8,8 @@
   "packages": {
     ".": {
       "extra-files": [
-        { "type": "json", "path": "server.json", "jsonpath": "$.version" }
+        { "type": "json", "path": "server.json", "jsonpath": "$.version" },
+        { "type": "generic", "path": "apps/server/src/version.ts" }
       ]
     }
   }

@@ -16,6 +16,7 @@ import { describeUpstreamError } from "./errors";
 import { loadPrompts } from "./loader";
 import { getAllProfilesText, getProfile } from "./profiles";
 import { TOOL_DEFINITIONS, TOOLS_BY_NAME, type ToolDefinition } from "./tools";
+import { SERVER_NAME, SERVER_VERSION } from "./version";
 
 /**
  * Resolved once at startup via the `@gaggiuino/shot-graph` package's `./app.html`
@@ -132,7 +133,7 @@ export async function handleToolCall(
 
 export function createServer() {
   const server = new Server(
-    { name: "gaggiuino-mcp", version: "1.0.0" },
+    { name: SERVER_NAME, version: SERVER_VERSION },
     { capabilities: { tools: {}, prompts: {}, resources: {} } },
   );
 

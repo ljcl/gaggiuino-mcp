@@ -11,6 +11,7 @@ import {
 import { resetClient } from "./client";
 import { createServer, TOOLS } from "./server";
 import { mockServer } from "./test-setup";
+import { SERVER_NAME, SERVER_VERSION } from "./version";
 
 /**
  * These tests drive the server through a real MCP client over an in-memory
@@ -111,6 +112,17 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await close();
+});
+
+describe("initialize", () => {
+  it("advertises the released version, not a hardcoded one", async () => {
+    // Read back off the client, so this asserts what actually crossed the
+    // handshake rather than what the constant says.
+    expect(client.getServerVersion()).toEqual({
+      name: SERVER_NAME,
+      version: SERVER_VERSION,
+    });
+  });
 });
 
 describe("ListTools", () => {
