@@ -1,0 +1,14 @@
+# Build the server image from the local checkout instead of pulling from GHCR.
+# Requires the full monorepo (the build context is `turbo prune`d in the Dockerfile).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml build
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
+services:
+  gaggiuino-mcp:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    # Tag the local build distinctly so it can never be confused with a
+    # published release, and force compose to build rather than pull it.
+    image: ghcr.io/ljcl/gaggiuino-mcp:dev
+    pull_policy: build

@@ -24,13 +24,17 @@ A Remote [MCP](https://modelcontextprotocol.io) server for integrating a [Gaggiu
 
 ## Quick Start
 
-### 1. Clone and Configure
+The server is published as a multi-arch image (linux/amd64, linux/arm64) at
+[`ghcr.io/ljcl/gaggiuino-mcp`](https://github.com/ljcl/gaggiuino-mcp/pkgs/container/gaggiuino-mcp),
+so there is nothing to clone or build.
+
+### 1. Download and Configure
 
 ```bash
-git clone https://github.com/your-username/gaggiuino-mcp.git
-cd gaggiuino-mcp
+mkdir gaggiuino-mcp && cd gaggiuino-mcp
 
-cp .env.example .env
+curl -O https://raw.githubusercontent.com/ljcl/gaggiuino-mcp/main/docker-compose.yml
+curl -o .env https://raw.githubusercontent.com/ljcl/gaggiuino-mcp/main/.env.example
 ```
 
 Edit `.env` with your Gaggiuino machine's address:
@@ -57,6 +61,21 @@ curl http://localhost:8000/health
 
 The server is available at `http://<your-docker-host>:8000/mcp`.
 
+### Choosing a Version
+
+The compose file tracks `latest`. To pin a release, set `GAGGIUINO_MCP_TAG` in `.env`:
+
+```bash
+GAGGIUINO_MCP_TAG=1.0    # latest 1.0.x patch
+GAGGIUINO_MCP_TAG=1.0.1  # exact release
+```
+
+Upgrade with:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
 ## Configuration
 
 ### Environment Variables
@@ -69,13 +88,28 @@ The server is available at `http://<your-docker-host>:8000/mcp`.
 
 ### Customization
 
-The server ships with generic profiles and prompts. You can customize them for your setup without modifying tracked files:
+The server ships with generic profiles and prompts. Two local override files are merged on top of the defaults at startup:
 
-1. **Equipment-specific dial-in guidance** - Copy `apps/server/src/data/prompts.example-local.yaml` to `prompts.local.yaml` in the same directory and add your grinder model, basket, and other equipment details.
+1. **`prompts.local.yaml`** - equipment-specific dial-in guidance (your grinder model, basket, and other equipment details).
 
-2. **Custom profiles** - Copy `apps/server/src/data/profiles.example-local.yaml` to `profiles.local.yaml` to add your own profiles or override/remove defaults (set a profile ID to `null` to remove it).
+2. **`profiles.local.yaml`** - your own profiles, or overrides/removals of the defaults (set a profile ID to `null` to remove it).
 
-Local override files (`*.local.yaml`) are gitignored and merged on top of the defaults at startup.
+Start from the examples:
+
+```bash
+curl -O https://raw.githubusercontent.com/ljcl/gaggiuino-mcp/main/apps/server/src/data/prompts.example-local.yaml
+curl -O https://raw.githubusercontent.com/ljcl/gaggiuino-mcp/main/apps/server/src/data/profiles.example-local.yaml
+```
+
+These hold personal equipment configuration, so they are deliberately never baked into the published image. To use them, uncomment the `volumes:` block in `docker-compose.yml`:
+
+```yaml
+volumes:
+  - ./profiles.local.yaml:/app/apps/server/src/data/profiles.local.yaml:ro
+  - ./prompts.local.yaml:/app/apps/server/src/data/prompts.local.yaml:ro
+```
+
+From a repo checkout, copy each `*.example-local.yaml` to `*.local.yaml` alongside it in `apps/server/src/data/` instead - they are gitignored and picked up automatically.
 
 ## Connecting to AI Tools
 
@@ -145,6 +179,9 @@ AI Tool (Claude Desktop, etc.)
 ## Development
 
 ```bash
+git clone https://github.com/ljcl/gaggiuino-mcp.git
+cd gaggiuino-mcp
+
 bun install          # Install all dependencies
 
 bun run build        # Build all packages (Turborepo)
@@ -167,11 +204,17 @@ bun run generate-schemas
 
 ### Docker
 
+`docker-compose.yml` pulls the published image. To build and run the image from your
+checkout instead, layer the build override on top of it:
+
 ```bash
-docker compose build
-docker compose up -d
+docker compose -f docker-compose.yml -f docker-compose.build.yml build
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
 docker compose logs -f
 ```
+
+The override tags the result `ghcr.io/ljcl/gaggiuino-mcp:dev` so a local build is never
+mistaken for a published release.
 
 ## Troubleshooting
 

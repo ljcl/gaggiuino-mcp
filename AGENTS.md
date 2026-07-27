@@ -110,7 +110,7 @@ bun run check              # lint + test + typecheck + build + knip + boundaries
 bun run check:affected     # same, scoped to packages affected by the diff
 bun run knip               # Dead code / unused export analysis
 bun run test:stories       # Every story renders in headless Chromium (needs Playwright browsers)
-docker compose build       # Server container builds from current sources
+docker compose -f docker-compose.yml -f docker-compose.build.yml build   # Image builds from current sources
 ```
 
 ## Commands
@@ -151,9 +151,10 @@ INPUT=app.html bunx vite build
 cd apps/server
 bun run generate-schemas
 
-# Docker
-docker compose build
-docker compose up -d
+# Docker — default compose pulls ghcr.io/ljcl/gaggiuino-mcp; the override builds from source
+docker compose up -d                                                     # published image
+docker compose -f docker-compose.yml -f docker-compose.build.yml build   # local build
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
 docker compose logs -f
 ```
 
@@ -208,7 +209,23 @@ base image version is pinned separately and is watched by Dependabot's docker
 ecosystem (added in a later phase).
 
 `*.local.yaml` is excluded from the build context — those files carry personal
-equipment configuration and must never be baked into a published image.
+equipment configuration and must never be baked into a published image. Users who
+want them mount them read-only over `/app/apps/server/src/data/`; the commented
+`volumes:` block in `docker-compose.yml` is the template.
+
+### Compose files
+
+`docker-compose.yml` consumes the published image
+(`ghcr.io/ljcl/gaggiuino-mcp:${GAGGIUINO_MCP_TAG:-latest}`) and has no `build:` key, so a
+fresh host runs the server without a checkout. `docker-compose.build.yml` is the override
+that adds `build:` back for local source builds; it tags the result `:dev` and sets
+`pull_policy: build` so compose can never silently substitute a pulled image for one you
+meant to build. Keep the two files' service name in sync — the override merges by service
+name, and a rename breaks the build path silently.
+
+Deliberately **not** an auto-loaded `docker-compose.override.yml`: that would make every
+`docker compose up` on a checkout build from source, which is the behaviour this change
+moves away from.
 
 ### Verifying the image locally
 
@@ -220,7 +237,7 @@ healthy — do not read that as a broken image. Check the container's own view
 instead:
 
 ```bash
-docker compose up -d
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 docker inspect --format '{{.State.Health.Status}}' gaggiuino-mcp   # -> healthy
 docker exec gaggiuino-mcp /usr/local/bin/bun --eval \
   'fetch("http://localhost:8000/health").then(r=>console.log(r.status))'
