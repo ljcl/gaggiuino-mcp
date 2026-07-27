@@ -5,19 +5,26 @@
 # Safe to re-run: `gh project item-add` returns the existing item when one is already
 # on the board, and every field write is a set-to-this-value, not a toggle.
 #
-# Board fields live in Projects v2, which is GraphQL-only — the cloud Claude Code
-# session that authored this batching could not reach it, hence this script.
+# Board fields live in Projects v2, which is GraphQL-only. This script exists as the
+# local fallback for when an agent session cannot reach api.githubcopilot.com; the
+# values below were applied to the board on 2026-07-27 and this reproduces them.
 #
 # Requires: gh authenticated with `project` scope
 #           (gh auth refresh -s project -h github.com)
 #
 # Usage:
-#   scripts/backlog-board-sync.sh              # epics only (default)
-#   scripts/backlog-board-sync.sh --children   # also stamp each epic's children
-#   scripts/backlog-board-sync.sh --dry-run    # print what would change
+#   scripts/backlog-board-sync.sh            # apply
+#   scripts/backlog-board-sync.sh --dry-run  # print what would change
 #
-# --children OVERWRITES any Priority/Effort already triaged on the 36 child issues.
-# It is off by default for exactly that reason. Look at the board first.
+# EPICS ONLY, deliberately. All 36 child issues were already triaged by hand
+# (verified against the board on 2026-07-27) and their per-issue Priority/Effort
+# is better than any batch-level rollup. There is no --children flag: its only
+# possible effect would be to destroy that triage.
+#
+# The values below are rolled up FROM the children, not invented:
+#   Priority = the most urgent child (P1 beats P2 beats P3)
+#   Effort   = sum of child efforts (S=1, M=2, L=3) -> <=2 S, 3-5 M, >=6 L
+# If child triage changes, re-derive rather than hand-editing these.
 
 set -euo pipefail
 
@@ -54,27 +61,25 @@ effort_option() {
   esac
 }
 
-# epic-number : priority : effort : child issue numbers
+# epic-number : priority : effort : label
 BATCHES=(
-  "52:P1:L:20 21 23 24 31"   # typed tool contract
-  "53:P1:L:18 22 19 25 26"   # runtime hardening and operability
-  "54:P2:L:30 27 28 29"      # upstream data layer and machine reads
-  "55:P3:M:32 33"            # prompts and resources surface
-  "56:P2:M:42 34"            # design tokens and theming foundation
-  "57:P2:L:44 35 40"         # app shell and host capabilities
-  "58:P2:M:41 39"            # chart rendering and comparison overlay
-  "59:P2:L:36 37"            # accessibility to the story-gate flip
-  "60:P3:M:10 43"            # test and coverage honesty
-  "61:P2:M:17 49 45 46 50 38" # CI, release and supply chain
-  "62:P3:S:47 48 51"         # docs and repo hygiene
+  "52:P1:L:typed tool contract"
+  "53:P1:L:runtime hardening and operability"
+  "54:P2:L:upstream data layer and machine reads"
+  "55:P3:S:prompts and resources surface"
+  "56:P1:S:design tokens and theming foundation"
+  "57:P1:L:app shell and host capabilities"
+  "58:P2:M:chart rendering and comparison overlay"
+  "59:P1:M:accessibility to the story-gate flip"
+  "60:P3:M:test and coverage honesty"
+  "61:P2:L:CI, release and supply chain"
+  "62:P2:M:docs and repo hygiene"
 )
 
 DRY_RUN=false
-WITH_CHILDREN=false
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=true ;;
-    --children) WITH_CHILDREN=true ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
   esac
 done
@@ -130,22 +135,16 @@ apply() {
 
 echo "Syncing backlog batching to project ${PROJECT_NUMBER} (${OWNER})"
 $DRY_RUN && echo "(dry run — nothing will be written)"
-$WITH_CHILDREN && echo "(--children: child Priority/Effort will be OVERWRITTEN)"
 echo
 
 for batch in "${BATCHES[@]}"; do
-  IFS=":" read -r epic priority effort children <<<"$batch"
+  IFS=":" read -r epic priority effort label <<<"$batch"
 
-  echo "Epic #${epic}"
+  echo "Epic #${epic} — ${label}"
   apply "$epic" "$priority" "$effort" "(epic)"
   # Epics start in Backlog; children keep whatever status they already have.
   set_field "$ITEM_ID" "$FIELD_STATUS" "$STATUS_BACKLOG"
 
-  if $WITH_CHILDREN; then
-    for child in $children; do
-      apply "$child" "$priority" "$effort" "(child of #${epic})"
-    done
-  fi
   echo
 done
 

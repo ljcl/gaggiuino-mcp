@@ -11,25 +11,29 @@ Each batch is tracked by an `epic`-labelled issue (#52–#62) with its members a
 sub-issues, so the hierarchy and progress roll up natively on the board.
 
 Board fields (Priority, Effort, Status) live on the
-[gaggiuino-mcp backlog](https://github.com/users/ljcl/projects/2) project, not on labels. Projects
-v2 is GraphQL-only and unreachable from the cloud session that produced this batching, so the
-Priority/Effort recommendations below are applied by `scripts/backlog-board-sync.sh` — run it
-locally with `gh auth refresh -s project -h github.com`. It defaults to the eleven epics; pass
-`--children` to stamp the 36 child issues too, which overwrites any triage already on them.
+[gaggiuino-mcp backlog](https://github.com/users/ljcl/projects/2) project, not on labels. The epic
+Priority/Effort below is **already applied to the board** — it is a record, not a suggestion.
+
+Those values are rolled up **from the children's own triage**, not invented: Priority is the most
+urgent child (P1 beats P2 beats P3); Effort is the sum of child efforts (S=1, M=2, L=3) bucketed at
+<=2 S, 3-5 M, >=6 L. All 36 child issues were already triaged by hand and were deliberately **not**
+touched — their per-issue values are finer-grained than any batch rollup and stay authoritative.
+`scripts/backlog-board-sync.sh` reproduces the epic values, as a fallback for sessions that cannot
+reach the Projects API.
 
 | Batch | Epic | Members | Priority | Effort |
 | --- | --- | --- | --- | --- |
 | 1 Typed tool contract | #52 | #20 #21 #23 #24 #31 | P1 | L |
 | 2 Runtime hardening | #53 | #18 #22 #19 #25 #26 | P1 | L |
 | 3 Upstream data layer | #54 | #30 #27 #28 #29 | P2 | L |
-| 4 Prompts and resources | #55 | #32 #33 | P3 | M |
-| 5 Design tokens | #56 | #42 #34 | P2 | M |
-| 6 App shell | #57 | #44 #35 #40 | P2 | L |
+| 4 Prompts and resources | #55 | #32 #33 | P3 | S |
+| 5 Design tokens | #56 | #42 #34 | P1 | S |
+| 6 App shell | #57 | #44 #35 #40 | P1 | L |
 | 7 Chart rendering | #58 | #41 #39 | P2 | M |
-| 8 Accessibility | #59 | #36 #37 | P2 | L |
+| 8 Accessibility | #59 | #36 #37 | P1 | M |
 | 9 Test and coverage | #60 | #10 #43 | P3 | M |
-| 10 CI and supply chain | #61 | #17 #49 #45 #46 #50 #38 | P2 | M |
-| 11 Docs and hygiene | #62 | #47 #48 #51 | P3 | S |
+| 10 CI and supply chain | #61 | #17 #49 #45 #46 #50 #38 | P2 | L |
+| 11 Docs and hygiene | #62 | #47 #48 #51 | P2 | M |
 
 ---
 
@@ -98,7 +102,7 @@ Adding endpoints first means writing them against a fetch path that is about to 
 
 ## Batch 4 — Prompts and resources surface
 
-**#32, #33** · area:server · P3 · M
+**#32, #33** · area:server · P3 · S
 
 Both live in the ListPrompts / GetPrompt / ListResources handlers (`server.ts:310-398`).
 
@@ -113,7 +117,7 @@ wrong order.
 
 ## Batch 5 — Design tokens and theming foundation
 
-**#42, #34** · area:design-system · P2 · M
+**#42, #34** · area:design-system · P1 · S
 
 `packages/design-system/src/tokens.css` is the single file, and this batch is the prerequisite for
 Batch 8.
@@ -134,7 +138,7 @@ hand-wrapped `.dark` decorator will happily show it passing.
 
 ## Batch 6 — App shell and host capabilities
 
-**#44, #35, #40** · area:mcp-app · P2 · L
+**#44, #35, #40** · area:mcp-app · P1 · L
 
 This grouping is not inferred — #44's own body says to extract the shell "while tackling #35 and
 #40". The fetch/error/retry state machine (#35) and the fullscreen toggle (#40) are the shell's
@@ -168,7 +172,7 @@ re-open the first.
 
 ## Batch 8 — Accessibility
 
-**#36, #37** · area:design-system, area:ui · P2 · L · *depends on Batches 5, 6, 7*
+**#36, #37** · area:design-system, area:ui · P1 · M · *depends on Batches 5, 6, 7*
 
 The two issues that together clear the bar for flipping `a11y.test` from `"todo"` to `"error"`.
 
@@ -202,7 +206,7 @@ Independent of each other; batched because they are one reviewer's context.
 
 ## Batch 10 — CI, release and supply chain
 
-**#17, #49, #45, #46, #50, #38** · area:ci-release, area:docker · P2 · M
+**#17, #49, #45, #46, #50, #38** · area:ci-release, area:docker · P2 · L
 
 All six are `.github/` config, each individually small. Two sub-threads:
 
@@ -223,7 +227,7 @@ re-run the failed `publish-mcp.yml` for `v1.0.1`.
 
 ## Batch 11 — Docs and repo hygiene
 
-**#47, #48, #51** · area:repo · P3 · S
+**#47, #48, #51** · area:repo · P2 · M
 
 No code. One PR, mechanical.
 
