@@ -193,8 +193,7 @@ cd apps/server
 bun run dev          # Watch mode
 bun run test         # Server tests only
 
-# Shot graph UI
-cd packages/shot-graph
+# Shot graph UI (run from the repo root)
 bun run storybook    # Storybook on port 6006
 
 # Regenerate JSON schemas (after changing Zod schemas in loader.ts)
