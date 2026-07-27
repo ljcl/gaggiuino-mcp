@@ -3,13 +3,21 @@ name: Storybook
 on:
   push:
     branches: [main]
-    # Redeploying Pages only makes sense when the Storybook content can have
-    # changed.
+    # Redeploying Pages only makes sense when the Storybook content, or what
+    # builds it, can have changed. root package.json carries the turbo version
+    # and the build-storybook script; the composite action pins the toolchain.
     paths:
       - "packages/**"
       - "apps/storybook/**"
       - "bun.lock"
+      - "package.json"
+      - "turbo.json"
+      - ".github/actions/setup/**"
       - ".github/workflows/storybook.yml"
+  # A Pages deployment can fail for reasons that have nothing to do with the
+  # commit (a transient Pages API error, an environment not yet enabled).
+  # Without this the only way to retry was to push a dummy change.
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}

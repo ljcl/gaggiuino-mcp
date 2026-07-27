@@ -33,7 +33,15 @@ updates:
       - ljcl
 
   - package-ecosystem: github-actions
-    directory: "/"
+    # For github-actions, "/" means .github/workflows plus an action.yml in the
+    # repository root — nothing else. A composite action nested under
+    # .github/actions is its own manifest and goes unwatched: setup's pins had
+    # drifted a full major behind the same action in ci.yml before this. Only
+    # `directories` supports the wildcard, which keeps a future composite
+    # action covered from the day it lands.
+    directories:
+      - "/"
+      - "/.github/actions/*"
     schedule:
       interval: weekly
       day: monday

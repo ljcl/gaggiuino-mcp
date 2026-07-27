@@ -28,6 +28,12 @@ export default {
       project: ["src/**/*.{ts,tsx}"],
     },
     "apps/storybook": {
+      // Storybook finds ui's stories by directory glob in .storybook/main.ts,
+      // and those stories import their components by relative path — so nothing
+      // in this workspace ever names `@gaggiuino/ui`. The dependency is still
+      // load-bearing: it is what puts ui in turbo's build:storybook task graph,
+      // without which a ui-only change cache-hits and redeploys stale Pages.
+      ignoreDependencies: ["@gaggiuino/ui"],
       storybook: {
         config: [".storybook/main.ts"],
         entry: [

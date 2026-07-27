@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "@gaggiuino/design-system": "workspace:*",
-    "@gaggiuino/shot-graph": "workspace:*"
+    "@gaggiuino/shot-graph": "workspace:*",
+    "@gaggiuino/ui": "workspace:*"
   },
   "devDependencies": {
     "@gaggiuino/tsconfig": "workspace:*",
