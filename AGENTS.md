@@ -564,6 +564,7 @@ curl -X POST http://localhost:8000/mcp \
 | `MCP_AUTH_TOKEN`      | _(unset)_                | Bearer secret for `/mcp`; unset serves it open    |
 | `MCP_ALLOWED_ORIGINS` | _(empty)_                | Browser origins allowed on `/mcp`; `*` allows any |
 | `MCP_ALLOWED_HOSTS`   | _(empty)_                | `Host` values to accept; empty disables the check |
+| `LOG_LEVEL`           | `info`                   | `debug`/`info`/`warn`/`error`/`silent`            |
 
 ## The HTTP surface
 
@@ -625,6 +626,40 @@ strand the rest of the sweep. Both have tests named after the failure.
 so handling only SIGINT meant the container was killed after the grace period
 with every session still open. It stops the listener before draining, so nothing
 lands on a transport that is closing.
+
+### Logging, health, and startup validation
+
+`logging.ts` writes one JSON object per line to stderr, each with an `event`
+name (`tool.call`, `session.opened`, `security.unauthenticated`,
+`config.invalid`, …). The level resolves **lazily on first use**, not at module
+load — that is what lets `test-setup.ts` call `setLogLevel("silent")` and have
+it apply regardless of import order. `createLogger` takes an injectable sink and
+clock so `logging.test.ts` asserts whole records without capturing stderr; the
+tool-call assertions in `server.test.ts` deliberately spy on the real
+`console.error` instead, so the default sink stays in the loop.
+
+Every tool call is one record with `tool`, `durationMs`, and `outcome`. On an
+expected failure it also carries `reason` — the same actionable text the model
+got, because a bare `"error"` throws away the only useful part. A genuine bug
+logs `tool.error` at error level with the stack.
+
+`/health` returns JSON (`buildHealth` in `health.ts`) and **stays 200 while the
+machine is unreachable**. That is load-bearing: the container HEALTHCHECK reads
+the status code, and the espresso machine is switched off most of the day.
+Upstream state is a field, never the status code.
+
+`machine.state` is observed from the requests the server already makes
+(`recordUpstream` in `client.ts`), not from a probe — the upstream is an ESP32
+on Wi-Fi and a timer-driven ping would load the one device the caching work in
+#30 is trying to spare. So an unused server honestly reports `unknown`. Any HTTP
+response counts as reachable, including a 404: it proves the network path works.
+`resetClient` clears the observed state along with the client, so one test's
+failed fetch cannot leak into the next.
+
+`config.ts` validates `PORT` and `GAGGIUINO_URL` before the port is bound and
+names the offending variable. `PORT` previously went through a bare `Number()`
+with no NaN guard, and `GAGGIUINO_URL` was never parsed — a missing `http://`
+surfaced much later as a failed fetch blamed on the machine being offline.
 
 ## Backlog and issue tracking
 

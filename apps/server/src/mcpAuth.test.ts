@@ -170,31 +170,42 @@ describe("checkRequest — ordering", () => {
 });
 
 describe("describeSecurity", () => {
-  it("warns loudly when the endpoint is unauthenticated", () => {
-    const lines = describeSecurity(OPEN).join("\n");
-    expect(lines).toContain("WARNING");
-    expect(lines).toContain("MCP_AUTH_TOKEN");
+  function report(config: SecurityConfig, event: string) {
+    return describeSecurity(config).find((entry) => entry.event === event);
+  }
+
+  it("warns at warn level when the endpoint is unauthenticated", () => {
+    const entry = report(OPEN, "security.unauthenticated");
+    expect(entry?.level).toBe("warn");
+    expect(String(entry?.fields.message)).toContain("MCP_AUTH_TOKEN");
   });
 
   it("reports the gate instead of warning once a token is set", () => {
-    const lines = describeSecurity({ ...OPEN, token: "t" }).join("\n");
-    expect(lines).not.toContain("WARNING");
-    expect(lines).toContain("bearer token required");
+    const gated = { ...OPEN, token: "t" };
+    expect(report(gated, "security.unauthenticated")).toBeUndefined();
+    expect(report(gated, "security.auth")?.fields.mode).toBe("bearer");
   });
 
-  it("calls out the wildcard, which is the one unsafe origin setting", () => {
-    const lines = describeSecurity({
-      ...OPEN,
-      allowedOrigins: ["*"],
-      token: "t",
-    }).join("\n");
-    expect(lines).toContain("ALL allowed");
+  it("warns about the wildcard, the one unsafe origin setting", () => {
+    const entry = report(
+      { ...OPEN, allowedOrigins: ["*"], token: "t" },
+      "security.origins",
+    );
+    expect(entry?.level).toBe("warn");
+    expect(entry?.fields.allowed).toBe("*");
   });
 
-  it("lists the host allowlist only when one is configured", () => {
-    expect(describeSecurity(OPEN).join("\n")).not.toContain("Hosts:");
+  it("explains the empty allowlist rather than looking like a misconfiguration", () => {
+    const entry = report({ ...OPEN, token: "t" }, "security.origins");
+    expect(entry?.level).toBe("info");
+    expect(String(entry?.fields.message)).toContain("without an Origin header");
+  });
+
+  it("mentions the host allowlist only when one is configured", () => {
+    expect(report(OPEN, "security.hosts")).toBeUndefined();
     expect(
-      describeSecurity({ ...OPEN, allowedHosts: ["a.test"] }).join("\n"),
-    ).toContain("Hosts: a.test");
+      report({ ...OPEN, allowedHosts: ["a.test"] }, "security.hosts")?.fields
+        .allowed,
+    ).toEqual(["a.test"]);
   });
 });

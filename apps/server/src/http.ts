@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { buildHealth } from "./health";
+import { logger } from "./logging";
 import { checkRequest, type SecurityConfig } from "./mcpAuth";
 import {
   createSessionManager,
@@ -42,21 +44,21 @@ export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
   const sessions =
     createSessionManager<WebStandardStreamableHTTPServerTransport>({
       onEvicted: (sessionId, reason) =>
-        console.error(`Session evicted (${reason}): ${sessionId}`),
+        logger.info("session.evicted", { reason, sessionId }),
       ...options.sessions,
     });
 
   function createTransport(): WebStandardStreamableHTTPServerTransport {
     const transport = new WebStandardStreamableHTTPServerTransport({
       onsessioninitialized: (sessionId) => {
-        console.error(`Session initialized: ${sessionId}`);
+        logger.info("session.opened", { sessionId });
         sessions.add(sessionId, transport);
       },
       sessionIdGenerator: () => randomUUID(),
     });
     transport.onclose = () => {
       if (transport.sessionId) {
-        console.error(`Session closed: ${transport.sessionId}`);
+        logger.info("session.closed", { sessionId: transport.sessionId });
         sessions.delete(transport.sessionId);
       }
     };
@@ -122,7 +124,7 @@ export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
       // runs with no token and no Origin, and a liveness probe that needs a
       // credential is a liveness probe that reports the credential's health.
       if (url.pathname === "/health") {
-        return new Response("ok");
+        return Response.json(buildHealth());
       }
 
       if (url.pathname === "/mcp") {

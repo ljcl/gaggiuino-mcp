@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DEFAULT_MACHINE_URL } from "./config";
 import {
   MalformedUpstreamError,
   UpstreamHttpError,
@@ -101,6 +102,41 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Whether the machine has answered us lately.
+ *
+ * Recorded from the requests the server already makes rather than from a
+ * synthetic probe: the upstream is an ESP32 on Wi-Fi, and a `/health` endpoint
+ * that pinged it on a timer would put steady load on the one device we are
+ * trying not to hammer. The cost is that a server nobody has used yet reports
+ * `unknown`, which is the truth.
+ *
+ * "Reachable" means the machine answered, not that it answered well: a 404 for
+ * a shot that does not exist still proves the network path works, so only a
+ * genuine network failure sets `unreachable`.
+ */
+export type UpstreamState = "ok" | "unknown" | "unreachable";
+
+export interface UpstreamHealth {
+  lastCheckedAt?: string;
+  lastError?: string;
+  state: UpstreamState;
+}
+
+let upstreamHealth: UpstreamHealth = { state: "unknown" };
+
+function recordUpstream(state: UpstreamState, error?: string): void {
+  upstreamHealth = {
+    lastCheckedAt: new Date().toISOString(),
+    ...(error === undefined ? {} : { lastError: error }),
+    state,
+  };
+}
+
+export function getUpstreamHealth(): UpstreamHealth {
+  return { ...upstreamHealth };
+}
+
 function unwrapArray(data: unknown): unknown {
   if (Array.isArray(data) && data.length > 0) {
     return data[0];
@@ -140,6 +176,9 @@ export function createClient(config: ClientConfig) {
           signal: controller.signal,
         });
 
+        // An HTTP status — any HTTP status — proves the network path works.
+        recordUpstream("ok");
+
         if (!response.ok) {
           throw new UpstreamHttpError(
             response.status,
@@ -175,10 +214,9 @@ export function createClient(config: ClientConfig) {
       }
     }
 
-    throw new UpstreamUnreachableError(
-      maxRetries,
-      lastError?.message ?? "unknown error",
-    );
+    const reason = lastError?.message ?? "unknown error";
+    recordUpstream("unreachable", reason);
+    throw new UpstreamUnreachableError(maxRetries, reason);
   }
 
   return {
@@ -198,7 +236,7 @@ export function createClient(config: ClientConfig) {
 }
 
 export const MACHINE_URL =
-  process.env.GAGGIUINO_URL ?? "http://gaggiuino.local";
+  process.env.GAGGIUINO_URL?.trim() || DEFAULT_MACHINE_URL;
 
 let cachedClient: ReturnType<typeof createClient> | null = null;
 let clientOverrides: Partial<ClientConfig> = {};
@@ -219,4 +257,8 @@ export function getClient() {
 export function resetClient(config: Partial<ClientConfig> = {}) {
   cachedClient = null;
   clientOverrides = config;
+  // Observed upstream health is process-wide too, so it resets with the client
+  // — otherwise one test's failed fetch would leak into the next one's
+  // assertion about a freshly started server.
+  upstreamHealth = { state: "unknown" };
 }

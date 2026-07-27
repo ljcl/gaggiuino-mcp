@@ -1,6 +1,10 @@
+import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { getClient, resetClient } from "./client";
 import { createFetchHandler, type FetchHandler } from "./http";
 import { type SecurityConfig } from "./mcpAuth";
+import { mockServer } from "./test-setup";
+import { SERVER_VERSION } from "./version";
 
 /**
  * These drive the real fetch handler with real `Request` objects instead of
@@ -69,7 +73,37 @@ describe("/health", () => {
       new Request("http://localhost:8000/health"),
     );
     expect(response.status).toBe(200);
-    expect(await response.text()).toBe("ok");
+    expect(response.headers.get("content-type")).toContain("application/json");
+    const body = (await response.json()) as {
+      machine: { state: string; url: string };
+      status: string;
+      uptimeSec: number;
+      version: string;
+    };
+    expect(body.status).toBe("ok");
+    expect(body.version).toBe(SERVER_VERSION);
+    expect(typeof body.uptimeSec).toBe("number");
+    expect(body.machine.url).toBeTruthy();
+    expect(body.machine.state).toBeTruthy();
+  });
+
+  it("stays 200 while the machine is unreachable", async () => {
+    // The espresso machine is off most of the day. Failing the healthcheck for
+    // that would restart a perfectly healthy container every afternoon.
+    resetClient({ initialDelayMs: 1, maxRetries: 1 });
+    mockServer.use(
+      http.get("http://gaggiuino.local/api/system/status", () =>
+        HttpResponse.error(),
+      ),
+    );
+    await expect(getClient().getStatus()).rejects.toThrow();
+
+    const response = await handler.fetch(
+      new Request("http://localhost:8000/health"),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { machine: { state: string } };
+    expect(body.machine.state).toBe("unreachable");
   });
 
   it("stays reachable from a disallowed origin", async () => {

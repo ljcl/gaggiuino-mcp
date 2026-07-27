@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { type LogFields } from "./logging";
 
 /**
  * Request-level gate for `/mcp`.
@@ -148,29 +149,75 @@ export function checkRequest(
   );
 }
 
+export interface SecurityReport {
+  event: string;
+  fields: LogFields;
+  level: "info" | "warn";
+}
+
 /**
- * One-line description of the gate for the startup banner, and a loud warning
- * when there is no gate at all. Returning the lines rather than printing them
- * keeps this testable and keeps every write to stderr in `index.ts`.
+ * Describe the gate for the startup banner, loudly when there is no gate.
+ *
+ * Returning records rather than printing them keeps this testable and keeps
+ * every write to stderr inside `index.ts`. Each carries a `message` an operator
+ * can read directly, because the two conditions worth noticing here — no token,
+ * and a wildcard origin — are ones somebody needs to act on, not grep for.
  */
-export function describeSecurity(config: SecurityConfig): string[] {
-  const lines: string[] = [];
+export function describeSecurity(config: SecurityConfig): SecurityReport[] {
+  const reports: SecurityReport[] = [];
+
   if (config.token) {
-    lines.push("Auth: bearer token required on /mcp (MCP_AUTH_TOKEN)");
+    reports.push({
+      event: "security.auth",
+      fields: { message: "Bearer token required on /mcp", mode: "bearer" },
+      level: "info",
+    });
   } else {
-    lines.push(
-      "WARNING: /mcp is unauthenticated. Anyone who can reach this port can",
-      "         control the machine. Set MCP_AUTH_TOKEN before exposing it",
-      "         beyond your LAN (Tailscale Funnel, cloudflared, ngrok).",
-    );
+    reports.push({
+      event: "security.unauthenticated",
+      fields: {
+        message:
+          "WARNING: /mcp is unauthenticated — anyone who can reach this port can control the machine. Set MCP_AUTH_TOKEN before exposing it beyond your LAN (Tailscale Funnel, cloudflared, ngrok).",
+        mode: "none",
+      },
+      level: "warn",
+    });
   }
-  lines.push(
-    config.allowedOrigins.includes("*")
-      ? "Origins: ALL allowed (MCP_ALLOWED_ORIGINS=*) — browser pages can reach /mcp"
-      : `Origins: ${config.allowedOrigins.length > 0 ? config.allowedOrigins.join(", ") : "none (browser requests rejected)"}`,
-  );
+
+  if (config.allowedOrigins.includes("*")) {
+    reports.push({
+      event: "security.origins",
+      fields: {
+        allowed: "*",
+        message:
+          "WARNING: MCP_ALLOWED_ORIGINS=* — any web page the user visits can reach /mcp",
+      },
+      level: "warn",
+    });
+  } else {
+    reports.push({
+      event: "security.origins",
+      fields: {
+        allowed: config.allowedOrigins,
+        message:
+          config.allowedOrigins.length > 0
+            ? `Browser origins allowed: ${config.allowedOrigins.join(", ")}`
+            : "No browser origins allowed; requests without an Origin header are unaffected",
+      },
+      level: "info",
+    });
+  }
+
   if (config.allowedHosts.length > 0) {
-    lines.push(`Hosts: ${config.allowedHosts.join(", ")}`);
+    reports.push({
+      event: "security.hosts",
+      fields: {
+        allowed: config.allowedHosts,
+        message: `Host header allowed: ${config.allowedHosts.join(", ")}`,
+      },
+      level: "info",
+    });
   }
-  return lines;
+
+  return reports;
 }

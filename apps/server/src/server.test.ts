@@ -2,13 +2,14 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { type ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
 import { HttpResponse, http } from "msw";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   mockLatestShotResponse,
   mockMachineStatus,
   mockShotData,
 } from "./__fixtures__/api-responses";
 import { resetClient } from "./client";
+import { setLogLevel } from "./logging";
 import { createServer, TOOLS } from "./server";
 import { mockServer } from "./test-setup";
 import { SERVER_NAME, SERVER_VERSION } from "./version";
@@ -112,6 +113,72 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await close();
+});
+
+describe("tool call logging", () => {
+  /**
+   * Tool failures come back as `isError` results, which is right for the model
+   * but used to leave the operator with nothing: a tool could fail every call
+   * and the logs would not show it. These capture the real sink, so the default
+   * `console.error` path is in the loop rather than an injected stub.
+   */
+  function captureLogs() {
+    const records: Array<Record<string, unknown>> = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((line) => {
+      records.push(JSON.parse(String(line)));
+    });
+    setLogLevel("info");
+    return {
+      records,
+      restore: () => {
+        spy.mockRestore();
+        setLogLevel("silent");
+      },
+    };
+  }
+
+  it("logs a successful call with its name, duration and outcome", async () => {
+    const { records, restore } = captureLogs();
+    try {
+      await call("get_status");
+    } finally {
+      restore();
+    }
+    const entry = records.find((record) => record.event === "tool.call");
+    expect(entry).toMatchObject({ outcome: "ok", tool: "get_status" });
+    expect(typeof entry?.durationMs).toBe("number");
+  });
+
+  it("logs a failed call with the reason the model was given", async () => {
+    mockServer.use(
+      http.get("http://gaggiuino.local/api/system/status", () =>
+        HttpResponse.error(),
+      ),
+    );
+    const { records, restore } = captureLogs();
+    try {
+      await call("get_status");
+    } finally {
+      restore();
+    }
+    const entry = records.find((record) => record.event === "tool.call");
+    expect(entry).toMatchObject({ outcome: "error", tool: "get_status" });
+    // The server writes these to be actionable; a bare "error" would throw
+    // away the one useful part.
+    expect(String(entry?.reason)).toContain("gaggiuino.local");
+  });
+
+  it("logs an invalid-argument call as an error outcome", async () => {
+    const { records, restore } = captureLogs();
+    try {
+      await call("get_shot_data", {});
+    } finally {
+      restore();
+    }
+    expect(
+      records.find((record) => record.event === "tool.call"),
+    ).toMatchObject({ outcome: "error", tool: "get_shot_data" });
+  });
 });
 
 describe("initialize", () => {

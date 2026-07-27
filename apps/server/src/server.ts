@@ -14,6 +14,7 @@ import { z } from "zod";
 import { MACHINE_URL } from "./client";
 import { describeUpstreamError } from "./errors";
 import { loadPrompts } from "./loader";
+import { logger } from "./logging";
 import { getAllProfilesText, getProfile } from "./profiles";
 import { TOOL_DEFINITIONS, TOOLS_BY_NAME, type ToolDefinition } from "./tools";
 import { SERVER_NAME, SERVER_VERSION } from "./version";
@@ -142,6 +143,20 @@ export function createServer() {
   }));
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+    // Expected failures come back as `isError` results, which is right for the
+    // model but left the operator blind: a tool could fail every call and
+    // nothing reached the logs. Every call is now one record, whatever the
+    // outcome.
+    const startedAt = performance.now();
+    const finish = (outcome: string, fields?: Record<string, unknown>) => {
+      logger.info("tool.call", {
+        durationMs: Math.round(performance.now() - startedAt),
+        outcome,
+        tool: name,
+        ...fields,
+      });
+    };
+
     try {
       const outcome = await handleToolCall(name, args ?? {});
       const result: {
@@ -153,9 +168,22 @@ export function createServer() {
       if (outcome.structuredContent) {
         result.structuredContent = outcome.structuredContent;
       }
+      // The text of an expected failure is written to be actionable, so it is
+      // worth carrying into the log rather than a bare "error".
+      finish(outcome.isError ? "error" : "ok", {
+        ...(outcome.isError ? { reason: outcome.text } : {}),
+      });
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      // Reaching here means a bug rather than an upstream failure, so it logs
+      // at error level with the stack the model result cannot carry.
+      logger.error("tool.error", {
+        durationMs: Math.round(performance.now() - startedAt),
+        reason: message,
+        stack: error instanceof Error ? error.stack : undefined,
+        tool: name,
+      });
       return {
         content: [{ text: `Tool error: ${message}`, type: "text" }],
         isError: true,
