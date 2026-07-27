@@ -36,8 +36,9 @@ via symlinks in `.claude/skills/`. Externally-sourced skills are tracked in `ski
   current code and fixing drift. Run it after an epic, breaking change, or wide refactor merges.
 - `bun` — Bun runtime, package manager, test runner, and bundler usage (well-known source).
 - `github-actions-docs` — docs-grounded help for authoring GitHub Actions workflows (GitHub
-  source). `.github/workflows/ci.yml` runs CI on every PR and main push; release and
-  publish workflows are still a later phase.
+  source). `.github/workflows/ci.yml` runs CI on every PR and main push, and the release and
+  publish workflows (`release-please.yml`, `docker.yml`, `publish-mcp.yml`, `storybook.yml`)
+  are all live — see CI and Releases below.
 
 ## MCP Tools
 
@@ -171,7 +172,7 @@ bun run typecheck:affected # Typecheck only packages affected by the diff
 bun run lint               # Biome, repo-wide (NOT `turbo run lint` — infinite loop)
 bun run lint:fix           # Biome, applying fixes
 bun run boundaries         # turbo boundaries (tag-based layering check)
-bun run check              # lint + test + typecheck + build + boundaries
+bun run check              # lint + test + typecheck + build + knip + boundaries
 bun run check:affected     # same, scoped to packages affected by the diff
 bun run dev                # Dev mode (via Turborepo)
 bun run storybook          # Storybook on port 6006 (via Turborepo)
@@ -254,8 +255,13 @@ stage must `COPY` that `dist/` explicitly.
 
 The turbo version installed in the toolchain stage is read from root
 `package.json`, so a Dependabot turbo bump cannot drift from the image. The Bun
-base image version is pinned separately and is watched by Dependabot's docker
-ecosystem (added in a later phase).
+base image version is pinned separately in the two `FROM oven/bun:` lines and is
+watched by Dependabot's docker ecosystem (`.github/dependabot.yml`). Those pins
+must stay equal to root `package.json`'s `packageManager`, which is what CI
+installs Bun from — a skew means the tests run on a different runtime than the
+one that ships. Dependabot only bumps the image side, so `ci.yml`'s **Bun
+version skew** step fails the build when the two disagree; fix it by bumping
+`packageManager` to match.
 
 `*.local.yaml` is excluded from the build context — those files carry personal
 equipment configuration and must never be baked into a published image. Users who
@@ -301,7 +307,9 @@ bun binary directly (it is the image's ENTRYPOINT) as above.
 `main`, and a weekly schedule.
 
 - **`check`** — checkout, the composite `.github/actions/setup` action (Bun, Turborepo cache,
-  `bun install --frozen-lockfile`), then Biome as a dedicated step outside turbo
+  `bun install --frozen-lockfile`), a **Bun version skew** guard asserting root
+  `package.json`'s `packageManager` matches the Dockerfile's `oven/bun` base tags, then
+  Biome as a dedicated step outside turbo
   (`bun run lint --reporter=github`) so its GitHub reporter's `::error`/`::warning` annotations
   land inline on the PR diff — a turbo task-name prefix would stop GitHub parsing them. PRs then
   run `turbo run test typecheck build knip --affected` plus `turbo boundaries`; pushes to `main`
@@ -315,8 +323,8 @@ bun binary directly (it is the image's ENTRYPOINT) as above.
 
 Only `GITHUB_TOKEN` is required for `ci.yml` itself. Docker publishing (`docker.yml`),
 release-please (`release-please.yml`), and the MCP registry publish (`publish-mcp.yml`) are
-wired up in this phase — see Releases below. GitHub Pages (`storybook.yml`) is wired up too,
-but cannot actually deploy until the repo goes public, in the final phase of this plan.
+live — see Releases below. So is the Storybook Pages deploy (`storybook.yml`): the repo is
+public and Pages builds from Actions, so a red run there is a real regression to chase.
 
 ## Storybook
 
@@ -355,7 +363,7 @@ Each story also runs a per-story accessibility check via `addon-a11y`'s Vitest i
 visible in Storybook's Accessibility panel and in each test's reporting output. The default
 `a11y.test: "todo"` parameter means a violation is recorded, not asserted — `bun run test:stories`
 does not currently fail on an accessibility defect. Treat the panel as a review aid today; a
-stricter `test: "error"` gate is a candidate for a later phase.
+stricter `test: "error"` gate remains a candidate for future work.
 
 There is intentionally **no pixel-level visual-regression gate**.
 
@@ -390,13 +398,13 @@ rendering), mirroring how `addon-a11y` is wired.
 - Storybook ships a Model Context Protocol server (via `@storybook/addon-mcp`)
   with story, docs, and test tools. The endpoint is pre-wired in `.mcp.json`:
   `storybook` at `http://localhost:6006/mcp` (while `bun run storybook` runs).
-- The `main` Storybook is hosted on GitHub Pages (`storybook.yml`) for browsing;
-  it is a static build with no MCP endpoint.
+- The `main` Storybook is hosted on GitHub Pages at
+  https://ljcl.github.io/gaggiuino-mcp/ (`storybook.yml`) for browsing; it is a
+  static build with no MCP endpoint.
 
-`storybook.yml` cannot succeed yet: GitHub Pages deployment requires the repo to be
-public and Pages set to build from GitHub Actions. Both land in the final phase of
-this plan (Task 21). Until then, pushes to `main` will run this workflow and it will
-fail at the Pages deployment step — that is expected, not a regression to chase.
+`storybook.yml` deploys on every push to `main` that touches `packages/**`,
+`apps/storybook/**`, `bun.lock`, or the workflow itself. It is live and green, so a
+failed Pages deploy is a real regression to chase, not an expected state.
 
 ## Testing the MCP endpoint
 

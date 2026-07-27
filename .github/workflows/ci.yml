@@ -27,6 +27,21 @@ jobs:
 
       - uses: ./.github/actions/setup
 
+      # CI installs Bun from root package.json's packageManager (see the setup
+      # composite) while the published image is built on the Dockerfile's
+      # oven/bun base tags, so a skew silently tests on a different runtime than
+      # the one that ships. Dependabot's docker ecosystem only bumps the image
+      # side, so the drift would otherwise grow unnoticed.
+      - name: Bun version skew
+        run: |
+          want=$(bun --print 'require("./package.json").packageManager.replace("bun@", "")')
+          have=$(sed -n 's|^FROM oven/bun:\([0-9][^ -]*\).*|\1|p' apps/server/Dockerfile | sort -u)
+          if [ "$have" != "$want" ]; then
+            echo "::error::Bun version skew: package.json pins bun@$want, apps/server/Dockerfile pins $(echo "$have" | tr '\n' ' ')— bump packageManager to match the image."
+            exit 1
+          fi
+          echo "Bun $want in both package.json and apps/server/Dockerfile."
+
       # Biome runs outside turbo here (unlike the local `check` task) so its
       # GitHub reporter's ::error/::warning workflow commands start the line —
       # turbo's task-name prefix would stop GitHub parsing them. This is what
