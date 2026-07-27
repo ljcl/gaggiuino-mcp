@@ -1,11 +1,21 @@
 services:
   gaggiuino-mcp:
-    build:
-      context: .
-      dockerfile: apps/server/Dockerfile
+    # Published multi-arch image (linux/amd64, linux/arm64) from GHCR.
+    # Set GAGGIUINO_MCP_TAG to pin a release (e.g. 1.0.1 or 1.0) instead of
+    # tracking `latest`. To build from source instead, see docker-compose.build.yml.
+    image: ghcr.io/ljcl/gaggiuino-mcp:${GAGGIUINO_MCP_TAG:-latest}
     container_name: gaggiuino-mcp
     network_mode: host
     restart: unless-stopped
     env_file:
+      # `.env` first so a standalone deploy (this file alone, no repo checkout)
+      # works; `apps/server/.env` keeps existing repo-based setups working.
+      - path: .env
+        required: false
       - path: apps/server/.env
         required: false
+    # Personal `*.local.yaml` overrides are deliberately never baked into the
+    # published image. Mount them read-only to use them (see README > Customization).
+    # volumes:
+    #   - ./profiles.local.yaml:/app/apps/server/src/data/profiles.local.yaml:ro
+    #   - ./prompts.local.yaml:/app/apps/server/src/data/prompts.local.yaml:ro
