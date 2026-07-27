@@ -35,6 +35,25 @@
           "description": "Bind address (default 0.0.0.0)",
           "isRequired": false,
           "format": "string"
+        },
+        {
+          "name": "MCP_AUTH_TOKEN",
+          "description": "Shared secret required as an Authorization: Bearer token on /mcp. Unset serves the endpoint unauthenticated; set it before exposing the server beyond your LAN",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "MCP_ALLOWED_ORIGINS",
+          "description": "Comma-separated browser origins allowed to call /mcp, or * to allow any (unsafe). Requests with no Origin header are unaffected",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "MCP_ALLOWED_HOSTS",
+          "description": "Comma-separated Host header values to accept on /mcp. Empty disables host validation",
+          "isRequired": false,
+          "format": "string"
         }
       ]
     }

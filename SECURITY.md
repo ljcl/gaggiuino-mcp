@@ -40,7 +40,24 @@ Out of scope:
 - The Gaggiuino firmware and its own HTTP API — report those upstream.
 - Vulnerabilities that require an already-compromised host or a misconfigured
   deployment (for example, exposing the server publicly without the documented
-  reverse proxy or tunnel).
+  reverse proxy or tunnel, or without `MCP_AUTH_TOKEN` set).
+
+## Hardening the endpoint
+
+`/mcp` exposes the full tool surface against a machine on your network, so a
+public deployment needs both of these — see
+[README > Securing the endpoint](README.md#securing-the-endpoint):
+
+- **`MCP_AUTH_TOKEN`** — a shared secret checked with a constant-time compare.
+  Unset serves `/mcp` unauthenticated, and the server says so at startup.
+- **`MCP_ALLOWED_ORIGINS`** — the browser origins allowed to reach `/mcp`.
+  Empty (the default) rejects every request that carries an `Origin` header,
+  which is what stops a page the user visits from driving a server on their own
+  network. Requests without an `Origin` are unaffected, so non-browser clients
+  need no configuration.
+
+`/health` is intentionally unauthenticated: it returns liveness only, and the
+container healthcheck has no credential to present.
 
 ## Supply chain
 

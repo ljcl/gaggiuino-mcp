@@ -556,11 +556,52 @@ curl -X POST http://localhost:8000/mcp \
 
 ## Environment Variables
 
-| Variable        | Default                  | Description           |
-| --------------- | ------------------------ | --------------------- |
-| `GAGGIUINO_URL` | `http://gaggiuino.local` | Gaggiuino machine URL |
-| `PORT`          | `8000`                   | Server port           |
-| `HOST`          | `0.0.0.0`                | Bind address          |
+| Variable              | Default                  | Description                                       |
+| --------------------- | ------------------------ | ------------------------------------------------- |
+| `GAGGIUINO_URL`       | `http://gaggiuino.local` | Gaggiuino machine URL                             |
+| `PORT`                | `8000`                   | Server port                                       |
+| `HOST`                | `0.0.0.0`                | Bind address                                      |
+| `MCP_AUTH_TOKEN`      | _(unset)_                | Bearer secret for `/mcp`; unset serves it open    |
+| `MCP_ALLOWED_ORIGINS` | _(empty)_                | Browser origins allowed on `/mcp`; `*` allows any |
+| `MCP_ALLOWED_HOSTS`   | _(empty)_                | `Host` values to accept; empty disables the check |
+
+## The HTTP surface
+
+`index.ts` is bootstrap only — read the environment, serve, wire the signals —
+which is why it stays out of the coverage set. Everything it delegates to is
+covered:
+
+- `http.ts` — `createFetchHandler({ security })` returns a `fetch` plus the live
+  session map. Tests drive it with real `Request` objects and never bind a port.
+- `mcpAuth.ts` — `loadSecurityConfig` / `checkRequest` / `describeSecurity`.
+  `checkRequest` returns the `Response` to send, or `undefined` to proceed.
+
+Three things about the gate are load-bearing:
+
+- **`/health` is routed before it.** The container HEALTHCHECK presents no
+  credential and no `Origin`; a liveness probe that needs a token reports the
+  token's health.
+- **Origin is checked before the token.** Otherwise the 401/403 split tells an
+  unauthenticated cross-origin prober whether a token is configured at all.
+- **An absent `Origin` always passes.** Non-browser clients (Claude Desktop,
+  `curl`) send none, so the empty default allowlist blocks exactly the
+  browser-initiated cross-origin case and nothing else. That is what lets the
+  default be deny-all without breaking every install.
+
+Validation runs as middleware in `fetch` rather than through the transport's
+`enableDnsRebindingProtection` / `allowedHosts` / `allowedOrigins` options:
+those are all `@deprecated` as of SDK 1.30.0 in favour of external middleware,
+and doing it here rejects a request before the body is read or a transport is
+allocated.
+
+`secretsMatch` hashes both values before `timingSafeEqual`. That is not
+decoration — `timingSafeEqual` throws on a length mismatch, and the obvious
+guard (`a.length !== b.length`) leaks the secret's length. Two SHA-256 digests
+are always 32 bytes.
+
+`scripts/test-auth.sh` probes a running server for all of the above. It tests
+bearer auth, not OAuth — the server implements no OAuth and advertises no
+discovery document.
 
 ## Backlog and issue tracking
 

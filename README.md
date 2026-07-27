@@ -87,6 +87,33 @@ docker compose pull && docker compose up -d
 | `GAGGIUINO_URL` | `http://gaggiuino.local` | URL of your Gaggiuino machine |
 | `PORT` | `8000` | Port for the MCP server |
 | `HOST` | `0.0.0.0` | Host to bind to |
+| `MCP_AUTH_TOKEN` | _(unset)_ | Shared secret required as `Authorization: Bearer <token>` on `/mcp`. Unset serves the endpoint unauthenticated. |
+| `MCP_ALLOWED_ORIGINS` | _(empty)_ | Comma-separated browser origins allowed to call `/mcp`. `*` allows any (unsafe). |
+| `MCP_ALLOWED_HOSTS` | _(empty)_ | Comma-separated `Host` header values to accept. Empty disables the check. |
+
+### Securing the endpoint
+
+**Set `MCP_AUTH_TOKEN` before exposing this server beyond your LAN.** Every tunnel
+option below puts `/mcp` on the public internet, and without a token anyone who
+learns the URL gets the full tool surface against a machine in your kitchen. The
+server prints a warning at startup while no token is set.
+
+```bash
+# Generate one and put it in your .env
+openssl rand -hex 32
+```
+
+`/health` is deliberately left unauthenticated so the container's healthcheck and
+your reverse proxy can probe it.
+
+Requests carrying an `Origin` header are rejected unless the origin is listed in
+`MCP_ALLOWED_ORIGINS`. This is what stops any web page you happen to visit from
+POSTing to a server running on your own network — a token does not help there,
+because the browser sends it for you. Requests with no `Origin` (Claude Desktop,
+`curl`, anything that is not a browser) are unaffected, so the default empty list
+is the right setting for almost everyone.
+
+`scripts/test-auth.sh` probes a running server for all of the above.
 
 ### Customization
 
@@ -116,6 +143,10 @@ From a repo checkout, copy each `*.example-local.yaml` to `*.local.yaml` alongsi
 ## Connecting to AI Tools
 
 Many AI tools (like Claude Desktop) route MCP requests through their own servers, not from your local machine. This means your MCP server needs to be accessible via a public HTTPS URL.
+
+> Every option in this section publishes `/mcp` to the internet. Set
+> `MCP_AUTH_TOKEN` first — see [Securing the endpoint](#securing-the-endpoint) —
+> and give the token to your AI tool as a bearer credential.
 
 ### Tailscale Funnel (Recommended)
 
