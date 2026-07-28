@@ -95,6 +95,53 @@ annotations, and the handler. Nothing about a tool is declared twice.
 cached client and applies the config to the next one, which is how tests
 exercise the retry path without waiting out the real backoff.
 
+### The advertised surface is a permission-grant key
+
+A host stores "always allow" against a tool's advertised identity, not against
+the connector as a whole. So anything that changes what `tools/list` says can
+silently drop the grant and put the user back on a permission prompt for every
+call — the failure mode where Claude on iOS keeps asking despite the connector
+being set to allow. On a server that redeploys often, this is the mechanism most
+likely to make a self-hosted connector worse behaved than a directory one.
+
+The churn worth guarding is rarely deliberate. Nobody renames a tool by
+accident, but the advertised JSON Schema is **generated** — `z.toJSONSchema` over
+the same zod schemas the dispatcher enforces — so a routine `zod` or
+`@modelcontextprotocol/sdk` bump can reshape every input schema in the server
+without a line of this repo's code changing.
+
+`apps/server/src/tool-contract.json` is that surface, committed;
+`toolContract.ts` normalizes it (keys sorted, so a cosmetic reordering does not
+fail) and `server.test.ts` compares the live list against it. Regenerate with
+`bun run generate-tool-contract` — deliberately. **The diff is the list of grants
+every existing installation is about to lose**, so review it as a breaking change
+and land it with a release the user can re-grant against. It is excluded from
+Biome (like `*.schema.json`) so the file stays byte-for-byte what the generator
+writes.
+
+Three more invariants are asserted separately, because a regenerated contract
+would otherwise absorb them silently:
+
+- **No tool sets `_meta["anthropic/requiresUserInteraction"]`.** That flag falls
+  through to the permission prompt in every mode, the host offers no "don't ask
+  again", and an existing allow rule does not skip it. Nothing here warrants it —
+  every tool reads.
+- **No capability claims `listChanged`** (or `resources.subscribe`). Every list
+  this server serves is a module-level constant. `listChanged` is a promise to
+  tell the host to re-fetch, and a re-fetch is what re-keys the cached tools a
+  grant is stored against.
+- **Annotations survive the real transport.** `server.test.ts` asserts them over
+  an in-memory pair; `http.test.ts` asserts them again on a `tools/list` that
+  crosses `WebStandardStreamableHTTPServerTransport`, because `annotations` and
+  `_meta` are exactly the fields a transport or SDK version is free to drop, and
+  a tool arriving without `readOnlyHint` is read as write/destructive and prompts
+  on every call.
+
+Everything else behind that symptom lives on the host: per-tool (not just
+per-connector) approval settings, in-chat connector toggling, and an open
+persistence bug in Claude's connector layer. This server can only make sure it
+is not the cause.
+
 ### Answer every method the advertised capabilities imply
 
 `createServer()` declares `tools`, `prompts`, and `resources`, and a host
@@ -337,6 +384,12 @@ INPUT=app.html bunx vite build
 # Regenerate JSON schemas (after changing Zod schemas in loader.ts)
 cd apps/server
 bun run generate-schemas
+
+# Regenerate the advertised tool contract (needed after any intended change to
+# a tool's name, title, description, annotations, _meta, or schemas — the diff
+# is the list of host permission grants the change invalidates)
+cd apps/server
+bun run generate-tool-contract
 
 # Docker — default compose pulls ghcr.io/ljcl/gaggiuino-mcp; the override builds from source
 docker compose up -d                                                     # published image
@@ -735,6 +788,15 @@ Every tool call is one record with `tool`, `durationMs`, and `outcome`. On an
 expected failure it also carries `reason` — the same actionable text the model
 got, because a bare `"error"` throws away the only useful part. A genuine bug
 logs `tool.error` at error level with the stack.
+
+`session.opened` carries `client`, `clientVersion`, and `protocolVersion`, read
+from the `initialize` request itself rather than the server's later
+`oninitialized` callback so they are known when the session id is minted. An
+opaque uuid answered neither question an operator has when a host misbehaves:
+which client is this, and is it re-handshaking every turn or reusing a session?
+One `session.opened` per turn from the same client name is the signature of a
+host that threw its session away — which is worth knowing before blaming this
+server for a connector that keeps re-prompting.
 
 `/health` returns JSON (`buildHealth` in `health.ts`) and **stays 200 while the
 machine is unreachable**. That is load-bearing: the container HEALTHCHECK reads

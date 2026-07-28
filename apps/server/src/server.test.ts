@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { type ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
@@ -12,6 +13,11 @@ import { resetClient } from "./client";
 import { setLogLevel } from "./logging";
 import { createServer, TOOLS } from "./server";
 import { mockServer } from "./test-setup";
+import {
+  normalizeToolContract,
+  serializeToolContract,
+  TOOL_CONTRACT_PATH,
+} from "./toolContract";
 import { SERVER_NAME, SERVER_VERSION } from "./version";
 
 /**
@@ -285,6 +291,68 @@ describe("ListTools", () => {
     expect(jsonTool?._meta).toStrictEqual({
       ui: { resourceUri: "ui://shot-graph/app.html", visibility: ["app"] },
     });
+  });
+});
+
+/**
+ * Permission grants are keyed to the advertised tool surface, so a redeploy
+ * that changes it drops the grant and puts the user back on a prompt for every
+ * call. See `toolContract.ts` for why that is worth a committed artifact.
+ */
+describe("the advertised contract", () => {
+  it("matches the committed tool contract", async () => {
+    // Regenerate with `bun run generate-tool-contract` when the change is
+    // intended — and read the diff, because it is the list of grants every
+    // existing installation is about to lose.
+    const { tools } = await client.listTools();
+    const committed: unknown = JSON.parse(
+      readFileSync(TOOL_CONTRACT_PATH, "utf-8"),
+    );
+    expect(committed).toEqual(normalizeToolContract(tools));
+  });
+
+  it("keeps the committed contract byte-identical to the generator", async () => {
+    // Semantically right but textually different means the file was hand-edited
+    // rather than regenerated, which is how a contract stops being a record of
+    // anything.
+    const { tools } = await client.listTools();
+    expect(readFileSync(TOOL_CONTRACT_PATH, "utf-8")).toBe(
+      serializeToolContract(tools),
+    );
+  });
+
+  it("asks no tool to prompt on every call", async () => {
+    // A tool whose `_meta` carries this flag falls through to the permission
+    // prompt in every mode, the host offers no "don't ask again", and an
+    // existing allow rule does not skip it. Nothing this server does warrants
+    // that — every tool here reads.
+    const { tools } = await client.listTools();
+    for (const tool of tools) {
+      const meta = (tool._meta ?? {}) as Record<string, unknown>;
+      expect(
+        meta["anthropic/requiresUserInteraction"],
+        `${tool.name} requiresUserInteraction`,
+      ).toBeUndefined();
+    }
+  });
+
+  it("promises no list that can change under a host", async () => {
+    // `listChanged` is the server telling a host "re-fetch this list when I say
+    // so", and a re-fetch is what re-keys the cached tools a grant is stored
+    // against. Every list here is a module-level constant, so claiming it would
+    // be a lie as well as an invitation to invalidate the user's permissions.
+    const capabilities = client.getServerCapabilities();
+    expect(capabilities?.tools?.listChanged).toBeUndefined();
+    expect(capabilities?.prompts?.listChanged).toBeUndefined();
+    expect(capabilities?.resources?.listChanged).toBeUndefined();
+    // Subscriptions are the same bargain for resources, and are equally unclaimed.
+    expect(capabilities?.resources?.subscribe).toBeUndefined();
+  });
+
+  it("serves the same list on every call", async () => {
+    const first = await client.listTools();
+    const second = await client.listTools();
+    expect(second).toEqual(first);
   });
 });
 
