@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/ljcl/gaggiuino-mcp/compare/v1.1.0...v1.2.0) (2026-07-28)
+
+
+### Features
+
+* **server:** harden the runtime for exposure over a tunnel ([#75](https://github.com/ljcl/gaggiuino-mcp/issues/75)) ([9bd8c96](https://github.com/ljcl/gaggiuino-mcp/commit/9bd8c962d237bc1f5dddc1afa2f05729ce347d14))
+
+
+### Bug Fixes
+
+* **server:** answer every discovery method and make the origin allowlist work ([#78](https://github.com/ljcl/gaggiuino-mcp/issues/78)) ([acc2fbc](https://github.com/ljcl/gaggiuino-mcp/commit/acc2fbcfc34f49a93ae45c1f9afad1a3b7092929))
+
 ## [1.1.0](https://github.com/ljcl/gaggiuino-mcp/compare/v1.0.1...v1.1.0) (2026-07-27)
 
 
