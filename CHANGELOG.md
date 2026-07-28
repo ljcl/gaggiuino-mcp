@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.0](https://github.com/ljcl/gaggiuino-mcp/compare/v1.2.0...v1.3.0) (2026-07-28)
+
+
+### Features
+
+* **ui:** make the chart palette colorblind-safe and flip the a11y story gate ([#79](https://github.com/ljcl/gaggiuino-mcp/issues/79)) ([a715255](https://github.com/ljcl/gaggiuino-mcp/commit/a71525587dfa2653a8887858e20b5829022fc2cb))
+
+
+### Bug Fixes
+
+* **server:** keep host permission grants from silently expiring ([#82](https://github.com/ljcl/gaggiuino-mcp/issues/82)) ([33248a8](https://github.com/ljcl/gaggiuino-mcp/commit/33248a8e2767f11b7ebc2430c86c0fcb77d333d0))
+
 ## [1.2.0](https://github.com/ljcl/gaggiuino-mcp/compare/v1.1.0...v1.2.0) (2026-07-28)
 
 
