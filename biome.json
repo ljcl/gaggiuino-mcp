@@ -14,7 +14,8 @@
       "!**/dist",
       "!bun.lock",
       "!.turbo",
-      "!**/*.schema.json"
+      "!**/*.schema.json",
+      "!**/tool-contract.json"
     ]
   },
   "formatter": {

@@ -1,0 +1,694 @@
+[
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Read the espresso machine's live state: boiler temperature and target, group pressure, scale weight, water level, switch positions, and uptime. Use this to answer 'is it ready', 'what profile is loaded', or 'is it low on water'. Values are instantaneous — call again for a fresh reading rather than reusing an old one.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "get_status",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "brewActive": {
+          "description": "True while the brew switch is engaged and a shot is pulling",
+          "type": "boolean"
+        },
+        "pressureBar": {
+          "description": "Current group pressure, in bar",
+          "type": "number"
+        },
+        "profileName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Brew profile currently selected on the machine"
+        },
+        "steamActive": {
+          "description": "True while the steam switch is engaged",
+          "type": "boolean"
+        },
+        "targetTemperatureC": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Temperature the PID is holding for, in degrees Celsius"
+        },
+        "temperatureC": {
+          "description": "Current boiler temperature, in Celsius",
+          "type": "number"
+        },
+        "upTimeSec": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Seconds since the machine was last powered on"
+        },
+        "waterLevelPercent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Water tank level as a percentage, 0-100"
+        },
+        "weightG": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Current reading from the scale, in grams"
+        }
+      },
+      "required": [
+        "brewActive",
+        "pressureBar",
+        "profileName",
+        "steamActive",
+        "targetTemperatureC",
+        "temperatureC",
+        "upTimeSec",
+        "waterLevelPercent",
+        "weightG"
+      ],
+      "type": "object"
+    },
+    "title": "Get machine status"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Get the id of the most recently recorded shot. This is the entry point for any shot question that does not already name an id — call it first, then pass the id to get_shot_data or view_shot_graph.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "get_latest_shot_id",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "shotId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Id of the most recently recorded shot, or null when the machine has no shot history"
+        }
+      },
+      "required": [
+        "shotId"
+      ],
+      "type": "object"
+    },
+    "title": "Get latest shot id"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Summarize one shot: duration, final weight against the profile's target, peak pressure, water pumped, time to first drip, temperature stability, and a phase-by-phase breakdown with pressure/flow/weight sampled at each phase's entry, midpoint, and exit. This is the right tool for dial-in advice and for comparing shots — prefer it over get_shot_raw_data, which returns hundreds of raw samples to say the same thing.",
+    "inputSchema": {
+      "properties": {
+        "shot_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "description": "Id of a shot stored on the machine, e.g. \"1706547890\". Call get_latest_shot_id to obtain the most recent one; ids of older shots come from a previous response."
+        }
+      },
+      "required": [
+        "shot_id"
+      ],
+      "type": "object"
+    },
+    "name": "get_shot_data",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "outcomeMetrics": {
+          "additionalProperties": false,
+          "description": "Headline numbers for the whole shot",
+          "properties": {
+            "finalWeightG": {
+              "description": "Weight in the cup at the end of the shot, in grams",
+              "type": "number"
+            },
+            "peakPressureBar": {
+              "description": "Highest pressure reached during the shot, in bar",
+              "type": "number"
+            },
+            "profileName": {
+              "description": "Name of the brew profile used",
+              "type": "string"
+            },
+            "shotId": {
+              "description": "Id of the shot this summary describes",
+              "type": "string"
+            },
+            "targetWeightG": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Weight the profile was set to stop at, in grams; null when the profile has no weight stop condition"
+            },
+            "tempStability": {
+              "description": "Human-readable temperature verdict: \"stable\", or \"drifted +N.NC\" when the spread exceeded 1°C",
+              "type": "string"
+            },
+            "timeToFirstDripSec": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Seconds from shot start until the scale first read above 0.5 g; null when no drip was detected"
+            },
+            "totalDurationSec": {
+              "description": "Total shot duration, in seconds",
+              "type": "number"
+            },
+            "waterPumpedMl": {
+              "description": "Total water pushed through the puck, in millilitres",
+              "type": "number"
+            }
+          },
+          "required": [
+            "finalWeightG",
+            "peakPressureBar",
+            "profileName",
+            "shotId",
+            "targetWeightG",
+            "tempStability",
+            "timeToFirstDripSec",
+            "totalDurationSec",
+            "waterPumpedMl"
+          ],
+          "type": "object"
+        },
+        "phases": {
+          "description": "Phase-by-phase breakdown, in shot order",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "durationSec": {
+                "description": "Length of this phase, in seconds",
+                "type": "number"
+              },
+              "events": {
+                "description": "Notable events detected within this phase",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "phaseNumber": {
+                "description": "1-based position of the phase in the shot",
+                "type": "number"
+              },
+              "samples": {
+                "additionalProperties": false,
+                "description": "Readings sampled at the start, midpoint, and end of the phase",
+                "properties": {
+                  "entry": {
+                    "additionalProperties": false,
+                    "description": "Reading at the start of the phase",
+                    "properties": {
+                      "flow": {
+                        "description": "Pump flow at this point, in ml/s",
+                        "type": "number"
+                      },
+                      "pressure": {
+                        "description": "Pressure at this point, in bar",
+                        "type": "number"
+                      },
+                      "weight": {
+                        "description": "Weight in the cup at this point, in grams",
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "flow",
+                      "pressure",
+                      "weight"
+                    ],
+                    "type": "object"
+                  },
+                  "exit": {
+                    "additionalProperties": false,
+                    "description": "Reading at the end of the phase",
+                    "properties": {
+                      "flow": {
+                        "description": "Pump flow at this point, in ml/s",
+                        "type": "number"
+                      },
+                      "pressure": {
+                        "description": "Pressure at this point, in bar",
+                        "type": "number"
+                      },
+                      "weight": {
+                        "description": "Weight in the cup at this point, in grams",
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "flow",
+                      "pressure",
+                      "weight"
+                    ],
+                    "type": "object"
+                  },
+                  "mid": {
+                    "additionalProperties": false,
+                    "description": "Reading at the midpoint of the phase",
+                    "properties": {
+                      "flow": {
+                        "description": "Pump flow at this point, in ml/s",
+                        "type": "number"
+                      },
+                      "pressure": {
+                        "description": "Pressure at this point, in bar",
+                        "type": "number"
+                      },
+                      "weight": {
+                        "description": "Weight in the cup at this point, in grams",
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "flow",
+                      "pressure",
+                      "weight"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "entry",
+                  "exit",
+                  "mid"
+                ],
+                "type": "object"
+              },
+              "type": {
+                "description": "Phase type as named by the profile, e.g. \"FLOW\" or \"PRESSURE\"; \"UNKNOWN\" when the profile does not name it",
+                "type": "string"
+              }
+            },
+            "required": [
+              "durationSec",
+              "events",
+              "phaseNumber",
+              "samples",
+              "type"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "outcomeMetrics",
+        "phases"
+      ],
+      "type": "object"
+    },
+    "title": "Get shot summary"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Get every raw datapoint recorded for one shot: the full pressure, flow, weight, and temperature time series, already converted out of the machine's scaled wire format. The response is large. Only reach for it when the summary from get_shot_data is genuinely not enough — for example to inspect the exact shape of a pressure ramp.",
+    "inputSchema": {
+      "properties": {
+        "shot_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "description": "Id of a shot stored on the machine, e.g. \"1706547890\". Call get_latest_shot_id to obtain the most recent one; ids of older shots come from a previous response."
+        }
+      },
+      "required": [
+        "shot_id"
+      ],
+      "type": "object"
+    },
+    "name": "get_shot_raw_data",
+    "title": "Get raw shot datapoints"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "List the documented brew profiles with their control type, suited roast levels, target ratio, and target time. Returns each profile in full, so no follow-up call is needed to describe one. These come from this server's bundled documentation, not from the machine, so a profile the user created themselves may not appear.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "list_profiles",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "profiles": {
+          "description": "Every documented profile, complete — no follow-up call needed",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "basketNotes": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Basket and dose notes for this profile, when documented"
+              },
+              "description": {
+                "description": "What the profile does and when to reach for it",
+                "type": "string"
+              },
+              "id": {
+                "description": "Id to pass to get_profile_info, e.g. \"zer0\"",
+                "type": "string"
+              },
+              "name": {
+                "description": "Display name as shown on the machine",
+                "type": "string"
+              },
+              "recommendedDose": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Suggested dry dose, when documented"
+              },
+              "roastLevels": {
+                "description": "Roast levels this profile suits, e.g. [\"light\", \"medium\"]",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "targetRatio": {
+                "description": "Intended brew ratio, e.g. \"1:2\" (dose to yield)",
+                "type": "string"
+              },
+              "targetTime": {
+                "description": "Intended total shot time, e.g. \"28-32s\"",
+                "type": "string"
+              },
+              "type": {
+                "description": "Control strategy the profile uses, e.g. \"flow\" or \"pressure\"",
+                "type": "string"
+              }
+            },
+            "required": [
+              "basketNotes",
+              "description",
+              "id",
+              "name",
+              "recommendedDose",
+              "roastLevels",
+              "targetRatio",
+              "targetTime",
+              "type"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "profiles"
+      ],
+      "type": "object"
+    },
+    "title": "List brew profiles"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Get the full documentation for one brew profile, including its prose description. Call list_profiles first if you do not already have a profile id.",
+    "inputSchema": {
+      "properties": {
+        "profile_id": {
+          "description": "Id of a documented profile as listed by list_profiles, e.g. \"zer0\".",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "profile_id"
+      ],
+      "type": "object"
+    },
+    "name": "get_profile_info",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "basketNotes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Basket and dose notes for this profile, when documented"
+        },
+        "description": {
+          "description": "What the profile does and when to reach for it",
+          "type": "string"
+        },
+        "id": {
+          "description": "Id to pass to get_profile_info, e.g. \"zer0\"",
+          "type": "string"
+        },
+        "name": {
+          "description": "Display name as shown on the machine",
+          "type": "string"
+        },
+        "recommendedDose": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Suggested dry dose, when documented"
+        },
+        "roastLevels": {
+          "description": "Roast levels this profile suits, e.g. [\"light\", \"medium\"]",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "targetRatio": {
+          "description": "Intended brew ratio, e.g. \"1:2\" (dose to yield)",
+          "type": "string"
+        },
+        "targetTime": {
+          "description": "Intended total shot time, e.g. \"28-32s\"",
+          "type": "string"
+        },
+        "type": {
+          "description": "Control strategy the profile uses, e.g. \"flow\" or \"pressure\"",
+          "type": "string"
+        }
+      },
+      "required": [
+        "basketNotes",
+        "description",
+        "id",
+        "name",
+        "recommendedDose",
+        "roastLevels",
+        "targetRatio",
+        "targetTime",
+        "type"
+      ],
+      "type": "object"
+    },
+    "title": "Get brew profile details"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Get the expert system prompt for espresso dial-in: how to read a shot, which variable to change next, and the documented profiles. Call this before giving dial-in advice so the advice matches this machine and this user's setup.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "get_dial_in_guidance",
+    "title": "Get dial-in guidance"
+  },
+  {
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://shot-graph/app.html"
+      }
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Renders an interactive espresso shot graph. Shows pressure, flow, weight flow, and weight over time with target profiles overlaid. Automatically annotates key metrics (peak pressure, first drip) on the chart. Optionally compares two shots side by side — the user can also click 'Compare previous' in the graph to load the prior shot without a new tool call.",
+    "inputSchema": {
+      "properties": {
+        "compare_shot_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "description": "Optional id of a second shot to overlay on the same axes for comparison."
+        },
+        "shot_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "description": "Id of the shot to visualize, e.g. \"1706547890\". Call get_latest_shot_id to obtain the most recent one."
+        }
+      },
+      "required": [
+        "shot_id"
+      ],
+      "type": "object"
+    },
+    "name": "view_shot_graph",
+    "title": "View shot graph"
+  },
+  {
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://shot-graph/app.html",
+        "visibility": [
+          "app"
+        ]
+      }
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Raw shot data as a JSON document, for the shot graph UI to plot. Not intended for the model — call get_shot_data for anything you need to reason about.",
+    "inputSchema": {
+      "properties": {
+        "shot_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "description": "Id of a shot stored on the machine, e.g. \"1706547890\". Call get_latest_shot_id to obtain the most recent one; ids of older shots come from a previous response."
+        }
+      },
+      "required": [
+        "shot_id"
+      ],
+      "type": "object"
+    },
+    "name": "get_shot_raw_json",
+    "title": "Get raw shot JSON"
+  }
+]

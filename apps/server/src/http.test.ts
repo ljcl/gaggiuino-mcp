@@ -1,3 +1,4 @@
+import { type Tool } from "@modelcontextprotocol/sdk/types.js";
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getClient, resetClient } from "./client";
@@ -337,6 +338,86 @@ describe("browser origins", () => {
     );
     expect(response.status).toBe(403);
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe(null);
+  });
+});
+
+describe("tools/list over the real transport", () => {
+  /**
+   * The in-memory tests in `server.test.ts` assert what the handlers return.
+   * This asserts what actually crosses the wire, because the parts a host keys
+   * a permission grant to — `annotations` and `_meta` — are exactly the parts a
+   * transport or SDK version is free to drop on the way out. A tool that
+   * arrives without `readOnlyHint` is read as write/destructive and prompts on
+   * every call however the connector is configured, and nothing upstream of
+   * here would have told us.
+   */
+  async function listTools(): Promise<Tool[]> {
+    const init = await handler.fetch(post(initializeBody(), authorized()));
+    const sessionId = init.headers.get("mcp-session-id") ?? "";
+    const response = await handler.fetch(
+      post(
+        JSON.stringify({ id: 2, jsonrpc: "2.0", method: "tools/list" }),
+        authorized({ "mcp-session-id": sessionId }),
+      ),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.text();
+    // The transport answers on an SSE stream unless it has a reason not to, so
+    // take the payload from whichever framing came back.
+    const payload = body.startsWith("{")
+      ? body
+      : (body
+          .split("\n")
+          .find((line) => line.startsWith("data:"))
+          ?.slice("data:".length)
+          .trim() ?? "");
+    const message = JSON.parse(payload) as { result: { tools: Tool[] } };
+    return message.result.tools;
+  }
+
+  it("serves every tool with its annotations intact", async () => {
+    const tools = await listTools();
+    expect(tools.length).toBeGreaterThan(0);
+    for (const tool of tools) {
+      expect(tool.annotations, `${tool.name} annotations`).toMatchObject({
+        destructiveHint: false,
+        idempotentHint: true,
+        readOnlyHint: true,
+      });
+    }
+  });
+
+  it("serves the MCP App wiring intact", async () => {
+    const tools = await listTools();
+    const graph = tools.find((tool) => tool.name === "view_shot_graph");
+    expect(graph?._meta).toEqual({
+      ui: { resourceUri: "ui://shot-graph/app.html" },
+    });
+  });
+});
+
+describe("session logging", () => {
+  it("records which client opened the session", async () => {
+    // An opaque uuid answered neither question an operator has when a host
+    // re-prompts: which client is this, and is it re-handshaking every turn?
+    const records: Array<Record<string, unknown>> = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((line) => {
+      records.push(JSON.parse(String(line)));
+    });
+    setLogLevel("info");
+    try {
+      await handler.fetch(post(initializeBody(), authorized()));
+    } finally {
+      spy.mockRestore();
+      setLogLevel("silent");
+    }
+    expect(
+      records.find((entry) => entry.event === "session.opened"),
+    ).toMatchObject({
+      client: "test",
+      clientVersion: "1.0",
+      protocolVersion: "2025-06-18",
+    });
   });
 });
 

@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import {
+  type InitializeRequest,
+  isInitializeRequest,
+} from "@modelcontextprotocol/sdk/types.js";
 import { buildHealth } from "./health";
 import { logger } from "./logging";
 import {
@@ -62,6 +65,26 @@ function withCors(response: Response, cors: Record<string, string>): Response {
   });
 }
 
+/**
+ * Who opened a session, taken from the `initialize` request itself rather than
+ * the server's later `oninitialized` callback, so it is known at the moment the
+ * session id is minted.
+ *
+ * `session.opened` used to carry only an opaque uuid, which answered none of
+ * the questions an operator actually has when a host misbehaves: which client
+ * is this, and is it re-handshaking on every turn or reusing a session? Both
+ * are visible from the log now, and one line per turn from the same client name
+ * is the signature of a host that has thrown its session away.
+ */
+function describeInitiator(body: InitializeRequest): Record<string, string> {
+  const { clientInfo, protocolVersion } = body.params;
+  return {
+    client: clientInfo.name,
+    clientVersion: clientInfo.version,
+    protocolVersion,
+  };
+}
+
 export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
   const sessions =
     createSessionManager<WebStandardStreamableHTTPServerTransport>({
@@ -70,10 +93,12 @@ export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
       ...options.sessions,
     });
 
-  function createTransport(): WebStandardStreamableHTTPServerTransport {
+  function createTransport(
+    initiator: Record<string, string>,
+  ): WebStandardStreamableHTTPServerTransport {
     const transport = new WebStandardStreamableHTTPServerTransport({
       onsessioninitialized: (sessionId) => {
-        logger.info("session.opened", { sessionId });
+        logger.info("session.opened", { ...initiator, sessionId });
         sessions.add(sessionId, transport);
       },
       sessionIdGenerator: () => randomUUID(),
@@ -147,7 +172,7 @@ export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
             "Server at session capacity; retry shortly",
           );
         }
-        const transport = createTransport();
+        const transport = createTransport(describeInitiator(body));
         const server = createServer();
         await server.connect(transport);
         return transport.handleRequest(req, { parsedBody: body });
