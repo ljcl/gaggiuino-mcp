@@ -54,7 +54,9 @@ public deployment needs both of these — see
   Empty (the default) rejects every request that carries an `Origin` header,
   which is what stops a page the user visits from driving a server on their own
   network. Requests without an `Origin` are unaffected, so non-browser clients
-  need no configuration.
+  need no configuration. A listed origin is also answered with the matching CORS
+  preflight and response headers; an unlisted one gets neither, so the browser
+  blocks it too.
 
 `/health` is intentionally unauthenticated: it returns liveness only, and the
 container healthcheck has no credential to present.

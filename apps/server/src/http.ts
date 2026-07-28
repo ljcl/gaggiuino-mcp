@@ -3,7 +3,12 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { buildHealth } from "./health";
 import { logger } from "./logging";
-import { checkRequest, type SecurityConfig } from "./mcpAuth";
+import {
+  checkRequest,
+  corsHeaders,
+  handlePreflight,
+  type SecurityConfig,
+} from "./mcpAuth";
 import {
   createSessionManager,
   type SessionManager,
@@ -40,6 +45,23 @@ function jsonRpcError(status: number, code: number, message: string): Response {
   );
 }
 
+/**
+ * Merge CORS headers onto a response without buffering it.
+ *
+ * A `Response` handed back by the transport is streaming, so this re-wraps the
+ * same `ReadableStream` rather than reading it — an SSE stream must stay open.
+ */
+function withCors(response: Response, cors: Record<string, string>): Response {
+  if (Object.keys(cors).length === 0) return response;
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(cors)) headers.set(name, value);
+  return new Response(response.body, {
+    headers,
+    status: response.status,
+    statusText: response.statusText,
+  });
+}
+
 export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
   const sessions =
     createSessionManager<WebStandardStreamableHTTPServerTransport>({
@@ -69,9 +91,26 @@ export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
     const sessionId = req.headers.get("mcp-session-id");
 
     if (req.method === "GET" || req.method === "DELETE") {
-      const transport = sessionId ? sessions.get(sessionId) : undefined;
+      if (!sessionId) {
+        return jsonRpcError(
+          400,
+          -32000,
+          "Bad Request: Mcp-Session-Id header is required",
+        );
+      }
+      const transport = sessions.get(sessionId);
       if (!transport) {
-        return new Response("Invalid or missing session ID", { status: 400 });
+        // 404 is the spec's signal that a session id is not recognised, and it
+        // is what tells a client to start a new one with `initialize`. This
+        // used to answer 400 for an expired session as well as a missing
+        // header, which reads as "your request is malformed" — a client that
+        // believes that has no reason to re-handshake, so a session reclaimed
+        // by the idle TTL stranded the client instead of prompting a reconnect.
+        return jsonRpcError(
+          404,
+          -32000,
+          "Session not found or expired; send initialize to start a new one",
+        );
       }
       return transport.handleRequest(req);
     }
@@ -90,7 +129,11 @@ export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
       if (sessionId) {
         const transport = sessions.get(sessionId);
         if (!transport) {
-          return new Response("Invalid session ID", { status: 404 });
+          return jsonRpcError(
+            404,
+            -32000,
+            "Session not found or expired; send initialize to start a new one",
+          );
         }
         return transport.handleRequest(req, { parsedBody: body });
       }
@@ -128,9 +171,28 @@ export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
       }
 
       if (url.pathname === "/mcp") {
+        const preflight = handlePreflight(req, options.security);
+        if (preflight) return preflight;
+
         const rejection = checkRequest(req, options.security);
-        if (rejection) return rejection;
-        return handleMcp(req);
+        if (rejection) {
+          // Rejections used to be silent, which made the two failures an
+          // operator actually hits — a host whose Origin is not on the
+          // allowlist, and a token that does not match — indistinguishable
+          // from the server being unreachable. The status carries which one it
+          // was; 403 is Origin or Host, 401 is the token.
+          logger.warn("security.rejected", {
+            method: req.method,
+            origin: req.headers.get("origin") ?? undefined,
+            status: rejection.status,
+          });
+          return rejection;
+        }
+
+        return withCors(
+          await handleMcp(req),
+          corsHeaders(req, options.security),
+        );
       }
 
       return new Response("Not found", { status: 404 });

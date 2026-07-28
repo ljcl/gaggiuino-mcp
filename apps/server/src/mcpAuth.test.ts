@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   checkRequest,
+  corsHeaders,
   describeSecurity,
+  handlePreflight,
   loadSecurityConfig,
   type SecurityConfig,
   secretsMatch,
@@ -13,6 +15,13 @@ function request(headers: Record<string, string> = {}): Request {
   return new Request("http://gaggiuino.local:8000/mcp", {
     headers,
     method: "POST",
+  });
+}
+
+function preflight(headers: Record<string, string> = {}): Request {
+  return new Request("http://gaggiuino.local:8000/mcp", {
+    headers,
+    method: "OPTIONS",
   });
 }
 
@@ -166,6 +175,106 @@ describe("checkRequest — ordering", () => {
       config,
     );
     expect(response?.status).toBe(403);
+  });
+});
+
+describe("corsHeaders", () => {
+  const ALLOWED: SecurityConfig = {
+    allowedHosts: [],
+    allowedOrigins: ["https://claude.ai"],
+  };
+
+  it("says nothing when there is no Origin to answer", () => {
+    // A non-browser client needs no CORS headers, and emitting them anyway
+    // would advertise the allowlist to anything that asks.
+    expect(corsHeaders(request(), ALLOWED)).toEqual({});
+  });
+
+  it("says nothing to an origin outside the allowlist", () => {
+    expect(
+      corsHeaders(request({ origin: "https://evil.test" }), ALLOWED),
+    ).toEqual({});
+  });
+
+  it("echoes an allowed origin and exposes the session header", () => {
+    // Passing the origin check is only half a cross-origin request: without
+    // these the browser discards a reply the server was happy to send, and
+    // `mcp-session-id` is not CORS-safelisted, so a client that cannot read it
+    // has no session to continue with.
+    expect(
+      corsHeaders(request({ origin: "https://claude.ai" }), ALLOWED),
+    ).toEqual({
+      "Access-Control-Allow-Origin": "https://claude.ai",
+      "Access-Control-Expose-Headers": "mcp-session-id",
+      Vary: "Origin",
+    });
+  });
+
+  it("echoes the caller's origin under the wildcard rather than returning *", () => {
+    const config: SecurityConfig = { allowedHosts: [], allowedOrigins: ["*"] };
+    expect(
+      corsHeaders(request({ origin: "https://anything.test" }), config)[
+        "Access-Control-Allow-Origin"
+      ],
+    ).toBe("https://anything.test");
+  });
+});
+
+describe("handlePreflight", () => {
+  const ALLOWED: SecurityConfig = {
+    allowedHosts: [],
+    allowedOrigins: ["https://claude.ai"],
+    token: "correct-horse",
+  };
+
+  it("ignores anything that is not an OPTIONS request", () => {
+    expect(
+      handlePreflight(request({ origin: "https://claude.ai" }), ALLOWED),
+    ).toBe(undefined);
+  });
+
+  it("answers an allowed origin without requiring the token", () => {
+    // A browser sends the preflight with no Authorization header by design, so
+    // gating it on the token rejects every credentialed cross-origin request
+    // before it is ever made.
+    const response = handlePreflight(
+      preflight({ origin: "https://claude.ai" }),
+      ALLOWED,
+    );
+    expect(response?.status).toBe(204);
+    expect(response?.headers.get("Access-Control-Allow-Origin")).toBe(
+      "https://claude.ai",
+    );
+    expect(response?.headers.get("Access-Control-Allow-Methods")).toContain(
+      "DELETE",
+    );
+  });
+
+  it("permits every header a Streamable HTTP client sends", () => {
+    // Omitting one makes the browser fail the preflight for a request the
+    // allowlist was meant to permit.
+    const allowed = handlePreflight(
+      preflight({ origin: "https://claude.ai" }),
+      ALLOWED,
+    )?.headers.get("Access-Control-Allow-Headers");
+    for (const header of [
+      "authorization",
+      "content-type",
+      "last-event-id",
+      "mcp-protocol-version",
+      "mcp-session-id",
+    ]) {
+      expect(allowed).toContain(header);
+    }
+  });
+
+  it("refuses a preflight from an origin outside the allowlist", () => {
+    const response = handlePreflight(
+      preflight({ origin: "https://evil.test" }),
+      ALLOWED,
+    );
+    expect(response?.status).toBe(403);
+    expect(response?.headers.get("Access-Control-Allow-Origin")).toBe(null);
   });
 });
 

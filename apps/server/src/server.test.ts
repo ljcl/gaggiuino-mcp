@@ -388,6 +388,17 @@ describe("Resources", () => {
     expect(firstContent(result).text).toContain("Available Profiles");
   });
 
+  it("advertises the profile template so the by-id read path is discoverable", async () => {
+    // Declaring the resources capability commits the server to answering this.
+    // It used to fall through to -32601, and a host that enumerates the whole
+    // resource surface on a refresh treated that error as a failed refresh —
+    // taking the tool list down with it.
+    const { resourceTemplates } = await client.listResourceTemplates();
+    expect(resourceTemplates.map((template) => template.uriTemplate)).toEqual([
+      "gaggiuino://profiles/{id}",
+    ]);
+  });
+
   it("reads a single profile by uri", async () => {
     const result = await client.readResource({
       uri: "gaggiuino://profiles/zer0",
