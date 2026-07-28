@@ -29,6 +29,9 @@
   --color-border-secondary: rgba(31, 30, 29, 0.3);
   --color-border-tertiary: rgba(31, 30, 29, 0.15);
 
+  /* Colors — Focus */
+  --color-focus-ring: #0369a1;
+
   /* Typography — Fonts */
   --font-sans: system-ui, -apple-system, sans-serif;
   --font-mono: ui-monospace, monospace;
@@ -61,13 +64,27 @@
   --border-radius-full: 999px;
   --border-width-regular: 1px;
 
-  /* Chart colors (Gaggiuino-specific) */
-  --chart-pressure: #2ca02c;
-  --chart-target-pressure: rgba(44, 160, 44, 0.35);
-  --chart-flow: #1f77b4;
-  --chart-target-flow: rgba(31, 119, 180, 0.35);
-  --chart-weight-flow: #b5832a;
-  --chart-weight: rgba(107, 66, 38, 0.5);
+  /* Focus ring */
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+
+  /*
+   * Chart colors (Gaggiuino-specific)
+   *
+   * Every value clears 3:1 against --color-background-primary (WCAG 1.4.11,
+   * graphical objects), and the four metric series stay separable under a
+   * deuteranopia/protanopia simulation. Colour cannot carry all four on its
+   * own — under protan/deutan the palette collapses to roughly two hue poles
+   * plus lightness — so weight-flow and weight are additionally encoded by
+   * dash pattern (SERIES_DASH in shot-graph's constants.ts). The
+   * "Chart accessibility" story asserts both halves of that contract.
+   */
+  --chart-pressure: #c2410c;
+  --chart-target-pressure: rgba(194, 65, 12, 0.85);
+  --chart-flow: #0369a1;
+  --chart-target-flow: rgba(3, 105, 161, 0.85);
+  --chart-weight-flow: #a21caf;
+  --chart-weight: #57534e;
 }
 
 /*
@@ -94,13 +111,15 @@
   --color-border-secondary: rgba(222, 220, 209, 0.3);
   --color-border-tertiary: rgba(222, 220, 209, 0.15);
 
-  /* Chart colors — brighter for dark backgrounds */
-  --chart-pressure: #4ade80;
-  --chart-target-pressure: rgba(74, 222, 128, 0.45);
+  --color-focus-ring: #7dd3fc;
+
+  /* Chart colors — brighter for dark backgrounds, same hue families as light */
+  --chart-pressure: #fb923c;
+  --chart-target-pressure: rgba(251, 146, 60, 0.7);
   --chart-flow: #60a5fa;
-  --chart-target-flow: rgba(96, 165, 250, 0.45);
-  --chart-weight-flow: #e5a83d;
-  --chart-weight: rgba(229, 168, 61, 0.65);
+  --chart-target-flow: rgba(96, 165, 250, 0.7);
+  --chart-weight-flow: #e879f9;
+  --chart-weight: #d6d3cc;
   color-scheme: dark;
 }
 
@@ -132,13 +151,15 @@
     --color-border-secondary: rgba(222, 220, 209, 0.3);
     --color-border-tertiary: rgba(222, 220, 209, 0.15);
 
-    /* Chart colors — brighter for dark backgrounds */
-    --chart-pressure: #4ade80;
-    --chart-target-pressure: rgba(74, 222, 128, 0.45);
+    --color-focus-ring: #7dd3fc;
+
+    /* Chart colors — brighter for dark backgrounds, same hue families as light */
+    --chart-pressure: #fb923c;
+    --chart-target-pressure: rgba(251, 146, 60, 0.7);
     --chart-flow: #60a5fa;
-    --chart-target-flow: rgba(96, 165, 250, 0.45);
-    --chart-weight-flow: #e5a83d;
-    --chart-weight: rgba(229, 168, 61, 0.65);
+    --chart-target-flow: rgba(96, 165, 250, 0.7);
+    --chart-weight-flow: #e879f9;
+    --chart-weight: #d6d3cc;
     color-scheme: dark;
   }
 }

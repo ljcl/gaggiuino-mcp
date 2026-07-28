@@ -6,6 +6,7 @@
   "exports": {
     "./tokens.css": "./src/tokens.css",
     "./tokens": "./src/tokens.ts",
+    "./color": "./src/color.ts",
     "./host-themes": "./src/host-themes.ts"
   },
   "scripts": {

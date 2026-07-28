@@ -1,5 +1,5 @@
 import { Legend, LegendItem } from "@gaggiuino/ui";
-import { COLORS, METRICS } from "./constants";
+import { COLORS, METRICS, SERIES_DASH } from "./constants";
 
 interface ChartLegendProps {
   hidden: Set<string>;
@@ -33,11 +33,12 @@ export function ChartLegend({
           marginTop: 8,
         }}
       >
-        <Legend size="touch">
-          {METRICS.map(({ key, label, color }) => (
+        <Legend label="Shot series" size="touch">
+          {METRICS.map(({ key, label, color, dash }) => (
             <LegendItem
               key={key}
               color={color}
+              dash={dash}
               label={label}
               hidden={hidden.has(key)}
               onClick={() => handleClick(key)}
@@ -58,11 +59,12 @@ export function ChartLegend({
         marginTop: 8,
       }}
     >
-      <Legend>
-        {METRICS.map(({ key, label, color }) => (
+      <Legend label="Shot series">
+        {METRICS.map(({ key, label, color, dash }) => (
           <LegendItem
             key={key}
             color={color}
+            dash={dash}
             label={label}
             hidden={hidden.has(key)}
             onClick={() => onToggle([key])}
@@ -70,9 +72,10 @@ export function ChartLegend({
         ))}
       </Legend>
       {hasComparison && (
-        <Legend>
+        <Legend label="Comparison shot series">
           <LegendItem
             color={COLORS.pressure}
+            dash={SERIES_DASH.pressure}
             label="Pressure (cmp)"
             faded
             hidden={hidden.has("pressureCmp")}
@@ -80,6 +83,7 @@ export function ChartLegend({
           />
           <LegendItem
             color={COLORS.pumpFlow}
+            dash={SERIES_DASH.pumpFlow}
             label="Flow (cmp)"
             faded
             hidden={hidden.has("pumpFlowCmp")}
@@ -87,6 +91,7 @@ export function ChartLegend({
           />
           <LegendItem
             color={COLORS.weightFlow}
+            dash={SERIES_DASH.weightFlow}
             label="Weight Flow (cmp)"
             faded
             hidden={hidden.has("weightFlowCmp")}
@@ -94,6 +99,7 @@ export function ChartLegend({
           />
           <LegendItem
             color={COLORS.shotWeight}
+            dash={SERIES_DASH.shotWeight}
             label="Weight (cmp)"
             faded
             hidden={hidden.has("shotWeightCmp")}

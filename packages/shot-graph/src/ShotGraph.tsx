@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useMemo, useState } from "react";
 import {
   Area,
   CartesianGrid,
@@ -11,10 +11,18 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { describeChart } from "./a11y";
 import { renderAnnotations } from "./annotations";
 import { ChartLegend } from "./ChartLegend";
 import { ChartTooltip } from "./ChartTooltip";
-import { COLORS, formatTime } from "./constants";
+import {
+  COLORS,
+  COMPARISON_OPACITY,
+  FURNITURE_DASH,
+  formatTime,
+  SERIES_DASH,
+  TARGET_DASH,
+} from "./constants";
 import styles from "./ShotGraph.module.css";
 import { ShotHeader } from "./ShotHeader";
 import { type Annotation, type ChartDataPoint, type ShotMeta } from "./types";
@@ -88,6 +96,22 @@ export function ShotGraph({
     ? comparisonAnnotations?.filter((a) => a.metric !== "firstDrip")
     : comparisonAnnotations;
 
+  // A screen reader gets nothing from the SVG itself, so the chart carries a
+  // generated name and description instead. Both track the live state — hide a
+  // series and the narration says so.
+  const descriptionId = useId();
+  const { desc, title } = useMemo(
+    () =>
+      describeChart({
+        annotations,
+        comparison: comparisonMeta,
+        data,
+        hidden,
+        primary: primaryMeta,
+      }),
+    [annotations, comparisonMeta, data, hidden, primaryMeta],
+  );
+
   return (
     <div className={styles.root}>
       <ShotHeader
@@ -98,8 +122,25 @@ export function ShotGraph({
         compareLoading={compareLoading}
         mode={mode}
       />
-      <ResponsiveContainer width="100%" aspect={tokens.aspect}>
+      <p className={styles.visuallyHidden} id={descriptionId}>
+        {desc}
+      </p>
+      {/*
+        `group`, not `img`: the container holds the legend's toggle buttons,
+        and `img` makes its whole subtree presentational — which both hides
+        those buttons from assistive tech and trips axe's nested-interactive
+        rule. `accessibilityLayer` above gives the plot itself keyboard
+        traversal, so the chart is genuinely interactive, not a picture.
+      */}
+      <ResponsiveContainer
+        aria-describedby={descriptionId}
+        aria-label={title}
+        aspect={tokens.aspect}
+        role="group"
+        width="100%"
+      >
         <ComposedChart
+          accessibilityLayer
           data={data}
           margin={{
             top: tokens.chartMarginTop,
@@ -141,7 +182,7 @@ export function ShotGraph({
           <CartesianGrid
             horizontal={true}
             vertical={false}
-            strokeDasharray="3 3"
+            strokeDasharray={FURNITURE_DASH}
             stroke="var(--color-border-tertiary)"
           />
           <XAxis
@@ -196,7 +237,7 @@ export function ShotGraph({
               x={time}
               yAxisId="left"
               stroke="var(--color-border-secondary)"
-              strokeDasharray="3 3"
+              strokeDasharray={FURNITURE_DASH}
               strokeWidth={0.5}
             />
           ))}
@@ -249,7 +290,7 @@ export function ShotGraph({
               stroke={COLORS.targetPressure}
               dot={false}
               strokeWidth={1}
-              strokeDasharray="4 3"
+              strokeDasharray={TARGET_DASH}
               connectNulls
               legendType="none"
             />
@@ -263,7 +304,7 @@ export function ShotGraph({
               stroke={COLORS.targetPumpFlow}
               dot={false}
               strokeWidth={1}
-              strokeDasharray="4 3"
+              strokeDasharray={TARGET_DASH}
               connectNulls
               legendType="none"
             />
@@ -301,6 +342,7 @@ export function ShotGraph({
               dataKey="weightFlow"
               name="Weight Flow"
               stroke={COLORS.weightFlow}
+              strokeDasharray={SERIES_DASH.weightFlow}
               dot={false}
               strokeWidth={tokens.strokeWidth}
               connectNulls
@@ -313,13 +355,20 @@ export function ShotGraph({
               dataKey="shotWeight"
               name="Weight"
               stroke={COLORS.shotWeight}
+              strokeDasharray={SERIES_DASH.shotWeight}
               dot={false}
               strokeWidth={isMobile ? 1.75 : 1.5}
               connectNulls
             />
           )}
 
-          {/* Comparison lines — solid but faded and thinner */}
+          {/*
+            Comparison lines — same hue as their metric, held apart by stroke
+            width. The fade is capped at the 3:1 contrast floor rather than the
+            0.45 it used to sit at, which composited to ~2.2:1 on both
+            backgrounds. Replacing the fade with a dash outright belongs to the
+            comparison-overlay work, not here.
+          */}
           {comparisonMeta && show("pressureCmp") && (
             <Line
               yAxisId="left"
@@ -329,7 +378,7 @@ export function ShotGraph({
               stroke={COLORS.pressure}
               dot={false}
               strokeWidth={1}
-              opacity={0.45}
+              opacity={COMPARISON_OPACITY}
               connectNulls
               legendType="none"
             />
@@ -343,7 +392,7 @@ export function ShotGraph({
               stroke={COLORS.pumpFlow}
               dot={false}
               strokeWidth={1}
-              opacity={0.45}
+              opacity={COMPARISON_OPACITY}
               connectNulls
               legendType="none"
             />
@@ -355,9 +404,10 @@ export function ShotGraph({
               dataKey="weightFlowCmp"
               name="Weight Flow (cmp)"
               stroke={COLORS.weightFlow}
+              strokeDasharray={SERIES_DASH.weightFlow}
               dot={false}
               strokeWidth={1}
-              opacity={0.45}
+              opacity={COMPARISON_OPACITY}
               connectNulls
               legendType="none"
             />
@@ -369,9 +419,10 @@ export function ShotGraph({
               dataKey="shotWeightCmp"
               name="Weight (cmp)"
               stroke={COLORS.shotWeight}
+              strokeDasharray={SERIES_DASH.shotWeight}
               dot={false}
               strokeWidth={1}
-              opacity={0.35}
+              opacity={COMPARISON_OPACITY}
               connectNulls
               legendType="none"
             />

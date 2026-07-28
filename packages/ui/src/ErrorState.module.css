@@ -72,3 +72,13 @@
   cursor: default;
   opacity: 0.5;
 }
+
+/*
+ * Keyboard focus. `:focus-visible` rather than `:focus` so a pointer click
+ * does not leave a ring behind, and an outline rather than a box-shadow so it
+ * survives forced-colors mode.
+ */
+.retry:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}

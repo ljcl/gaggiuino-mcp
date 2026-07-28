@@ -80,11 +80,6 @@
   line-height: 1.3;
 }
 
-.mobileComparisonRow .inlineSummary {
-  flex: 1;
-  opacity: 0.6;
-}
-
 .inlinePrefix {
   font-size: var(--font-text-xs-size);
   color: var(--color-text-tertiary);
@@ -99,6 +94,25 @@
 .inlineSubtitle {
   font-size: var(--font-text-sm-size);
   color: var(--color-text-secondary);
+}
+
+/*
+ * The comparison summary is de-emphasised by dropping a step down the text
+ * scale, not by fading the block. `opacity: 0.6` over --color-text-secondary
+ * composites to 3.4:1 and over --color-text-tertiary to 2.3:1 — both under the
+ * 4.5:1 floor for body text, and the tertiary "vs" prefix was the worst of it.
+ * --color-text-tertiary at full strength holds 4.8:1 light and 4.7:1 dark
+ * while still reading as secondary.
+ *
+ * Declared after the base rules above so the override actually wins.
+ */
+.mobileComparisonRow .inlineSummary {
+  flex: 1;
+}
+
+.mobileComparisonRow .inlineTitle,
+.mobileComparisonRow .inlineSubtitle {
+  color: var(--color-text-tertiary);
 }
 
 /* Desktop layout */
@@ -126,16 +140,31 @@
   margin-top: 2px;
 }
 
+/* Same reasoning as .mobileComparisonRow above: colour step, not opacity. */
 .desktopComparison {
   display: flex;
   gap: 8px;
   align-items: flex-start;
   text-align: right;
-  opacity: 0.6;
+}
+
+.desktopComparison .title,
+.desktopComparison .subtitle {
+  color: var(--color-text-tertiary);
 }
 
 .desktopDismissButton {
   padding: 2px 6px;
   margin-top: 2px;
   line-height: 1;
+}
+
+/*
+ * Keyboard focus. `:focus-visible` rather than `:focus` so a pointer click
+ * does not leave a ring behind, and an outline rather than a box-shadow so it
+ * survives forced-colors mode.
+ */
+.button:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
