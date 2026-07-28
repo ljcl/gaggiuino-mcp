@@ -10,3 +10,20 @@
 .root {
   overflow-x: clip;
 }
+
+/*
+ * The chart's long description. Reachable by a screen reader through
+ * aria-describedby, never laid out — `display: none` would remove it from the
+ * accessibility tree along with everything else.
+ */
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  white-space: nowrap;
+  border: 0;
+  clip-path: inset(50%);
+}

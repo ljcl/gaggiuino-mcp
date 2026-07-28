@@ -6,14 +6,33 @@
   gap: 14px;
   align-items: center;
   justify-content: center;
+  padding: 0;
+  margin: 0;
   font-family: var(--font-sans);
   font-size: var(--font-text-xs-size);
   color: var(--color-text-secondary);
+  list-style: none;
 }
 
 .legend[data-size="touch"] {
   gap: 6px;
   font-size: var(--font-text-sm-size);
+}
+
+.item {
+  display: flex;
+}
+
+/*
+ * An SVG rather than a filled block: the swatch has to draw the series' dash
+ * pattern, which is the chart's non-color encoding. Sized to fit the 3px
+ * stroke the line inside it uses.
+ */
+.swatch {
+  flex-shrink: 0;
+  width: 18px;
+  height: 3px;
+  overflow: visible;
 }
 
 .legendButton {
@@ -35,22 +54,33 @@
   padding: 8px 1px;
 }
 
+/*
+ * Both states de-emphasise by stepping down the text scale rather than by
+ * fading the label. The old `opacity: 0.3` / `0.5` composited to 1.7:1 and
+ * 2.7:1 — a toggle whose own name becomes unreadable once you switch it off is
+ * a trap, and the comparison row was never legible to begin with. The swatch
+ * keeps full strength either way: it is the series' colour key, and it has to
+ * stay identifiable to say what is being toggled back on.
+ */
 .legendButton[data-hidden] {
+  color: var(--color-text-tertiary);
   text-decoration: line-through;
-  opacity: 0.3;
 }
 
 .legendButton[data-faded] {
-  opacity: 0.5;
+  color: var(--color-text-tertiary);
 }
 
-.legendButton[data-hidden][data-faded] {
-  opacity: 0.25;
+.legendButton[data-hidden] .swatch {
+  opacity: 0.4;
 }
 
-.swatch {
-  flex-shrink: 0;
-  width: 16px;
-  height: 3px;
-  border-radius: 2px;
+/*
+ * Keyboard focus. `:focus-visible` rather than `:focus` so a pointer click
+ * does not leave a ring behind, and an outline rather than a box-shadow so it
+ * survives forced-colors mode.
+ */
+.legendButton:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }

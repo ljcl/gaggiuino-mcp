@@ -195,6 +195,35 @@ and `color-scheme` on `documentElement`, mirroring `applyDocumentTheme`. Do not
 reintroduce a wrapper element — a hand-applied class makes dark stories pass while
 every real host renders light.
 
+### The chart palette contract
+
+`--chart-*` carries an accessibility contract that a plain colour edit can silently
+break, so it is measured rather than asserted in a comment. `packages/design-system/src/color.ts`
+provides the maths (WCAG contrast, Machado 2009 CVD simulation, CIEDE2000), and the
+**Shot Graph/Chart accessibility** story (`Light` and `Dark`) enforces two rules against
+what the *browser* resolves — so a host overriding `--chart-*` is measured too:
+
+1. Every stroke clears **3:1** against `--color-background-primary` (WCAG 1.4.11).
+2. Every pair of strokes from *different* metrics is separable, either by colour under
+   a protan **and** deutan simulation (≥17 ΔE00) or by a different dash pattern. Goal
+   lines are exempt against their own metric — resembling it is the point.
+
+**Colour alone cannot carry four series, and the second rule is not negotiable because
+of it.** Under protan/deutan the palette collapses to roughly two hue poles plus
+lightness; measured, `--chart-flow` and `--chart-weight-flow` land ~3 ΔE00 apart once
+simulated, and a search over the full sRGB gamut only beats that by pushing one series
+to a near-black navy. Pattern is what actually separates that pair, which makes
+`SERIES_DASH` in `shot-graph/src/constants.ts` load-bearing rather than stylistic. That
+file is the single home for the whole `strokeDasharray` vocabulary — series, goal lines,
+and chart furniture — because three separate concerns kept laying claim to it.
+
+Gating is on protan and deutan only. Tritanopia is ~0.01% of people and every blue/green
+pairing collapses under it, so including it would reject any palette using both; the
+story still renders the simulated swatches for review.
+
+The legend draws each series' dash in its swatch. That is the encoding's key — drop it
+and a viewer who cannot separate two series by hue has no way to read the chart.
+
 ## Data Format
 
 Gaggiuino API returns values scaled by 10 (e.g., pressure 91 = 9.1 bar). The `normalize.ts` module handles conversion:
@@ -234,8 +263,14 @@ Where an assertion lives depends on what it needs, not on which package it is in
   visibility callback in `ShotGraph` are `play` functions for exactly this reason.
 - **Pure functions with no DOM** run under a plain `vitest run`. `packages/ui` and
   `packages/shot-graph` each have one, covering `layoutMode`, `toolResult`, `download`, `csv`,
-  and `contextSummary`. This is not a second test runner — it is the same vitest the story
-  tests and `apps/server` already use, just without a browser it has no reason to boot.
+  `contextSummary`, and `a11y` (the generated chart name and description). This is not a second
+  test runner — it is the same vitest the story tests and `apps/server` already use, just without
+  a browser it has no reason to boot.
+
+  `packages/design-system/src/color.ts` is the exception that proves the rule: it is pure, but
+  design-system has no test runner, and the thing worth asserting is what a *browser* resolves
+  `var(--chart-*)` to. It is therefore exercised from the Chart accessibility story rather than
+  from a unit test of its own.
 
 Neither package has a `test:coverage` script, so neither produces a `coverage/` directory and
 the unthresholded rule above still holds. What does *not* belong anywhere is a jsdom harness for
@@ -500,10 +535,30 @@ load-bearing — without it every `packages/*` file is "external" and the report
 `bun run test:stories` stays coverage-free for fast local runs.
 
 Each story also runs a per-story accessibility check via `addon-a11y`'s Vitest integration (axe-core),
-visible in Storybook's Accessibility panel and in each test's reporting output. The default
-`a11y.test: "todo"` parameter means a violation is recorded, not asserted — `bun run test:stories`
-does not currently fail on an accessibility defect. Treat the panel as a review aid today; a
-stricter `test: "error"` gate remains a candidate for future work.
+visible in Storybook's Accessibility panel and in each test's reporting output. `preview.tsx` sets
+**`a11y: { test: "error" }`**, so a violation *fails* `bun run test:stories` rather than being
+recorded and passed over — the addon's own default is `"todo"`, which does the latter. The gate
+covers **every** story in the repo, design-system docs stories included.
+
+Practically, this means a new story cannot ship an unlabelled control, and it also means the
+Storybook canvas is part of the contract: the preview decorator paints `document.body` with
+`--color-background-primary` unconditionally. Scoping that to "only when a host theme is active"
+left the dark stories drawing dark-mode text on Storybook's white canvas, which axe correctly
+reported at 1.05:1 across four story files. A host always supplies a background; the canvas has to
+model that or every dark story reports contrast failures that do not exist in production.
+
+Two of the fixes made to clear the gate are worth not re-breaking:
+
+- **De-emphasis is a colour step, never stacked opacity.** `opacity: 0.6` over
+  `--color-text-secondary` composites to 3.4:1 and over `--color-text-tertiary` to 2.3:1; the
+  legend's hidden and comparison states were worse, at 1.7:1 and 2.7:1. Comparison headers and
+  legend states now step down to `--color-text-tertiary` at full strength (4.8:1 light, 4.7:1
+  dark) instead.
+- **The chart wrapper is `role="group"`, not `role="img"`.** Recharts renders the legend's toggle
+  buttons *inside* `ResponsiveContainer`, and `img` makes its whole subtree presentational — which
+  hides those buttons from assistive tech and trips axe's `nested-interactive` rule. The chart is
+  interactive (`accessibilityLayer` gives the plot keyboard traversal), so `group` is also the
+  honest description.
 
 There is intentionally **no pixel-level visual-regression gate**.
 

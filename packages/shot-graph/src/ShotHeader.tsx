@@ -78,7 +78,7 @@ export function ShotHeader({
                   aria-label="Dismiss comparison"
                   className={`${styles.button} ${styles.mobileDismissButton}`}
                 >
-                  ✕
+                  <span aria-hidden="true">✕</span>
                 </button>
               )}
             </div>
@@ -114,9 +114,10 @@ export function ShotHeader({
             <button
               type="button"
               onClick={onDismissCompare}
+              aria-label="Dismiss comparison"
               className={`${styles.button} ${styles.desktopDismissButton}`}
             >
-              ✕
+              <span aria-hidden="true">✕</span>
             </button>
           )}
         </div>

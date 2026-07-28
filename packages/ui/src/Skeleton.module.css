@@ -49,3 +49,17 @@
   color: var(--color-text-tertiary);
   text-align: center;
 }
+
+/*
+ * The shimmer loops for as long as the fetch takes, which for a machine that
+ * is switched off is indefinitely. Honour a reduced-motion preference by
+ * holding the placeholder at the animation's midpoint — still visibly a
+ * placeholder, no longer pulsing.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .chartArea,
+  .pillGhost {
+    opacity: 0.65;
+    animation: none;
+  }
+}

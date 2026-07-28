@@ -38,7 +38,10 @@ export const claudeTheme: HostThemePreset = {
     "--color-background-tertiary": "#151514",
     "--color-text-primary": "#f0efe8",
     "--color-text-secondary": "#b5b4aa",
-    "--color-text-tertiary": "#8a897e",
+    // Lightened from #8a897e (4.08:1 on --color-background-primary) for the
+    // same reason as the light preset above. #95948a holds the warm hue at
+    // 4.71:1.
+    "--color-text-tertiary": "#95948a",
     "--color-border-primary": "rgba(222, 220, 209, 0.35)",
     "--color-border-secondary": "rgba(222, 220, 209, 0.2)",
     "--color-border-tertiary": "rgba(222, 220, 209, 0.1)",

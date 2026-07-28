@@ -18,6 +18,16 @@ const ALL_HOST_KEYS = new Set(
 export default definePreview({
   addons: [a11y(), docs()],
   parameters: {
+    /*
+     * Every story runs axe-core through addon-a11y's Vitest integration. The
+     * addon defaults to "todo", which records a violation and passes anyway;
+     * "error" makes it fail `bun run test:stories`, so an accessibility
+     * regression is caught the same way a broken render is.
+     *
+     * This gates every story in the repo, design-system docs included — a
+     * story added without a label or with unreadable contrast fails CI.
+     */
+    a11y: { test: "error" },
     layout: "padded",
     viewport: {
       options: {
@@ -72,10 +82,12 @@ export default definePreview({
       for (const [key, value] of Object.entries(vars)) {
         root.style.setProperty(key, value);
       }
-      // Set canvas background to host background when a theme is active
-      document.body.style.cssText = theme
-        ? "background: var(--color-background-primary) !important;"
-        : "";
+      // The canvas always takes the resolved background, host theme or not.
+      // Scoping this to `theme` left the dark stories drawing dark-mode text
+      // on Storybook's white canvas — a 1.05:1 combination that exists in no
+      // real host, but which every story's axe check faithfully reported.
+      document.body.style.cssText =
+        "background: var(--color-background-primary) !important;";
 
       return <StoryFn />;
     },

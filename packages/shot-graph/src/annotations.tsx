@@ -1,5 +1,14 @@
 import { ReferenceDot, ReferenceLine } from "recharts";
+import { COMPARISON_OPACITY, TARGET_DASH } from "./constants";
 import { type Annotation } from "./types";
+
+/*
+ * Comparison annotations are marked by a hollow dot and a smaller label, not
+ * by transparency. Their labels used to render at `opacity: 0.5`, which
+ * composited to roughly 2.4:1 against the chart background — well under the
+ * 4.5:1 floor for text — so the one thing on the chart that spells out a
+ * number was the least readable thing on it.
+ */
 
 interface AnnotationPair {
   primary: Annotation;
@@ -95,8 +104,8 @@ export function renderAnnotations({
         ]}
         stroke={primary.color}
         strokeWidth={1}
-        strokeDasharray="4 3"
-        opacity={0.5}
+        strokeDasharray={TARGET_DASH}
+        opacity={COMPARISON_OPACITY}
       />,
     );
   }
@@ -142,14 +151,13 @@ export function renderAnnotations({
         fill="none"
         stroke={comparison.color}
         strokeWidth={1.5}
-        opacity={0.5}
+        opacity={COMPARISON_OPACITY}
         label={{
           value: comparison.label,
           position: annotationLabelPosition(comparison, true),
           fill: comparison.color,
           fontSize: comparisonFont,
           fontWeight: 500,
-          opacity: 0.5,
           offset: 8,
         }}
       />,
@@ -196,14 +204,13 @@ export function renderAnnotations({
         fill="none"
         stroke={a.color}
         strokeWidth={1.5}
-        opacity={0.5}
+        opacity={COMPARISON_OPACITY}
         label={{
           value: a.label,
           position: annotationLabelPosition(a, true),
           fill: a.color,
           fontSize: comparisonFont,
           fontWeight: 500,
-          opacity: 0.5,
           offset: 8,
         }}
       />,
