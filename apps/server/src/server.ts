@@ -6,6 +6,7 @@ import {
   GetPromptRequestSchema,
   ListPromptsRequestSchema,
   ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
   ListToolsRequestSchema,
   ReadResourceRequestSchema,
   type Tool,
@@ -240,6 +241,27 @@ export function createServer() {
             prefersBorder: false,
           },
         },
+      },
+    ],
+  }));
+  /**
+   * Declaring the `resources` capability commits the server to the whole
+   * resource discovery flow, and `resources/templates/list` is part of it — the
+   * spec's own message flow puts it immediately after `resources/list`. Without
+   * this handler the request fell through to the SDK's default and came back
+   * `-32601 Method not found`, so a host enumerating the server mid-refresh saw
+   * a hard JSON-RPC error and abandoned the whole discovery pass, tools
+   * included. Answering it also makes the `gaggiuino://profiles/{id}` branch of
+   * ReadResource reachable, which was previously advertised nowhere.
+   */
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+    resourceTemplates: [
+      {
+        description:
+          "Documentation for a single brew profile. Ids come from list_profiles or the gaggiuino://profiles resource.",
+        mimeType: "text/plain",
+        name: "Brew Profile",
+        uriTemplate: "gaggiuino://profiles/{id}",
       },
     ],
   }));

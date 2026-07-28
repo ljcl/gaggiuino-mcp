@@ -102,12 +102,98 @@ function jsonRpcError(
   );
 }
 
+function originAllowed(origin: string, allowed: string[]): boolean {
+  return allowed.includes("*") || allowed.includes(origin);
+}
+
 function checkOrigin(req: Request, allowed: string[]): Response | undefined {
   const origin = req.headers.get("origin");
   // No Origin means no browser, and therefore no cross-origin confused deputy.
   if (origin === null) return undefined;
-  if (allowed.includes("*") || allowed.includes(origin)) return undefined;
+  if (originAllowed(origin, allowed)) return undefined;
   return jsonRpcError(403, `Forbidden: Origin not allowed: ${origin}`);
+}
+
+/**
+ * The request headers a Streamable HTTP client sends. `mcp-session-id` and
+ * `mcp-protocol-version` are the transport's own; `last-event-id` is how a
+ * client resumes a dropped SSE stream. Omitting any one of them makes the
+ * browser fail the preflight for a request the allowlist was meant to permit.
+ */
+const ALLOWED_REQUEST_HEADERS = [
+  "authorization",
+  "content-type",
+  "last-event-id",
+  "mcp-protocol-version",
+  "mcp-session-id",
+].join(", ");
+
+const PREFLIGHT_MAX_AGE_SECONDS = 600;
+
+/**
+ * Response headers that let an allowed browser origin actually read the reply.
+ *
+ * Passing `checkOrigin` is only half of a cross-origin request: without
+ * `Access-Control-Allow-Origin` on the way back, the browser discards a
+ * response the server was perfectly happy to send, so `MCP_ALLOWED_ORIGINS`
+ * would allow an origin the client still could not talk to.
+ *
+ * `mcp-session-id` must be exposed explicitly — it is not a CORS-safelisted
+ * response header, and a Streamable HTTP client that cannot read it has no
+ * session to continue with.
+ *
+ * The origin is echoed rather than answered with `*` so the allowlist stays the
+ * thing that decides, and `Vary: Origin` keeps a cache from serving one
+ * origin's answer to another.
+ */
+export function corsHeaders(
+  req: Request,
+  config: SecurityConfig,
+): Record<string, string> {
+  const origin = req.headers.get("origin");
+  if (origin === null || !originAllowed(origin, config.allowedOrigins)) {
+    return {};
+  }
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Expose-Headers": "mcp-session-id",
+    Vary: "Origin",
+  };
+}
+
+/**
+ * Answer a CORS preflight, or `undefined` if this is not one.
+ *
+ * Preflights are deliberately settled before the token check: the browser sends
+ * `OPTIONS` with no `Authorization` header by design, so gating it on the token
+ * rejects every credentialed cross-origin request before it is ever made. The
+ * exemption gives nothing away — a preflight has no body and no side effects,
+ * and it is still refused unless the Origin is on the allowlist.
+ */
+export function handlePreflight(
+  req: Request,
+  config: SecurityConfig,
+): Response | undefined {
+  if (req.method !== "OPTIONS") return undefined;
+
+  const cors = corsHeaders(req, config);
+  if (Object.keys(cors).length === 0) {
+    const origin = req.headers.get("origin");
+    return jsonRpcError(
+      403,
+      `Forbidden: Origin not allowed: ${origin ?? "(none)"}`,
+    );
+  }
+
+  return new Response(null, {
+    headers: {
+      ...cors,
+      "Access-Control-Allow-Headers": ALLOWED_REQUEST_HEADERS,
+      "Access-Control-Allow-Methods": "DELETE, GET, OPTIONS, POST",
+      "Access-Control-Max-Age": String(PREFLIGHT_MAX_AGE_SECONDS),
+    },
+    status: 204,
+  });
 }
 
 function checkHost(req: Request, allowed: string[]): Response | undefined {

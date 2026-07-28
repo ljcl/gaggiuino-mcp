@@ -144,6 +144,12 @@ because the browser sends it for you. Requests with no `Origin` (Claude Desktop,
 `curl`, anything that is not a browser) are unaffected, so the default empty list
 is the right setting for almost everyone.
 
+Listing an origin also makes `/mcp` answer that origin's CORS preflight and
+echo `Access-Control-Allow-Origin` (plus `Access-Control-Expose-Headers:
+mcp-session-id`, without which a browser client can read the handshake but not
+the session it needs to continue with). Allowing an origin the browser then
+blocks would be an allowlist that allows nothing.
+
 `scripts/test-auth.sh` probes a running server for all of the above.
 
 ### Customization

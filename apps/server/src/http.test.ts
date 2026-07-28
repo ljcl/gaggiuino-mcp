@@ -1,7 +1,8 @@
 import { HttpResponse, http } from "msw";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getClient, resetClient } from "./client";
 import { createFetchHandler, type FetchHandler } from "./http";
+import { setLogLevel } from "./logging";
 import { type SecurityConfig } from "./mcpAuth";
 import { mockServer } from "./test-setup";
 import { SERVER_VERSION } from "./version";
@@ -177,6 +178,34 @@ describe("/mcp routing", () => {
     expect(response.status).toBe(400);
   });
 
+  it("answers a GET naming an expired session with 404, not 400", async () => {
+    // 404 is the spec's signal that a session id is not recognised, and it is
+    // what tells a client to re-handshake. This used to answer 400 — "your
+    // request is malformed" — which no client recovers from by sending
+    // initialize, so a session reclaimed by the idle TTL stranded its client.
+    const response = await handler.fetch(
+      new Request("http://localhost:8000/mcp", {
+        headers: authorized({
+          accept: "text/event-stream",
+          "mcp-session-id": "reclaimed-by-the-reaper",
+        }),
+      }),
+    );
+    expect(response.status).toBe(404);
+    const body = (await response.json()) as { error: { message: string } };
+    expect(body.error.message).toContain("initialize");
+  });
+
+  it("answers a DELETE naming an expired session with 404", async () => {
+    const response = await handler.fetch(
+      new Request("http://localhost:8000/mcp", {
+        headers: authorized({ "mcp-session-id": "already-gone" }),
+        method: "DELETE",
+      }),
+    );
+    expect(response.status).toBe(404);
+  });
+
   it("closes a session on DELETE and drops it from the map", async () => {
     const init = await handler.fetch(post(initializeBody(), authorized()));
     const sessionId = init.headers.get("mcp-session-id") ?? "";
@@ -244,6 +273,98 @@ describe("session capacity", () => {
     const second = await handler.fetch(post(initializeBody(), authorized()));
     expect(second.status).toBe(200);
     expect(handler.sessions.size).toBe(1);
+  });
+});
+
+describe("browser origins", () => {
+  const BROWSER: SecurityConfig = {
+    allowedHosts: [],
+    allowedOrigins: ["https://claude.ai"],
+    token: TOKEN,
+  };
+
+  beforeEach(() => {
+    handler = createFetchHandler({ security: BROWSER });
+  });
+
+  it("answers the preflight the browser sends before the real request", async () => {
+    // Without this the endpoint answered OPTIONS with 405 and no CORS headers,
+    // so `MCP_ALLOWED_ORIGINS` allowed an origin that could still never reach
+    // the server — the preflight failed before the POST was attempted.
+    const response = await handler.fetch(
+      new Request("http://localhost:8000/mcp", {
+        headers: {
+          "access-control-request-method": "POST",
+          origin: "https://claude.ai",
+        },
+        method: "OPTIONS",
+      }),
+    );
+    expect(response.status).toBe(204);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(
+      "https://claude.ai",
+    );
+  });
+
+  it("lets an allowed origin read the handshake response", async () => {
+    const response = await handler.fetch(
+      post(initializeBody(), authorized({ origin: "https://claude.ai" })),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(
+      "https://claude.ai",
+    );
+    // The session id is not CORS-safelisted; unexposed, the client has no
+    // session to continue with even though the handshake succeeded.
+    expect(response.headers.get("Access-Control-Expose-Headers")).toContain(
+      "mcp-session-id",
+    );
+    expect(response.headers.get("mcp-session-id")).toBeTruthy();
+  });
+
+  it("adds no CORS headers for a client that sent no Origin", async () => {
+    const response = await handler.fetch(post(initializeBody(), authorized()));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(null);
+  });
+
+  it("still refuses a preflight from an origin outside the allowlist", async () => {
+    const response = await handler.fetch(
+      new Request("http://localhost:8000/mcp", {
+        headers: { origin: "https://evil.test" },
+        method: "OPTIONS",
+      }),
+    );
+    expect(response.status).toBe(403);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(null);
+  });
+});
+
+describe("rejection logging", () => {
+  it("records why the gate refused a request", async () => {
+    // Silent rejections made the two failures an operator actually hits — an
+    // Origin off the allowlist and a token that does not match — look
+    // identical to the server being unreachable.
+    // Captures the real sink so the default `console.error` path stays in the
+    // loop, as the tool-call logging tests do.
+    const records: Array<Record<string, unknown>> = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((line) => {
+      records.push(JSON.parse(String(line)));
+    });
+    setLogLevel("warn");
+    try {
+      await handler.fetch(
+        post(initializeBody(), { origin: "https://evil.test" }),
+      );
+    } finally {
+      spy.mockRestore();
+      setLogLevel("silent");
+    }
+    const record = records.find((entry) => entry.event === "security.rejected");
+    expect(record).toMatchObject({
+      origin: "https://evil.test",
+      status: 403,
+    });
   });
 });
 

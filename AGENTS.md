@@ -95,6 +95,21 @@ annotations, and the handler. Nothing about a tool is declared twice.
 cached client and applies the config to the next one, which is how tests
 exercise the retry path without waiting out the real backoff.
 
+### Answer every method the advertised capabilities imply
+
+`createServer()` declares `tools`, `prompts`, and `resources`, and a host
+enumerating the server calls **everything** those capabilities cover — including
+`resources/templates/list`, which the spec's own resource message-flow puts
+directly after `resources/list`. That handler was missing, so the request fell
+through to the SDK default and came back `-32601 Method not found`; a host that
+treats a JSON-RPC error mid-discovery as a failed discovery abandoned the whole
+pass, tools included. This is what made "Refresh tools list" fail in the Claude
+connector settings while the already-cached tools kept working.
+
+The rule generalises: adding a capability to `createServer()` means registering
+every request handler that capability implies, not only the ones this server has
+data for. An empty list is a valid answer; `-32601` is not.
+
 ## MCP App (Shot Graph)
 
 https://modelcontextprotocol.io/docs/extensions/apps
@@ -574,13 +589,14 @@ covered:
 
 - `http.ts` — `createFetchHandler({ security })` returns a `fetch` plus the live
   session map. Tests drive it with real `Request` objects and never bind a port.
-- `mcpAuth.ts` — `loadSecurityConfig` / `checkRequest` / `describeSecurity`.
-  `checkRequest` returns the `Response` to send, or `undefined` to proceed.
+- `mcpAuth.ts` — `loadSecurityConfig` / `checkRequest` / `describeSecurity`,
+  plus `handlePreflight` / `corsHeaders`. `checkRequest` returns the `Response`
+  to send, or `undefined` to proceed.
 - `mcpSession.ts` — the bounded, expiring transport registry. Generic over a
   minimal `ClosableSession`, and its clock is injected, so its tests assert
   "after 31 minutes of silence" without a timer or a wait.
 
-Three things about the gate are load-bearing:
+Five things about the gate are load-bearing:
 
 - **`/health` is routed before it.** The container HEALTHCHECK presents no
   credential and no `Origin`; a liveness probe that needs a token reports the
@@ -591,6 +607,19 @@ Three things about the gate are load-bearing:
   `curl`) send none, so the empty default allowlist blocks exactly the
   browser-initiated cross-origin case and nothing else. That is what lets the
   default be deny-all without breaking every install.
+- **An allowed origin gets CORS headers, not just a pass.** Clearing
+  `checkOrigin` is half a cross-origin request; without
+  `Access-Control-Allow-Origin` on the way back the browser discards a response
+  the server was happy to send, so `MCP_ALLOWED_ORIGINS` allowed an origin that
+  still could not talk to the server. `handlePreflight` answers `OPTIONS` (which
+  used to 405), and `Access-Control-Expose-Headers: mcp-session-id` is
+  mandatory — it is not CORS-safelisted, and a Streamable HTTP client that
+  cannot read it has no session to continue with. Preflights settle *before*
+  the token check, because a browser sends `OPTIONS` with no `Authorization`
+  header by design; they still require an allowlisted Origin.
+- **Every rejection is logged** (`security.rejected`, with method, origin, and
+  status). Silent 401s and 403s made the two failures an operator actually hits
+  indistinguishable from the server being unreachable.
 
 Validation runs as middleware in `fetch` rather than through the transport's
 `enableDnsRebindingProtection` / `allowedHosts` / `allowedOrigins` options:
@@ -626,6 +655,15 @@ strand the rest of the sweep. Both have tests named after the failure.
 so handling only SIGINT meant the container was killed after the grace period
 with every session still open. It stops the listener before draining, so nothing
 lands on a transport that is closing.
+
+**An unrecognised session id is a 404 on every method**, and the distinction
+from 400 is the whole point: 404 is the Streamable HTTP spec's signal that a
+session is gone and the client should re-handshake with `initialize`. GET and
+DELETE used to answer 400 — "your request is malformed" — for an expired session
+as well as a missing header, and no client recovers from that by re-handshaking,
+so a session the idle TTL reclaimed stranded its client instead of prompting a
+reconnect. 400 now means only what it says: the `Mcp-Session-Id` header is
+absent.
 
 ### Logging, health, and startup validation
 
