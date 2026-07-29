@@ -1,5 +1,5 @@
 import { Legend, LegendItem } from "@gaggiuino/ui";
-import { COLORS, METRICS, SERIES_DASH } from "./constants";
+import { COMPARISON_SERIES, METRICS } from "./constants";
 
 interface ChartLegendProps {
   hidden: Set<string>;
@@ -11,9 +11,15 @@ interface ChartLegendProps {
 
 /**
  * Legend below the chart. On desktop, renders a primary row plus an optional
- * faded comparison row so each series can be toggled independently. On mobile,
- * collapses to a single touch-sized row of 4 items; tapping one toggles the
- * primary and comparison series for that metric together.
+ * comparison row so each series can be toggled independently. On mobile,
+ * collapses to a single touch-sized row; tapping one toggles the primary and
+ * comparison series for that metric together.
+ *
+ * Both rows draw each series' own `strokeDasharray` in the swatch, including
+ * the comparison overlay's. That is the key to the encoding: comparison strokes
+ * are told apart from their primary by pattern now rather than by a fade, and a
+ * key that omitted the pattern would leave a viewer who cannot separate the two
+ * by hue with nothing to read the chart by.
  */
 export function ChartLegend({
   hidden,
@@ -73,38 +79,17 @@ export function ChartLegend({
       </Legend>
       {hasComparison && (
         <Legend label="Comparison shot series">
-          <LegendItem
-            color={COLORS.pressure}
-            dash={SERIES_DASH.pressure}
-            label="Pressure (cmp)"
-            faded
-            hidden={hidden.has("pressureCmp")}
-            onClick={() => onToggle(["pressureCmp"])}
-          />
-          <LegendItem
-            color={COLORS.pumpFlow}
-            dash={SERIES_DASH.pumpFlow}
-            label="Flow (cmp)"
-            faded
-            hidden={hidden.has("pumpFlowCmp")}
-            onClick={() => onToggle(["pumpFlowCmp"])}
-          />
-          <LegendItem
-            color={COLORS.weightFlow}
-            dash={SERIES_DASH.weightFlow}
-            label="Weight Flow (cmp)"
-            faded
-            hidden={hidden.has("weightFlowCmp")}
-            onClick={() => onToggle(["weightFlowCmp"])}
-          />
-          <LegendItem
-            color={COLORS.shotWeight}
-            dash={SERIES_DASH.shotWeight}
-            label="Weight (cmp)"
-            faded
-            hidden={hidden.has("shotWeightCmp")}
-            onClick={() => onToggle(["shotWeightCmp"])}
-          />
+          {COMPARISON_SERIES.map(({ color, dash, key, name }) => (
+            <LegendItem
+              key={key}
+              color={color}
+              dash={dash}
+              label={name}
+              faded
+              hidden={hidden.has(key)}
+              onClick={() => onToggle([key])}
+            />
+          ))}
         </Legend>
       )}
     </div>

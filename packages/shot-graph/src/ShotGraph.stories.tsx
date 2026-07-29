@@ -12,8 +12,37 @@ import {
   londiniumShot33,
   quickShot,
 } from "./__fixtures__/chart-data";
+import {
+  COMPARISON_SERIES,
+  DEFAULT_HIDDEN_SERIES,
+  PHASE_LABEL_CLASS,
+} from "./constants";
 import { extractAnnotations, extractMeta, toChartData } from "./normalize";
+import { derivePhaseRegions } from "./phases";
 import { ShotGraph } from "./ShotGraph";
+
+/** Every `<Line>` recharts drew, by the dash pattern it rendered with. */
+function renderedDashes(canvasElement: HTMLElement): (string | null)[] {
+  return Array.from(
+    canvasElement.querySelectorAll<SVGPathElement>(".recharts-line-curve"),
+  ).map((curve) => curve.getAttribute("stroke-dasharray"));
+}
+
+/** A comparison stroke is any whose dash starts with the overlay's prefix. */
+const COMPARISON_PREFIX = "10 4";
+
+/**
+ * Phase labels as rendered in the plot. Matched on their own class rather than
+ * by text, for two reasons: "Flow" and "Pressure" are also legend entries — a
+ * phase and the series that drives it are named the same thing on purpose — and
+ * recharts hoists every label out of its `.recharts-reference-area` group into
+ * a shared z-index layer, so there is nothing to walk down from.
+ */
+function renderedPhaseLabels(canvasElement: HTMLElement): string[] {
+  return Array.from(
+    canvasElement.querySelectorAll(`text.${PHASE_LABEL_CLASS}`),
+  ).map((label) => label.textContent ?? "");
+}
 
 const meta: Meta<typeof ShotGraph> = {
   component: ShotGraph,
@@ -48,12 +77,103 @@ export const Comparison: Story = {
   },
 };
 
-export const PhaseBoundaries: Story = {
+/**
+ * The overlay has to be readable without hovering, which it was not while the
+ * only thing separating a shot from its comparison was `opacity`. Each
+ * comparison stroke now carries its metric's dash behind a long-dash prefix, so
+ * the pairing survives greyscale, a projector, and a dichromat's palette.
+ */
+export const ComparisonStyling: Story = {
+  args: Comparison.args,
+  play: async ({ canvasElement }) => {
+    const dashes = renderedDashes(canvasElement);
+    const shown = COMPARISON_SERIES.filter(
+      (s) => !DEFAULT_HIDDEN_SERIES.has(s.key),
+    );
+
+    // Every overlay on screen renders the dash the registry declares for it.
+    await expect(
+      dashes.filter((d) => d?.startsWith(COMPARISON_PREFIX)).sort(),
+    ).toEqual(shown.map((s) => s.dash).sort());
+
+    // And each one differs from the shot it overlays, which is the claim: a
+    // comparison series is now readable as one without hovering it.
+    for (const series of shown) {
+      await expect(series.dash).not.toBe(series.metric.dash);
+    }
+
+    // Two overlays do share a dash — the two whose colours are furthest apart.
+    // That is the accessibility contract working as designed, and the
+    // "Chart accessibility" story is what measures the colour half of it.
+    await expect(
+      dashes.filter((d) => !d?.startsWith(COMPARISON_PREFIX)).length,
+    ).toBeGreaterThan(0);
+  },
+};
+
+/**
+ * Phase regions labeled from `profile.phases[].type`. The chart used to infer
+ * unlabeled hairlines from the target series and discard the phase names the
+ * machine had already sent.
+ */
+export const PhaseRegions: Story = {
   args: {
     data: toChartData(londiniumShot33),
     primaryMeta: extractMeta(londiniumShot33),
-    phaseBoundaries: [5, 15],
+    phases: derivePhaseRegions(londiniumShot33),
     annotations: extractAnnotations(londiniumShot33),
+  },
+  play: async ({ canvasElement }) => {
+    // The Londinium profile fills on a flow target, then extracts on pressure.
+    await expect(renderedPhaseLabels(canvasElement)).toEqual([
+      "Flow",
+      "Pressure",
+    ]);
+  },
+};
+
+/**
+ * A single-phase profile: one region, no internal boundary. The old inference
+ * drew a hairline at every target step regardless of what the profile said.
+ */
+export const SinglePhase: Story = {
+  args: {
+    data: toChartData(quickShot),
+    primaryMeta: extractMeta(quickShot),
+    phases: derivePhaseRegions(quickShot),
+    annotations: extractAnnotations(quickShot),
+  },
+};
+
+/**
+ * Temperature is a fifth series on its own degrees axis, off until toggled on —
+ * a card-sized chart has no room to spend on it unprompted.
+ */
+export const TemperatureSeries: Story = {
+  args: {
+    data: toChartData(londiniumShot33),
+    primaryMeta: extractMeta(londiniumShot33),
+    phases: derivePhaseRegions(londiniumShot33),
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(renderedDashes(canvasElement)).not.toContain("5 2 1 2");
+
+    await userEvent.click(await canvas.findByText("Temperature"));
+    await expect(renderedDashes(canvasElement)).toContain("5 2 1 2");
+
+    // The degrees axis appears with the series, and inside the SVG: recharts
+    // stacks it outboard of the weight axis, so the chart's negative right
+    // margin has to give way or the ticks lay out past the right edge.
+    const surface = canvasElement.querySelector("svg.recharts-surface");
+    const chartWidth = Number(surface?.getAttribute("width") ?? 0);
+    const degrees = Array.from(
+      canvasElement.querySelectorAll(".recharts-cartesian-axis-tick-value"),
+    ).filter((tick) => tick.textContent === "88");
+    await expect(degrees).toHaveLength(1);
+    await expect(
+      Number(degrees[0]?.getAttribute("x") ?? chartWidth),
+    ).toBeLessThan(chartWidth);
   },
 };
 
@@ -293,8 +413,10 @@ export const ReportsVisibilityChanges: Story = {
   play: async ({ args, canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(await canvas.findByText("Pressure"));
+    // Temperature is in the set because it starts hidden, not because the
+    // click touched it.
     await expect(args.onVisibilityChange).toHaveBeenCalledWith(
-      new Set(["pressure"]),
+      new Set(["temperature", "temperatureCmp", "pressure"]),
     );
   },
 };

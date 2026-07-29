@@ -38,6 +38,10 @@
   color: var(--color-text-tertiary);
 }
 
+.comparison {
+  color: var(--color-text-tertiary);
+}
+
 .timestamp {
   margin-top: 4px;
   font-size: var(--font-text-xs-size);
