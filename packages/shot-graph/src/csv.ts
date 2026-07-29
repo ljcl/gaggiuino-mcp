@@ -15,6 +15,7 @@ const PRIMARY_COLUMNS = [
   ["targetPumpFlow", "target_pump_flow_ml_s"],
   ["weightFlow", "weight_flow_g_s"],
   ["shotWeight", "weight_g"],
+  ["temperature", "temperature_c"],
 ] as const satisfies readonly (readonly [keyof ChartDataPoint, string])[];
 
 const COMPARISON_COLUMNS = [
@@ -24,6 +25,7 @@ const COMPARISON_COLUMNS = [
   ["targetPumpFlowCmp", "cmp_target_pump_flow_ml_s"],
   ["weightFlowCmp", "cmp_weight_flow_g_s"],
   ["shotWeightCmp", "cmp_weight_g"],
+  ["temperatureCmp", "cmp_temperature_c"],
 ] as const satisfies readonly (readonly [keyof ChartDataPoint, string])[];
 
 /**

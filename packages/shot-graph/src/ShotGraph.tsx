@@ -6,6 +6,7 @@ import {
   Line,
   Legend as RechartsLegend,
   Tooltip as RechartsTooltip,
+  ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
   XAxis,
@@ -17,21 +18,30 @@ import { ChartLegend } from "./ChartLegend";
 import { ChartTooltip } from "./ChartTooltip";
 import {
   COLORS,
-  COMPARISON_OPACITY,
+  COMPARISON_SERIES,
+  DEFAULT_HIDDEN_SERIES,
   FURNITURE_DASH,
   formatTime,
-  SERIES_DASH,
+  PHASE_LABEL_CLASS,
+  PRIMARY_SERIES,
+  type SeriesConfig,
   TARGET_DASH,
 } from "./constants";
 import styles from "./ShotGraph.module.css";
 import { ShotHeader } from "./ShotHeader";
-import { type Annotation, type ChartDataPoint, type ShotMeta } from "./types";
+import {
+  type Annotation,
+  type ChartDataPoint,
+  type PhaseRegion,
+  type ShotMeta,
+} from "./types";
 
 interface ShotGraphProps {
   data: ChartDataPoint[];
   primaryMeta: ShotMeta;
   comparisonMeta?: ShotMeta;
-  phaseBoundaries?: number[];
+  /** Labeled spans from the profile; see `derivePhaseRegions`. */
+  phases?: PhaseRegion[];
   annotations?: Annotation[];
   comparisonAnnotations?: Annotation[];
   onRequestCompare?: () => void;
@@ -46,11 +56,18 @@ interface ShotGraphProps {
   onVisibilityChange?: (hidden: ReadonlySet<string>) => void;
 }
 
+/**
+ * A phase label narrower than this fraction of the shot has nowhere to render
+ * without colliding with its neighbour, so the boundary line carries the region
+ * alone. The accessible description still names every phase.
+ */
+const MIN_LABELLED_PHASE_WIDTH = 0.08;
+
 export function ShotGraph({
   data,
   primaryMeta,
   comparisonMeta,
-  phaseBoundaries,
+  phases,
   annotations,
   comparisonAnnotations,
   onRequestCompare,
@@ -59,7 +76,9 @@ export function ShotGraph({
   mode = "desktop",
   onVisibilityChange,
 }: ShotGraphProps) {
-  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const [hidden, setHidden] = useState<Set<string>>(
+    () => new Set(DEFAULT_HIDDEN_SERIES),
+  );
 
   // Takes a list rather than a single key so the mobile legend, which toggles
   // a metric and its comparison series together, lands both in one update.
@@ -83,6 +102,7 @@ export function ShotGraph({
     annotationFontCmp: isMobile ? 13 : 10,
     chartMarginX: isMobile ? -20 : -30,
     chartMarginTop: isMobile ? 18 : 5,
+    phaseFont: isMobile ? 11 : 10,
     strokeWidth: isMobile ? 2.25 : 2,
   };
 
@@ -107,10 +127,64 @@ export function ShotGraph({
         comparison: comparisonMeta,
         data,
         hidden,
+        phases,
         primary: primaryMeta,
       }),
-    [annotations, comparisonMeta, data, hidden, primaryMeta],
+    [annotations, comparisonMeta, data, hidden, phases, primaryMeta],
   );
+
+  const showTemperature = show("temperature") || show("temperatureCmp");
+  // Degrees need their own scale, but a third axis on a phone-sized card costs
+  // more width than it explains — there the tooltip and the accessible
+  // description carry the number instead.
+  const showTemperatureAxis = showTemperature && !isMobile;
+  const phaseSpan = phaseWidth(phases);
+
+  /*
+   * Entrance animation is off on every series below, and the dash vocabulary
+   * is why. Recharts animates a line by rewriting `stroke-dasharray` each
+   * frame, and when the line already *has* a dash it tiles the pattern across
+   * the whole path to do it — a 1800px path dashed "1 3" becomes a ~900-entry
+   * attribute string, rebuilt every frame, per line, on a chart that can carry
+   * ten of them. It also means the attribute never equals what the chart
+   * declared, so the encoding the accessibility story measures is not the one
+   * the browser is holding.
+   */
+
+  /**
+   * A comparison stroke stays thinner than its primary, and cumulative weight
+   * stays thinner than the pressure/flow traces it crosses — it is a slowly
+   * rising line whose job is context, not shape.
+   */
+  const strokeWidthFor = (series: SeriesConfig) => {
+    if (series.isComparison) return 1;
+    if (series.metric.key === "shotWeight") return isMobile ? 1.75 : 1.5;
+    return tokens.strokeWidth;
+  };
+
+  /**
+   * One `<Line>` per registry entry, so the dash vocabulary, the axis, and the
+   * legend all read from the same record. Comparison strokes differ by dash
+   * rather than by a fade: `opacity` was the only thing separating a shot from
+   * its overlay, which meant telling them apart required hovering.
+   */
+  const renderSeries = (series: SeriesConfig) =>
+    show(series.key) && (
+      <Line
+        connectNulls
+        dataKey={series.dataKey}
+        dot={false}
+        isAnimationActive={false}
+        key={series.key}
+        legendType="none"
+        name={series.name}
+        stroke={series.color}
+        strokeDasharray={series.dash}
+        strokeWidth={strokeWidthFor(series)}
+        type="monotone"
+        yAxisId={series.axis}
+      />
+    );
 
   return (
     <div className={styles.root}>
@@ -144,7 +218,15 @@ export function ShotGraph({
           data={data}
           margin={{
             top: tokens.chartMarginTop,
-            right: tokens.chartMarginX,
+            /*
+             * The negative side margins reclaim padding recharts reserves for
+             * one axis per side. A second right-hand axis makes that reclaim
+             * wrong: recharts stacks the degrees axis outboard of the weight
+             * one, and at -30 its tick labels are laid out past the right edge
+             * of the SVG and clipped away — the axis is there, reserving width,
+             * showing nothing.
+             */
+            right: showTemperatureAxis ? 6 : tokens.chartMarginX,
             left: tokens.chartMarginX,
             bottom: 5,
           }}
@@ -214,6 +296,25 @@ export function ShotGraph({
             axisLine={false}
             tickLine={false}
           />
+          {/*
+            Temperature reads in degrees, so it cannot share either scale.
+
+            The window never closes tighter than 88–96 °C: an auto domain over a
+            series that holds 93 °C all shot turns ±0.2° of sensor noise into a
+            mountain range.
+          */}
+          <YAxis
+            yAxisId="temperature"
+            orientation="right"
+            domain={temperatureDomain}
+            hide={!showTemperatureAxis}
+            stroke="var(--color-text-tertiary)"
+            fontSize={tokens.axisFont}
+            tickCount={4}
+            axisLine={false}
+            tickLine={false}
+            width={38}
+          />
           <RechartsTooltip
             content={<ChartTooltip />}
             isAnimationActive={false}
@@ -231,28 +332,63 @@ export function ShotGraph({
             }
           />
 
-          {phaseBoundaries?.map((time) => (
-            <ReferenceLine
-              key={time}
-              x={time}
+          {/*
+            Profile phases: a boundary line where each one starts, and the
+            phase's own name above it. The name is the point — the chart used to
+            draw these as unlabeled hairlines inferred from the target series
+            while `profile.phases[].type` sat unread in the payload.
+          */}
+          {phases?.map((phase) => (
+            <ReferenceArea
+              fill="none"
+              key={`phase-${phase.index}`}
+              label={
+                (phase.end - phase.start) / phaseSpan >=
+                MIN_LABELLED_PHASE_WIDTH
+                  ? {
+                      className: PHASE_LABEL_CLASS,
+                      fill: "var(--color-text-tertiary)",
+                      fontSize: tokens.phaseFont,
+                      position: "insideTop",
+                      value: phase.label,
+                    }
+                  : undefined
+              }
+              stroke="none"
+              x1={phase.start}
+              x2={phase.end}
               yAxisId="left"
+            />
+          ))}
+          {phases?.slice(1).map((phase) => (
+            <ReferenceLine
+              key={`phase-edge-${phase.index}`}
               stroke="var(--color-border-secondary)"
               strokeDasharray={FURNITURE_DASH}
               strokeWidth={0.5}
+              x={phase.start}
+              yAxisId="left"
             />
           ))}
 
-          {/* Area fills — subtle gradients under primary lines */}
+          {/*
+            Area fills — subtle gradients under primary lines. `tooltipType`
+            keeps them, and the goal lines below, out of the tooltip payload
+            entirely, which is what lets the tooltip identify a series by its
+            data key instead of sniffing its display name for "Area"/"Goal".
+          */}
           {show("pressure") && (
             <Area
               yAxisId="left"
               type="monotone"
               dataKey="pressure"
               fill="url(#gradPressure)"
+              isAnimationActive={false}
               stroke="none"
               connectNulls
               legendType="none"
               name="pressureArea"
+              tooltipType="none"
             />
           )}
           {show("pumpFlow") && (
@@ -261,10 +397,12 @@ export function ShotGraph({
               type="monotone"
               dataKey="pumpFlow"
               fill="url(#gradFlow)"
+              isAnimationActive={false}
               stroke="none"
               connectNulls
               legendType="none"
               name="flowArea"
+              tooltipType="none"
             />
           )}
           {show("weightFlow") && (
@@ -273,10 +411,12 @@ export function ShotGraph({
               type="monotone"
               dataKey="weightFlow"
               fill="url(#gradWeightFlow)"
+              isAnimationActive={false}
               stroke="none"
               connectNulls
               legendType="none"
               name="weightFlowArea"
+              tooltipType="none"
             />
           )}
 
@@ -286,6 +426,7 @@ export function ShotGraph({
               yAxisId="left"
               type="monotone"
               dataKey="targetPressure"
+              isAnimationActive={false}
               name="Pressure Goal"
               stroke={COLORS.targetPressure}
               dot={false}
@@ -293,6 +434,7 @@ export function ShotGraph({
               strokeDasharray={TARGET_DASH}
               connectNulls
               legendType="none"
+              tooltipType="none"
             />
           )}
           {show("pumpFlow") && (
@@ -300,6 +442,7 @@ export function ShotGraph({
               yAxisId="left"
               type="monotone"
               dataKey="targetPumpFlow"
+              isAnimationActive={false}
               name="Flow Goal"
               stroke={COLORS.targetPumpFlow}
               dot={false}
@@ -307,126 +450,13 @@ export function ShotGraph({
               strokeDasharray={TARGET_DASH}
               connectNulls
               legendType="none"
+              tooltipType="none"
             />
           )}
 
-          {/* Primary lines */}
-          {show("pressure") && (
-            <Line
-              yAxisId="left"
-              type="monotone"
-              dataKey="pressure"
-              name="Pressure"
-              stroke={COLORS.pressure}
-              dot={false}
-              strokeWidth={tokens.strokeWidth}
-              connectNulls
-            />
-          )}
-          {show("pumpFlow") && (
-            <Line
-              yAxisId="left"
-              type="monotone"
-              dataKey="pumpFlow"
-              name="Flow"
-              stroke={COLORS.pumpFlow}
-              dot={false}
-              strokeWidth={tokens.strokeWidth}
-              connectNulls
-            />
-          )}
-          {show("weightFlow") && (
-            <Line
-              yAxisId="left"
-              type="monotone"
-              dataKey="weightFlow"
-              name="Weight Flow"
-              stroke={COLORS.weightFlow}
-              strokeDasharray={SERIES_DASH.weightFlow}
-              dot={false}
-              strokeWidth={tokens.strokeWidth}
-              connectNulls
-            />
-          )}
-          {show("shotWeight") && (
-            <Line
-              yAxisId="right"
-              type="monotone"
-              dataKey="shotWeight"
-              name="Weight"
-              stroke={COLORS.shotWeight}
-              strokeDasharray={SERIES_DASH.shotWeight}
-              dot={false}
-              strokeWidth={isMobile ? 1.75 : 1.5}
-              connectNulls
-            />
-          )}
+          {PRIMARY_SERIES.map(renderSeries)}
+          {comparisonMeta && COMPARISON_SERIES.map(renderSeries)}
 
-          {/*
-            Comparison lines — same hue as their metric, held apart by stroke
-            width. The fade is capped at the 3:1 contrast floor rather than the
-            0.45 it used to sit at, which composited to ~2.2:1 on both
-            backgrounds. Replacing the fade with a dash outright belongs to the
-            comparison-overlay work, not here.
-          */}
-          {comparisonMeta && show("pressureCmp") && (
-            <Line
-              yAxisId="left"
-              type="monotone"
-              dataKey="pressureCmp"
-              name="Pressure (cmp)"
-              stroke={COLORS.pressure}
-              dot={false}
-              strokeWidth={1}
-              opacity={COMPARISON_OPACITY}
-              connectNulls
-              legendType="none"
-            />
-          )}
-          {comparisonMeta && show("pumpFlowCmp") && (
-            <Line
-              yAxisId="left"
-              type="monotone"
-              dataKey="pumpFlowCmp"
-              name="Flow (cmp)"
-              stroke={COLORS.pumpFlow}
-              dot={false}
-              strokeWidth={1}
-              opacity={COMPARISON_OPACITY}
-              connectNulls
-              legendType="none"
-            />
-          )}
-          {comparisonMeta && show("weightFlowCmp") && (
-            <Line
-              yAxisId="left"
-              type="monotone"
-              dataKey="weightFlowCmp"
-              name="Weight Flow (cmp)"
-              stroke={COLORS.weightFlow}
-              strokeDasharray={SERIES_DASH.weightFlow}
-              dot={false}
-              strokeWidth={1}
-              opacity={COMPARISON_OPACITY}
-              connectNulls
-              legendType="none"
-            />
-          )}
-          {comparisonMeta && show("shotWeightCmp") && (
-            <Line
-              yAxisId="right"
-              type="monotone"
-              dataKey="shotWeightCmp"
-              name="Weight (cmp)"
-              stroke={COLORS.shotWeight}
-              strokeDasharray={SERIES_DASH.shotWeight}
-              dot={false}
-              strokeWidth={1}
-              opacity={COMPARISON_OPACITY}
-              connectNulls
-              legendType="none"
-            />
-          )}
           {/* Metric annotations */}
           {renderAnnotations({
             annotations: visibleAnnotations,
@@ -441,4 +471,19 @@ export function ShotGraph({
       </ResponsiveContainer>
     </div>
   );
+}
+
+/** Total time the phase regions cover; 1 when there are none, to avoid /0. */
+function phaseWidth(phases: PhaseRegion[] | undefined): number {
+  if (!phases || phases.length === 0) return 1;
+  const start = phases[0]?.start ?? 0;
+  const end = phases.at(-1)?.end ?? 0;
+  return end - start || 1;
+}
+
+function temperatureDomain([min, max]: readonly [number, number]): [
+  number,
+  number,
+] {
+  return [Math.min(min - 1, 88), Math.max(max + 1, 96)];
 }

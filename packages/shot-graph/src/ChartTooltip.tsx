@@ -1,36 +1,86 @@
 import { Tooltip, TooltipEntry } from "@gaggiuino/ui";
-import { formatTime } from "./constants";
+import { formatTime, METRICS, SERIES_BY_KEY } from "./constants";
 
 interface CustomTooltipProps {
   active?: boolean;
-  payload?: Array<{ name: string; value: number; color: string }>;
+  payload?: Array<{
+    dataKey?: string | number | ((entry: unknown) => unknown);
+    name?: string | number;
+    value?: number | string | ReadonlyArray<number | string>;
+    color?: string;
+  }>;
   label?: number;
 }
 
+/** One row: a metric, the primary reading, and the overlay's if there is one. */
+interface Row {
+  color: string;
+  comparison?: string;
+  label: string;
+  unit: string;
+  value: string;
+}
+
+/** Placeholder for a shot that had already ended at this timestamp. */
+const NO_READING = "—";
+
+function format(value: unknown): string | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value.toFixed(1)
+    : undefined;
+}
+
 /**
- * Recharts tooltip adapter. Receives raw payload from recharts and renders
- * a @gaggiuino/ui Tooltip. Filters out target/goal lines, area fills,
- * comparison entries, and zero values.
+ * Recharts tooltip adapter.
+ *
+ * Entries are matched to the series registry by `dataKey`, not by sniffing the
+ * display name. The old filters read `name` for "Goal", "Target", "Area" and
+ * "(cmp)" — which meant renaming a series silently changed what the tooltip
+ * showed, and dropped every comparison value at the one moment two shots at the
+ * same timestamp are worth reading side by side. Area fills and goal lines now
+ * declare `tooltipType="none"` at the source and never reach this payload.
+ *
+ * Zero is a reading, not a gap: preinfusion sits at zero flow and the shot
+ * starts at zero weight, both of which the old `value !== 0` filter hid.
  */
 export function ChartTooltip({ active, payload, label }: CustomTooltipProps) {
   if (!active || !payload?.length) return null;
-  const filtered = payload.filter(
-    (e) =>
-      !e.name.includes("Goal") &&
-      !e.name.includes("Target") &&
-      !e.name.includes("Area") &&
-      !e.name.includes("(cmp)") &&
-      e.value !== 0,
-  );
-  if (!filtered.length) return null;
+
+  const readings = new Map<string, string>();
+  for (const entry of payload) {
+    const series =
+      typeof entry.dataKey === "string"
+        ? SERIES_BY_KEY.get(entry.dataKey)
+        : undefined;
+    const value = format(entry.value);
+    if (series && value !== undefined) readings.set(series.key, value);
+  }
+
+  const rows: Row[] = [];
+  for (const metric of METRICS) {
+    const value = readings.get(metric.key);
+    const comparison = readings.get(`${metric.key}Cmp`);
+    if (value === undefined && comparison === undefined) continue;
+    rows.push({
+      color: metric.color,
+      comparison,
+      label: metric.label,
+      unit: metric.unit,
+      value: value ?? NO_READING,
+    });
+  }
+  if (rows.length === 0) return null;
+
   return (
     <Tooltip timestamp={formatTime(label ?? 0)}>
-      {filtered.map((entry) => (
+      {rows.map((row) => (
         <TooltipEntry
-          key={entry.name}
-          color={entry.color}
-          label={entry.name}
-          value={entry.value.toFixed(1)}
+          color={row.color}
+          comparison={row.comparison}
+          key={row.label}
+          label={row.label}
+          unit={row.unit}
+          value={row.value}
         />
       ))}
     </Tooltip>

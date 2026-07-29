@@ -46,6 +46,39 @@ export const SingleEntry: Story = {
   ),
 };
 
+/**
+ * A comparison shot overlaid on the chart. The second reading sits on the same
+ * row as the first, in tertiary text at full strength — fading it would put the
+ * one thing on screen that spells out a number under the contrast floor.
+ */
+export const WithComparison: Story = {
+  render: () => (
+    <Tooltip timestamp="00:23">
+      <TooltipEntry
+        color="var(--chart-pressure)"
+        comparison="8.4"
+        label="Pressure"
+        value="9.1"
+        unit="bar"
+      />
+      <TooltipEntry
+        color="var(--chart-flow)"
+        comparison="2.1"
+        label="Flow"
+        value="2.4"
+        unit="ml/s"
+      />
+      <TooltipEntry
+        color="var(--chart-weight)"
+        comparison="20.1"
+        label="Weight"
+        value="18.2"
+        unit="g"
+      />
+    </Tooltip>
+  ),
+};
+
 export const WithoutTimestamp: Story = {
   render: () => (
     <Tooltip>

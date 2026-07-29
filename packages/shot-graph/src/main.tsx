@@ -22,17 +22,17 @@ import { type App as McpApp } from "@modelcontextprotocol/ext-apps";
 import { type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { StrictMode, useCallback, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { DEFAULT_HIDDEN_SERIES } from "./constants";
 import { buildShotContextSummary } from "./contextSummary";
 import { shotCsv, shotCsvFilename } from "./csv";
 import { extractAnnotations, extractMeta, toChartData } from "./normalize";
+import { derivePhaseRegions } from "./phases";
 import { ShotGraph } from "./ShotGraph";
 import { type ShotData } from "./types";
 import "./global.css";
 
 /** App-visibility tool that serves the raw shot JSON this chart plots. */
 const RAW_JSON_TOOL = "get_shot_raw_json";
-
-const NO_HIDDEN_SERIES: ReadonlySet<string> = new Set();
 
 interface ToolArgs {
   shot_id: string;
@@ -57,34 +57,6 @@ function parseToolArgs(
 
 function parseShot(result: CallToolResult, toolName: string): ShotData {
   return readToolJson<ShotData>(result, toolName);
-}
-
-function extractPhaseBoundaries(shot: ShotData): number[] {
-  const {
-    targetPressure = [],
-    targetPumpFlow = [],
-    timeInShot = [],
-  } = shot.datapoints;
-  const len = Math.max(targetPressure.length, targetPumpFlow.length);
-  const raw: number[] = [];
-
-  for (let i = 1; i < len; i++) {
-    const flowTransition =
-      ((targetPumpFlow[i - 1] ?? 0) === 0) !== ((targetPumpFlow[i] ?? 0) === 0);
-    const pressureTransition =
-      Math.abs((targetPressure[i] ?? 0) - (targetPressure[i - 1] ?? 0)) > 10;
-
-    const time = timeInShot[i];
-    if ((flowTransition || pressureTransition) && time !== undefined) {
-      raw.push(time / 10);
-    }
-  }
-
-  // Deduplicate: keep only the first boundary in each cluster
-  const MIN_GAP = 4;
-  return raw.filter(
-    (t, idx) => idx === 0 || t - (raw[idx - 1] ?? 0) >= MIN_GAP,
-  );
 }
 
 interface AppContentProps {
@@ -118,8 +90,9 @@ function AppContent({ app, toolArgs, hostContext, mode }: AppContentProps) {
   const [compareLoading, setCompareLoading] = useState(false);
   const [compareError, setCompareError] = useState<string | null>(null);
   const [comparisonDismissed, setComparisonDismissed] = useState(false);
-  const [hiddenSeries, setHiddenSeries] =
-    useState<ReadonlySet<string>>(NO_HIDDEN_SERIES);
+  const [hiddenSeries, setHiddenSeries] = useState<ReadonlySet<string>>(
+    DEFAULT_HIDDEN_SERIES,
+  );
 
   const { canFullscreen, displayMode, isFullscreen, toggleFullscreen } =
     useDisplayMode(app, hostContext);
@@ -138,7 +111,7 @@ function AppContent({ app, toolArgs, hostContext, mode }: AppContentProps) {
         ? extractAnnotations(comparisonShot)
         : undefined,
       comparisonMeta: comparisonShot ? extractMeta(comparisonShot) : undefined,
-      phaseBoundaries: extractPhaseBoundaries(primaryShot),
+      phases: derivePhaseRegions(primaryShot),
       primaryMeta: extractMeta(primaryShot),
     };
   }, [primaryShot, comparisonShot]);
@@ -303,7 +276,7 @@ function AppContent({ app, toolArgs, hostContext, mode }: AppContentProps) {
           hostInitiatedCompare ? undefined : handleRequestCompare
         }
         onVisibilityChange={setHiddenSeries}
-        phaseBoundaries={view.phaseBoundaries}
+        phases={view.phases}
         primaryMeta={view.primaryMeta}
       />
     </AppShell>

@@ -86,7 +86,7 @@ describe("buildShotContextSummary", () => {
       primary,
     });
     expect(summary).toContain(
-      "Series currently plotted: pressure, flow, weight flow, weight.",
+      "Series currently plotted: pressure, flow, weight flow, weight, temperature.",
     );
   });
 
@@ -96,14 +96,22 @@ describe("buildShotContextSummary", () => {
       hidden: new Set(["pressure", "weightFlow"]),
       primary,
     });
-    expect(summary).toContain("Series currently plotted: flow, weight.");
+    expect(summary).toContain(
+      "Series currently plotted: flow, weight, temperature.",
+    );
     expect(summary).toContain("Hidden by the user: pressure, weight flow.");
   });
 
   it("says so when every series is hidden", () => {
     const summary = buildShotContextSummary({
       annotations,
-      hidden: new Set(["pressure", "pumpFlow", "shotWeight", "weightFlow"]),
+      hidden: new Set([
+        "pressure",
+        "pumpFlow",
+        "shotWeight",
+        "temperature",
+        "weightFlow",
+      ]),
       primary,
     });
     expect(summary).toContain("The user has hidden every series.");

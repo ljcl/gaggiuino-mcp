@@ -72,11 +72,11 @@
    * Chart colors (Gaggiuino-specific)
    *
    * Every value clears 3:1 against --color-background-primary (WCAG 1.4.11,
-   * graphical objects), and the four metric series stay separable under a
-   * deuteranopia/protanopia simulation. Colour cannot carry all four on its
-   * own — under protan/deutan the palette collapses to roughly two hue poles
-   * plus lightness — so weight-flow and weight are additionally encoded by
-   * dash pattern (SERIES_DASH in shot-graph's constants.ts). The
+   * graphical objects), and the metric series stay separable under a
+   * deuteranopia/protanopia simulation. Colour cannot carry them on its own —
+   * under protan/deutan the palette collapses to roughly two hue poles plus
+   * lightness — so weight-flow, weight and temperature are additionally
+   * encoded by dash pattern (SERIES_DASH in shot-graph's constants.ts). The
    * "Chart accessibility" story asserts both halves of that contract.
    */
   --chart-pressure: #c2410c;
@@ -85,6 +85,7 @@
   --chart-target-flow: rgba(3, 105, 161, 0.85);
   --chart-weight-flow: #a21caf;
   --chart-weight: #57534e;
+  --chart-temperature: #15803d;
 }
 
 /*
@@ -120,6 +121,7 @@
   --chart-target-flow: rgba(96, 165, 250, 0.7);
   --chart-weight-flow: #e879f9;
   --chart-weight: #d6d3cc;
+  --chart-temperature: #86efac;
   color-scheme: dark;
 }
 
@@ -160,6 +162,7 @@
     --chart-target-flow: rgba(96, 165, 250, 0.7);
     --chart-weight-flow: #e879f9;
     --chart-weight: #d6d3cc;
+    --chart-temperature: #86efac;
     color-scheme: dark;
   }
 }

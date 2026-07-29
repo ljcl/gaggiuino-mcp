@@ -131,6 +131,46 @@ describe("describeChart", () => {
     expect(desc).toContain("Pressure is currently hidden.");
   });
 
+  // The phase labels are SVG text inside the plot, which a screen reader gets
+  // nothing from — so the narration has to carry them itself.
+  it("names each profile phase and when it ran", () => {
+    const { desc } = describeChart({
+      data: DATA,
+      phases: [
+        { end: 5, index: 0, label: "Flow", start: 0 },
+        { end: 32, index: 1, label: "Pressure", start: 5 },
+      ],
+      primary: PRIMARY,
+    });
+    expect(desc).toContain(
+      "Profile phases: flow from 0 to 5 seconds; pressure from 5 to 32 seconds.",
+    );
+  });
+
+  it("says nothing about phases when the profile named none", () => {
+    const { desc } = describeChart({
+      data: DATA,
+      phases: [],
+      primary: PRIMARY,
+    });
+    expect(desc).not.toContain("Profile phases");
+  });
+
+  // The opening sentence used to promise "pressure, flow, weight flow and
+  // cumulative weight" no matter what was on screen, which went wrong the
+  // moment a fifth series arrived that starts switched off.
+  it("names only the series actually plotted", () => {
+    const { desc } = describeChart({
+      data: DATA,
+      hidden: new Set(["temperature", "shotWeight"]),
+      primary: PRIMARY,
+    });
+    expect(desc).toContain(
+      "Line chart of pressure, flow and weight flow over 32.4 seconds",
+    );
+    expect(desc).not.toContain("Line chart of pressure, flow, weight flow,");
+  });
+
   it("survives a shot with no datapoints at all", () => {
     const { desc, title } = describeChart({ data: [], primary: PRIMARY });
     expect(title).toContain("Londinium");

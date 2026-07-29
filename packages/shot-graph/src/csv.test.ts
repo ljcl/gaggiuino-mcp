@@ -18,12 +18,12 @@ describe("shotCsv", () => {
   it("labels columns with their units", () => {
     const header = shotCsv(points, false).split("\n")[0];
     expect(header).toBe(
-      "time_s,pressure_bar,target_pressure_bar,pump_flow_ml_s,target_pump_flow_ml_s,weight_flow_g_s,weight_g",
+      "time_s,pressure_bar,target_pressure_bar,pump_flow_ml_s,target_pump_flow_ml_s,weight_flow_g_s,weight_g,temperature_c",
     );
   });
 
   it("writes the normalized values, blanking absent series", () => {
-    expect(shotCsv(points, false).split("\n")[1]).toBe("0,2.1,,,,,0");
+    expect(shotCsv(points, false).split("\n")[1]).toBe("0,2.1,,,,,0,");
   });
 
   it("omits comparison columns when there is no comparison", () => {
@@ -33,7 +33,7 @@ describe("shotCsv", () => {
   it("appends comparison columns when overlaying a second shot", () => {
     const lines = shotCsv(points, true).split("\n");
     expect(lines[0]).toContain("cmp_pressure_bar");
-    expect(lines[1]).toBe("0,2.1,,,,,0,1.9,,,,,");
+    expect(lines[1]).toBe("0,2.1,,,,,0,,1.9,,,,,,");
   });
 
   it("exports a row per datapoint plus the header", () => {

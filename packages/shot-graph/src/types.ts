@@ -40,6 +40,7 @@ export interface ChartDataPoint {
   targetPumpFlow?: number;
   weightFlow?: number;
   shotWeight?: number;
+  temperature?: number;
   // Comparison shot series (suffixed with "Cmp")
   pressureCmp?: number;
   targetPressureCmp?: number;
@@ -47,6 +48,24 @@ export interface ChartDataPoint {
   targetPumpFlowCmp?: number;
   weightFlowCmp?: number;
   shotWeightCmp?: number;
+  temperatureCmp?: number;
+}
+
+/**
+ * A span of the shot belonging to one profile phase.
+ *
+ * The label comes from `profile.phases[].type`, which the machine has always
+ * sent and the chart used to throw away in favour of unlabeled hairlines
+ * inferred from the target series.
+ */
+export interface PhaseRegion {
+  /** 0-based position in `profile.phases`. */
+  index: number;
+  /** Seconds into the shot. */
+  start: number;
+  end: number;
+  /** Display label, e.g. "Flow" or "Pressure". */
+  label: string;
 }
 
 /** A key-metric annotation rendered as a ReferenceDot on the chart */

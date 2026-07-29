@@ -8,7 +8,7 @@ import {
 } from "@gaggiuino/design-system/color";
 import { type Meta, type StoryObj } from "@storybook/react";
 import { expect } from "storybook/test";
-import { COLORS, SERIES_DASH, TARGET_DASH } from "./constants";
+import { COLORS, SERIES, TARGET_DASH } from "./constants";
 
 /**
  * The chart palette's accessibility contract, asserted against what the
@@ -24,11 +24,18 @@ import { COLORS, SERIES_DASH, TARGET_DASH } from "./constants";
  *     either by color under a protan and deutan simulation, or, where color
  *     cannot do it, by a different dash pattern.
  *
- * The second rule is why this is not simply a color test. Four series do not
+ * The second rule is why this is not simply a color test. The series do not
  * fit in the space a dichromat has left: simulated, `flow` and `weightFlow`
  * land ~3 ΔE00 apart no matter how the hues are chosen, unless one is pushed
  * to near-black. Pattern carries that pair, and this story is what stops a
  * later palette or dash edit from quietly removing the only channel that does.
+ *
+ * The stroke list is derived from the series registry rather than restated, so
+ * every line the chart can draw is measured — the comparison overlay included.
+ * That matters more than it sounds: comparison strokes carry their metric's
+ * color, so the *only* thing separating `weightFlowCmp` from `pumpFlowCmp` is
+ * the dash `comparisonDash` builds for them. Hand-listing the strokes is how a
+ * new series ships unmeasured.
  */
 
 /** ΔE00 under simulation below which two strokes need a second channel. */
@@ -46,13 +53,8 @@ interface Stroke {
   dash: string | undefined;
 }
 
-const STROKES: Stroke[] = [
-  {
-    color: COLORS.pressure,
-    dash: SERIES_DASH.pressure,
-    key: "pressure",
-    metric: "pressure",
-  },
+/** Goal lines have no registry entry — they track a metric, they are not one. */
+const TARGET_STROKES: Stroke[] = [
   {
     color: COLORS.targetPressure,
     dash: TARGET_DASH,
@@ -60,29 +62,21 @@ const STROKES: Stroke[] = [
     metric: "pressure",
   },
   {
-    color: COLORS.pumpFlow,
-    dash: SERIES_DASH.pumpFlow,
-    key: "pumpFlow",
-    metric: "pumpFlow",
-  },
-  {
     color: COLORS.targetPumpFlow,
     dash: TARGET_DASH,
     key: "targetPumpFlow",
     metric: "pumpFlow",
   },
-  {
-    color: COLORS.weightFlow,
-    dash: SERIES_DASH.weightFlow,
-    key: "weightFlow",
-    metric: "weightFlow",
-  },
-  {
-    color: COLORS.shotWeight,
-    dash: SERIES_DASH.shotWeight,
-    key: "shotWeight",
-    metric: "shotWeight",
-  },
+];
+
+const STROKES: Stroke[] = [
+  ...SERIES.map((s) => ({
+    color: s.color,
+    dash: s.dash,
+    key: s.key,
+    metric: s.metric.key,
+  })),
+  ...TARGET_STROKES,
 ];
 
 /** Resolve a `var(--x)` reference through the browser to opaque channels. */

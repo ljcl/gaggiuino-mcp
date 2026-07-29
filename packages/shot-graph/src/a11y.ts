@@ -1,5 +1,10 @@
 import { METRICS } from "./constants";
-import { type Annotation, type ChartDataPoint, type ShotMeta } from "./types";
+import {
+  type Annotation,
+  type ChartDataPoint,
+  type PhaseRegion,
+  type ShotMeta,
+} from "./types";
 
 /**
  * The chart's accessible name and description.
@@ -20,6 +25,8 @@ export interface ChartDescriptionInput {
   annotations?: Annotation[];
   /** Series keys the user has toggled off; they are named as hidden. */
   hidden?: ReadonlySet<string>;
+  /** Profile phases, so the narration can say where the shot changed gear. */
+  phases?: PhaseRegion[];
 }
 
 export interface ChartDescription {
@@ -47,11 +54,18 @@ function peakOf(
   return best;
 }
 
+/** "a, b and c" — an Oxford-comma-free list, read aloud rather than scanned. */
+function joinPhrase(parts: string[]): string {
+  if (parts.length <= 1) return parts.join("");
+  return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+}
+
 export function describeChart({
   annotations,
   comparison,
   data,
   hidden,
+  phases,
   primary,
 }: ChartDescriptionInput): ChartDescription {
   const title = comparison
@@ -60,14 +74,29 @@ export function describeChart({
 
   const sentences: string[] = [];
 
+  const visible = METRICS.filter((m) => !hidden?.has(m.key));
+  const hiddenMetrics = METRICS.filter((m) => hidden?.has(m.key));
+
+  // Named from what is plotted rather than from a fixed list: temperature is
+  // off until asked for, and a sentence that promised it either way would be
+  // wrong half the time.
+  const plotted = joinPhrase(visible.map((m) => m.label.toLowerCase()));
   sentences.push(
-    `Line chart of pressure, flow, weight flow and cumulative weight over ` +
+    `Line chart of ${plotted || "no series"} over ` +
       `${round(primary.duration)} seconds of a ${primary.profileName} shot ` +
       `yielding ${round(primary.weight)} grams.`,
   );
 
-  const visible = METRICS.filter((m) => !hidden?.has(m.key));
-  const hiddenMetrics = METRICS.filter((m) => hidden?.has(m.key));
+  if (phases && phases.length > 0) {
+    sentences.push(
+      `Profile phases: ${phases
+        .map(
+          (p) =>
+            `${p.label.toLowerCase()} from ${round(p.start, 0)} to ${round(p.end, 0)} seconds`,
+        )
+        .join("; ")}.`,
+    );
+  }
 
   const peaks = visible
     .map((metric) => {

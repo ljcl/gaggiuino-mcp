@@ -169,6 +169,44 @@ The `view_shot_graph` tool renders an interactive Recharts chart in MCP-compatib
 - Calls `get_shot_raw_json` (app-only visibility) to fetch data after render
 - Supports shot comparison overlay
 
+### The series registry
+
+`SERIES` in `shot-graph/src/constants.ts` describes every stroke the chart can draw
+— data key, metric, label, unit, colour, dash, axis, and `isComparison` — and
+`ShotGraph.tsx` renders from it rather than from ten hand-written `<Line>` blocks.
+
+It exists because a comparison series used to be identified by a `"(cmp)"` substring
+in its *display name*, matched independently by the tooltip (to filter them out), the
+chart (to fade them), and the legend (which spelled the suffix out four times). The
+suffix is now only ever a label; nothing parses it, and `SERIES_BY_KEY` is how a
+recharts tooltip payload entry finds out what it is.
+
+Two consequences worth keeping:
+
+- **Areas and goal lines declare `tooltipType="none"`.** That is what lets the tooltip
+  key off `dataKey` instead of sniffing names for "Area"/"Goal" — they never reach the
+  payload at all.
+- **Series set `isAnimationActive={false}`.** Recharts animates a line by rewriting
+  `stroke-dasharray` every frame, and when the line already carries a dash it tiles the
+  pattern across the whole path to do it: a 1800px path dashed `"1 3"` becomes a
+  ~900-entry attribute string, rebuilt per frame, per line. It also means the rendered
+  attribute never equals the declared pattern, so the encoding the accessibility story
+  measures would not be the one the browser is holding.
+
+Phase regions come from `phases.ts`, which segments on target-series transitions and
+lets `profile.phases.length` bound the count — the same detection rule `apps/server`'s
+`extractPhaseSummary` uses, so the chart and `get_shot_data` name the same phases. It
+replaced an inference that de-duplicated boundaries with a magic `MIN_GAP = 4` seconds
+and then threw the phase *names* away. Recharts hoists every `Label` into a shared
+z-index layer at the SVG root, which is why the labels carry `PHASE_LABEL_CLASS`: they
+do not stay inside their own `.recharts-reference-area` group.
+
+Temperature is a fifth metric, off by default (`hiddenByDefault` in `METRICS`, surfaced
+as `DEFAULT_HIDDEN_SERIES`), on its own degrees axis. That axis is hidden on mobile, and
+when it *is* shown the chart's negative right margin has to give way — recharts stacks
+it outboard of the weight axis, and at `-30` its tick labels lay out past the right edge
+of the SVG and get clipped, leaving an axis that reserves width and shows nothing.
+
 ### The app shell (`packages/ui`)
 
 Host plumbing lives in `packages/ui/src/host/` so a second espresso view (steam
@@ -255,14 +293,27 @@ what the *browser* resolves — so a host overriding `--chart-*` is measured too
    a protan **and** deutan simulation (≥17 ΔE00) or by a different dash pattern. Goal
    lines are exempt against their own metric — resembling it is the point.
 
-**Colour alone cannot carry four series, and the second rule is not negotiable because
+**Colour alone cannot carry the series, and the second rule is not negotiable because
 of it.** Under protan/deutan the palette collapses to roughly two hue poles plus
 lightness; measured, `--chart-flow` and `--chart-weight-flow` land ~3 ΔE00 apart once
 simulated, and a search over the full sRGB gamut only beats that by pushing one series
 to a near-black navy. Pattern is what actually separates that pair, which makes
 `SERIES_DASH` in `shot-graph/src/constants.ts` load-bearing rather than stylistic. That
 file is the single home for the whole `strokeDasharray` vocabulary — series, goal lines,
-and chart furniture — because three separate concerns kept laying claim to it.
+comparison overlays, and chart furniture — because separate concerns kept laying claim
+to it.
+
+**The story's stroke list is derived from `SERIES`, not restated.** That matters most
+for the comparison overlay: a comparison stroke carries its metric's colour, so the only
+thing separating `weightFlowCmp` from `pumpFlowCmp` is the dash `comparisonDash` builds
+for it — one long dash, then the metric's own rhythm. Deriving the pattern rather than
+picking one flat comparison dash is what keeps the contract satisfiable; a single shared
+pattern would put that pair back on the same dash *and* ~3 ΔE00 apart. Hand-listing the
+strokes is how a new series ships unmeasured.
+
+Two comparison strokes do share a dash — `pressureCmp` and `pumpFlowCmp`, both derived
+from solid primaries. They are the pair whose colours are furthest apart, so rule 2 is
+satisfied by colour. That is the contract working, not a gap in it.
 
 Gating is on protan and deutan only. Tritanopia is ~0.01% of people and every blue/green
 pairing collapses under it, so including it would reject any palette using both; the

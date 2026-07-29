@@ -39,6 +39,7 @@ function extractSeries(
   | "targetPumpFlow"
   | "weightFlow"
   | "shotWeight"
+  | "temperature"
 > {
   return {
     pressure: normAt(dp.pressure, i),
@@ -47,6 +48,7 @@ function extractSeries(
     targetPumpFlow: normAt(dp.targetPumpFlow, i),
     weightFlow: normAt(dp.weightFlow, i),
     shotWeight: normAt(dp.shotWeight, i),
+    temperature: normAt(dp.temperature, i),
   };
 }
 
@@ -79,6 +81,7 @@ export function toChartData(
       existing.targetPumpFlowCmp = normAt(cdp.targetPumpFlow, i);
       existing.weightFlowCmp = normAt(cdp.weightFlow, i);
       existing.shotWeightCmp = normAt(cdp.shotWeight, i);
+      existing.temperatureCmp = normAt(cdp.temperature, i);
       points.set(time, existing);
     }
   }
