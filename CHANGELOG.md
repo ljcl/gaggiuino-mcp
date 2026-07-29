@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/ljcl/gaggiuino-mcp/compare/v1.3.0...v1.4.0) (2026-07-29)
+
+
+### Features
+
+* **mcp-app:** label phase regions, chart temperature, and fix the tooltip ([#83](https://github.com/ljcl/gaggiuino-mcp/issues/83)) ([0085fd7](https://github.com/ljcl/gaggiuino-mcp/commit/0085fd77403a0d2764a848b4c440c78cc963ef9d))
+
 ## [1.3.0](https://github.com/ljcl/gaggiuino-mcp/compare/v1.2.0...v1.3.0) (2026-07-28)
 
 
