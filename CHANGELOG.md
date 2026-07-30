@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/ljcl/gaggiuino-mcp/compare/v1.4.0...v1.5.0) (2026-07-30)
+
+
+### Features
+
+* **server:** make the machine the source of truth for its own data ([#85](https://github.com/ljcl/gaggiuino-mcp/issues/85)) ([944f1ec](https://github.com/ljcl/gaggiuino-mcp/commit/944f1ec6b6b001dadcaa46f0af83244ebdf125e7))
+
 ## [1.4.0](https://github.com/ljcl/gaggiuino-mcp/compare/v1.3.0...v1.4.0) (2026-07-29)
 
 
