@@ -264,6 +264,35 @@ describe("tool dispatch", () => {
       expect(result.text).toContain("Time Stop Profile");
       expect(result.text).toContain("with comparison overlay");
     });
+
+    it("costs one upstream fetch per shot, not one per caller", async () => {
+      // Rendering a graph is two reads of the same shot: this tool builds the
+      // text summary, then the app it renders calls get_shot_raw_json for the
+      // same id. With a comparison overlay that was four round trips to an
+      // ESP32 for two shots that had already finished.
+      let primary = 0;
+      let comparison = 0;
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/shots/1706547890", () => {
+          primary += 1;
+          return HttpResponse.json([mockShotData]);
+        }),
+        http.get("http://gaggiuino.local/api/shots/1706547894", () => {
+          comparison += 1;
+          return HttpResponse.json([mockShotWithTimeStop]);
+        }),
+      );
+
+      await handleToolCall("view_shot_graph", {
+        compare_shot_id: "1706547894",
+        shot_id: "1706547890",
+      });
+      await handleToolCall("get_shot_raw_json", { shot_id: "1706547890" });
+      await handleToolCall("get_shot_raw_json", { shot_id: "1706547894" });
+
+      expect(primary).toBe(1);
+      expect(comparison).toBe(1);
+    });
   });
 
   describe("get_shot_raw_json", () => {

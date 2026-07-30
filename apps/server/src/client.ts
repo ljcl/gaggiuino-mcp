@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { createCache } from "./cache";
 import { DEFAULT_MACHINE_URL } from "./config";
 import {
   MalformedUpstreamError,
@@ -8,9 +9,49 @@ import {
 
 export interface ClientConfig {
   baseUrl: string;
-  maxRetries?: number;
+  /** Live cache entries; one shot payload is hundreds of datapoints. */
+  cacheMaxEntries?: number;
   initialDelayMs?: number;
+  maxRetries?: number;
+  /** Injected for tests, and shared by the cache and the overall deadline. */
+  now?: () => number;
+  /** Ceiling on one logical request, retries and backoff included. */
+  overallTimeoutMs?: number;
+  /** Ceiling on a single attempt. */
   timeoutMs?: number;
+}
+
+/**
+ * How long each resource may be served from cache.
+ *
+ * A completed shot is immutable — the machine writes the record once the shot
+ * ends and never revises it — so the only reason to bound it at all is memory
+ * and the small chance the id is reused across a firmware reflash.
+ *
+ * `/api/shots/latest` gets seconds rather than minutes. It exists to fold the
+ * burst a single question produces (get the latest id, then summarize it, then
+ * render it) without pinning a stale id across the ninety seconds it takes to
+ * pull another shot and ask again.
+ *
+ * `/api/system/status` is deliberately absent. Every value it reports is
+ * instantaneous and the tool's own description promises the caller a fresh
+ * reading; a cache there would answer "is it up to temperature yet" with the
+ * answer from before.
+ */
+export const SHOT_TTL_MS = 10 * 60_000;
+export const LATEST_SHOT_TTL_MS = 5_000;
+
+/**
+ * Statuses worth trying again.
+ *
+ * Every HTTP status used to short-circuit the retry loop on the reasoning that
+ * the machine had given a definitive answer. That is true of a 404 and a 400;
+ * it is not true of a 503 from a webserver on a microcontroller that was busy
+ * writing a shot to flash, which is the single most common transient failure
+ * this upstream produces.
+ */
+function isRetriableStatus(status: number): boolean {
+  return status >= 500 || status === 408 || status === 429;
 }
 
 /**
@@ -157,19 +198,56 @@ function describeIssues(error: z.ZodError): string {
 export function createClient(config: ClientConfig) {
   const {
     baseUrl,
-    maxRetries = 3,
+    cacheMaxEntries = 32,
     initialDelayMs = 1500,
+    maxRetries = 3,
+    now = Date.now,
+    overallTimeoutMs = 20000,
     timeoutMs = 10000,
   } = config;
 
   const normalizedBaseUrl = baseUrl.replace(/\/$/, "");
+  const cache = createCache<unknown>({ maxEntries: cacheMaxEntries, now });
 
-  async function request<T>(path: string, schema: z.ZodType<T>): Promise<T> {
+  interface RequestOptions {
+    /** Serve this path from cache for this long. Omit to always fetch. */
+    ttlMs?: number;
+  }
+
+  async function request<T>(
+    path: string,
+    schema: z.ZodType<T>,
+    { ttlMs }: RequestOptions = {},
+  ): Promise<T> {
+    if (ttlMs !== undefined) {
+      const hit = cache.get(path);
+      // Deliberately no `recordUpstream("ok")` here. A cache hit says the
+      // machine answered *once*, not that it is answering now, and /health
+      // exists to answer exactly that question — reporting a machine as up
+      // because we still remember its last shot would make the endpoint lie
+      // for as long as the TTL.
+      if (hit !== undefined) return hit as T;
+    }
+
+    // The deadline is what a host actually feels. Three attempts at a 10s
+    // timeout plus 1.5s and 3s of backoff is ~34s, past the point where most
+    // hosts abandon a tool call — so the model saw a timeout with no message
+    // rather than "the machine may be powered off".
+    const deadlineAt = now() + overallTimeoutMs;
     let lastError: Error | undefined;
+    let lastHttpError: UpstreamHttpError | undefined;
+    let attempts = 0;
 
     for (let attempt = 0; attempt < maxRetries; attempt += 1) {
+      const remaining = deadlineAt - now();
+      if (remaining <= 0) break;
+
+      attempts += 1;
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        Math.min(timeoutMs, remaining),
+      );
 
       try {
         const response = await fetch(`${normalizedBaseUrl}${path}`, {
@@ -192,45 +270,59 @@ export function createClient(config: ClientConfig) {
         if (!parsed.success) {
           throw new MalformedUpstreamError(path, describeIssues(parsed.error));
         }
+        if (ttlMs !== undefined) cache.set(path, parsed.data, ttlMs);
         return parsed.data;
       } catch (error) {
-        // An HTTP status or a body we cannot parse is a definitive answer from
-        // the machine; retrying cannot change it.
-        if (
-          error instanceof UpstreamHttpError ||
-          error instanceof MalformedUpstreamError
-        ) {
-          throw error;
+        // A body we cannot parse is a definitive answer: the machine is
+        // running firmware this server does not understand, and asking it
+        // again produces the same bytes.
+        if (error instanceof MalformedUpstreamError) throw error;
+
+        if (error instanceof UpstreamHttpError) {
+          if (!isRetriableStatus(error.status)) throw error;
+          lastHttpError = error;
+        } else {
+          lastError = error as Error;
         }
 
-        lastError = error as Error;
-
-        // Retry on network/timeout errors
-        if (attempt < maxRetries - 1) {
-          await sleep(initialDelayMs * 2 ** attempt);
-        }
+        if (attempt >= maxRetries - 1) break;
+        // A retry with its backoff skipped is just hammering a machine that
+        // has already failed, so no budget for the wait means no budget for
+        // the attempt either.
+        const backoff = initialDelayMs * 2 ** attempt;
+        if (deadlineAt - now() <= backoff) break;
+        await sleep(backoff);
       } finally {
         clearTimeout(timeoutId);
       }
     }
 
-    const reason = lastError?.message ?? "unknown error";
+    // A machine that answered 503 three times is reachable and faulty, which is
+    // a different thing to tell the user than "it may be powered off".
+    if (lastHttpError) throw lastHttpError;
+
+    const reason =
+      lastError?.message ?? `no attempt completed within ${overallTimeoutMs}ms`;
     recordUpstream("unreachable", reason);
-    throw new UpstreamUnreachableError(maxRetries, reason);
+    throw new UpstreamUnreachableError(Math.max(attempts, 1), reason);
   }
 
   return {
-    async getStatus(): Promise<MachineStatus> {
-      return request("/api/system/status", MachineStatusSchema);
-    },
-
     async getLatestShotId(): Promise<string> {
-      const data = await request("/api/shots/latest", LatestShotSchema);
+      const data = await request("/api/shots/latest", LatestShotSchema, {
+        ttlMs: LATEST_SHOT_TTL_MS,
+      });
       return data.lastShotId ?? "";
     },
 
     async getShotData(shotId: string): Promise<ShotData> {
-      return request(`/api/shots/${shotId}`, ShotDataSchema);
+      return request(`/api/shots/${shotId}`, ShotDataSchema, {
+        ttlMs: SHOT_TTL_MS,
+      });
+    },
+
+    async getStatus(): Promise<MachineStatus> {
+      return request("/api/system/status", MachineStatusSchema);
     },
   };
 }
