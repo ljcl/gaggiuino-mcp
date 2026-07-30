@@ -291,7 +291,7 @@ export function createClient(config: ClientConfig) {
   const statusReader: BodyReader<void> = async (response) => {
     // Drained rather than ignored so the connection is released; the ESP32
     // serves one request at a time and a dangling body costs the next caller.
-    await response.text().catch(() => "");
+    await response.text();
   };
 
   async function perform<T>(

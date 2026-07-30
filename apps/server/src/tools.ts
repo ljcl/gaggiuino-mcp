@@ -347,16 +347,19 @@ function formatCatalog(catalog: ProfileCatalog): string {
  * newer build added — which is the field a user asking about settings is most
  * likely to be asking about.
  */
-function formatSettings(value: unknown, indent = "  "): string[] {
-  if (value === null || typeof value !== "object") {
-    return [`${indent}${String(value)}`];
-  }
+function formatSettings(
+  settings: Record<string, unknown>,
+  indent = "  ",
+): string[] {
   const lines: string[] = [];
-  for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
-    if (inner !== null && typeof inner === "object") {
-      lines.push(`${indent}${key}:`, ...formatSettings(inner, `${indent}  `));
+  for (const [key, value] of Object.entries(settings)) {
+    if (value !== null && typeof value === "object") {
+      lines.push(
+        `${indent}${key}:`,
+        ...formatSettings(value as Record<string, unknown>, `${indent}  `),
+      );
     } else {
-      lines.push(`${indent}${key}: ${String(inner)}`);
+      lines.push(`${indent}${key}: ${String(value)}`);
     }
   }
   return lines;

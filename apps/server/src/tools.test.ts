@@ -119,6 +119,19 @@ describe("tool dispatch", () => {
       expect(result.text).toContain("Latest shot ID: 1706547890");
     });
 
+    it("reports a machine that vanished mid-call instead of a bare id", async () => {
+      // A 404 costs the summary and keeps the id; losing the machine entirely
+      // is worth telling the user about, because the id is stale news by then.
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/shots/1706547890", () =>
+          HttpResponse.error(),
+        ),
+      );
+      const result = await handleToolCall("get_latest_shot_id", {});
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("Could not reach the Gaggiuino machine");
+    });
+
     it("returns message when no shot available", async () => {
       mockServer.use(
         http.get("http://gaggiuino.local/api/shots/latest", () =>
@@ -502,6 +515,15 @@ describe("tool dispatch", () => {
       expect(result.isError).toBeFalsy();
       expect(result.text).toContain("created on the machine");
       expect(result.structuredContent).toMatchObject({ documented: false });
+    });
+
+    it("says when a documented profile is not loaded on the machine", async () => {
+      const result = await handleToolCall("get_profile_info", {
+        profile_id: "adaptive",
+      });
+      expect(result.isError).toBeFalsy();
+      expect(result.text).toContain("Not currently on the machine");
+      expect(result.structuredContent).toMatchObject({ onMachine: false });
     });
 
     it("returns an actionable error result for an unknown profile", async () => {

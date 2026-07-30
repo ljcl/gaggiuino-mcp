@@ -90,6 +90,11 @@ describe("walkShotsBack", () => {
     expect(await walkShotsBack({ before: "1", limit: 3 })).toEqual([]);
   });
 
+  it("returns nothing when asked to page back from a non-integer id", async () => {
+    // Nothing sensible is below "a7f3", and NaN - 1 would walk from NaN.
+    expect(await walkShotsBack({ before: "a7f3", limit: 3 })).toEqual([]);
+  });
+
   it("returns nothing when the machine has no history", async () => {
     mockServer.use(
       http.get("http://gaggiuino.local/api/shots/latest", () =>

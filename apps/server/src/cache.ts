@@ -84,10 +84,12 @@ export function createCache<T>({
           if (entry.expiresAt <= now()) entries.delete(candidate);
         }
       }
-      while (entries.size > maxEntries) {
-        const coldest = entries.keys().next();
-        if (coldest.done) break;
-        entries.delete(coldest.value);
+      // Iteration order is coldest-first, and deleting the key the iterator is
+      // sitting on is well defined for a Map, so this walks forward from the
+      // front until the cap is met.
+      for (const coldest of entries.keys()) {
+        if (entries.size <= maxEntries) break;
+        entries.delete(coldest);
       }
     },
 
