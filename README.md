@@ -21,7 +21,14 @@ A Remote [MCP](https://modelcontextprotocol.io) server for integrating a [Gaggiu
 - `get_dial_in_guidance` - Expert guidance for analyzing espresso shots
 - `select_profile` - Switch the active profile (the only tool that changes the machine; requires `MCP_AUTH_TOKEN`)
 
-**MCP Prompts** - `espresso_shot_analyst` system prompt for AI-assisted dial-in (same content as `get_dial_in_guidance`)
+**MCP Prompts** - workflow templates your host surfaces as slash commands or menu items:
+
+- `dial_in_new_bag` - first shots on a coffee you have not pulled before (bean, and optionally roast level, dose, and what you want in the cup)
+- `diagnose_last_shot` - read the shot you just pulled against how it tasted (what was wrong, and optionally what you changed)
+- `choose_profile` - pick a profile the machine actually holds for a coffee (roast level, and optionally drink and notes)
+- `espresso_shot_analyst` - the dial-in guidance as a system prompt (same content as `get_dial_in_guidance`)
+
+Each workflow prompt lays out the tools to call in order, so the analysis starts from the machine's own data rather than a guess.
 
 **MCP Resources** - `gaggiuino://profiles` and `gaggiuino://profiles/{id}` for profile data
 

@@ -13,8 +13,8 @@ import {
 } from "./analysis";
 import { getClient } from "./client";
 import { MalformedUpstreamError, UpstreamHttpError } from "./errors";
+import { MISSING_GUIDANCE_TEXT, renderDialInGuidance } from "./guidance";
 import { MAX_RECENT_SHOTS, walkShotsBack } from "./history";
-import { loadPrompts } from "./loader";
 import { loadSecurityConfig } from "./mcpAuth";
 import {
   type CatalogEntry,
@@ -22,7 +22,6 @@ import {
   loadProfileCatalog,
   type ProfileCatalog,
 } from "./profileCatalog";
-import { getAllProfilesText } from "./profiles";
 
 /**
  * Every tool in this server reads: nothing here mutates the machine or any
@@ -655,18 +654,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       "Get the expert system prompt for espresso dial-in: how to read a shot, which variable to change next, and the documented profiles. Call this before giving dial-in advice so the advice matches this machine and this user's setup.",
     handler: () => {
-      const prompt = loadPrompts().espresso_shot_analyst;
-      if (!prompt) {
-        return {
-          isError: true,
-          text: "Dial-in guidance is not configured on this server (prompt 'espresso_shot_analyst' is missing from prompts.yaml).",
-        };
+      const guidance = renderDialInGuidance();
+      if (guidance === undefined) {
+        return { isError: true, text: MISSING_GUIDANCE_TEXT };
       }
-      return {
-        text: prompt.template
-          .replace("{user_context}", prompt.userContext ?? "")
-          .replace("{profiles_text}", getAllProfilesText()),
-      };
+      return { text: guidance };
     },
     inputSchema: NoArgs,
     name: "get_dial_in_guidance",

@@ -10,6 +10,7 @@ import {
   mockShotData,
 } from "./__fixtures__/api-responses";
 import { resetClient } from "./client";
+import { loadPrompts } from "./loader";
 import { setLogLevel } from "./logging";
 import { createServer, TOOLS } from "./server";
 import { mockServer } from "./test-setup";
@@ -442,20 +443,125 @@ describe("CallTool", () => {
 });
 
 describe("Prompts", () => {
-  it("lists the dial-in prompt", async () => {
+  async function promptText(
+    name: string,
+    args?: Record<string, string>,
+  ): Promise<string> {
+    const result = await client.getPrompt({ arguments: args, name });
+    const [message] = result.messages;
+    expect(message?.role).toBe("user");
+    return message?.content.type === "text" ? message.content.text : "";
+  }
+
+  it("advertises every prompt with a title and a description", async () => {
     const { prompts } = await client.listPrompts();
-    expect(prompts.map((prompt) => prompt.name)).toContain(
+    expect(prompts.map((prompt) => prompt.name)).toEqual([
       "espresso_shot_analyst",
+      "dial_in_new_bag",
+      "diagnose_last_shot",
+      "choose_profile",
+    ]);
+    for (const prompt of prompts) {
+      expect(prompt.title, prompt.name).toBeTruthy();
+      expect(prompt.description, prompt.name).toBeTruthy();
+    }
+  });
+
+  it("takes the dial-in prompt's description from the loaded template", async () => {
+    // The description used to be a string literal in the ListPrompts handler,
+    // so a prompts.local.yaml override the loader honoured everywhere else was
+    // invisible on the one surface a host shows the user.
+    const { prompts } = await client.listPrompts();
+    const advertised = prompts.find(
+      (prompt) => prompt.name === "espresso_shot_analyst",
+    );
+    expect(advertised?.description).toBe(
+      loadPrompts().espresso_shot_analyst?.description,
     );
   });
 
+  it("derives advertised arguments from the schema that enforces them", async () => {
+    const { prompts } = await client.listPrompts();
+    const byName = new Map(prompts.map((prompt) => [prompt.name, prompt]));
+    // A prompt taking no arguments omits the key rather than advertising [].
+    expect(byName.get("espresso_shot_analyst")?.arguments).toBeUndefined();
+
+    const args = byName.get("dial_in_new_bag")?.arguments ?? [];
+    expect(
+      args
+        .map((arg) => [arg.name, arg.required])
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    ).toEqual([
+      ["bean", true],
+      ["dose_g", false],
+      ["roast_level", false],
+      ["target", false],
+    ]);
+    for (const arg of args) {
+      expect(arg.description, arg.name).toBeTruthy();
+    }
+  });
+
   it("renders the dial-in prompt with the profile list interpolated", async () => {
-    const result = await client.getPrompt({ name: "espresso_shot_analyst" });
-    const [message] = result.messages;
-    expect(message?.role).toBe("user");
-    const text = message?.content.type === "text" ? message.content.text : "";
+    const text = await promptText("espresso_shot_analyst");
     expect(text).toContain("Available Profiles");
     expect(text).not.toContain("{profiles_text}");
+  });
+
+  it("serves the same guidance from the prompt and the tool", async () => {
+    // Both surfaces interpolated the same template independently, in two
+    // files, with the same pair of replacements — so a placeholder added to the
+    // YAML would be substituted on one and left raw on the other.
+    const fromPrompt = await promptText("espresso_shot_analyst");
+    const fromTool = textOf(await call("get_dial_in_guidance"));
+    expect(fromTool).toBe(fromPrompt);
+  });
+
+  it("interpolates the arguments a workflow prompt was given", async () => {
+    const text = await promptText("dial_in_new_bag", {
+      bean: "Coffee Supreme, Ethiopia Guji",
+      dose_g: "18",
+      roast_level: "light",
+      target: "bright and tea-like",
+    });
+    expect(text).toContain("- Bean: Coffee Supreme, Ethiopia Guji");
+    expect(text).toContain("- Dose: 18 g");
+    expect(text).toContain("- Roast level: light");
+    expect(text).toContain("get_dial_in_guidance");
+    expect(text).not.toMatch(/\{[a-z_]+\}/);
+  });
+
+  it("tells the model what to do about an argument left blank", async () => {
+    // Three shapes of "the user did not fill this in", which a host's form field
+    // produces interchangeably: sent empty, sent whitespace, not sent at all.
+    // Dropping the line entirely would leave the model free to invent a dose;
+    // the fallback points it at the tool that actually knows.
+    const text = await promptText("dial_in_new_bag", {
+      bean: "some coffee",
+      dose_g: "",
+      target: "   ",
+    });
+    expect(text).toContain("- Dose: not stated");
+    expect(text).toContain("recommended dose");
+    expect(text).toContain("- What I want in the cup: not stated");
+    expect(text).toContain("- Roast level: not stated");
+  });
+
+  it("rejects a workflow prompt missing a required argument", async () => {
+    await expect(
+      client.getPrompt({ name: "diagnose_last_shot" }),
+    ).rejects.toThrow(/taste: missing/);
+  });
+
+  it("treats a blank required argument as missing", async () => {
+    // Hosts render prompt arguments as form fields, and an untouched field
+    // arrives as "" rather than not arriving at all.
+    await expect(
+      client.getPrompt({
+        arguments: { taste: "   " },
+        name: "diagnose_last_shot",
+      }),
+    ).rejects.toThrow(/taste: missing/);
   });
 
   it("errors on an unknown prompt", async () => {
@@ -472,6 +578,11 @@ describe("Resources", () => {
       "gaggiuino://profiles",
       "ui://shot-graph/app.html",
     ]);
+    // A resource a host lists without a description is a bare URI the model has
+    // to guess the contents of — the same reasoning that gives every tool one.
+    for (const resource of resources) {
+      expect(resource.description, resource.uri).toBeTruthy();
+    }
   });
 
   it("reads the profile list as plain text", async () => {
