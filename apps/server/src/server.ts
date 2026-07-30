@@ -13,10 +13,10 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { MACHINE_URL } from "./client";
-import { describeUpstreamError } from "./errors";
-import { loadPrompts } from "./loader";
+import { describeUpstreamError, formatFieldIssues } from "./errors";
 import { logger } from "./logging";
 import { getAllProfilesText, getProfile } from "./profiles";
+import { advertisedPrompts, renderPrompt } from "./prompts";
 import { TOOL_DEFINITIONS, TOOLS_BY_NAME, type ToolDefinition } from "./tools";
 import { SERVER_NAME, SERVER_VERSION } from "./version";
 
@@ -72,13 +72,7 @@ export interface ToolOutcome {
 }
 
 function describeInvalidInput(toolName: string, error: z.ZodError): string {
-  const fields = error.issues
-    .map((issue) => {
-      const path = issue.path.join(".");
-      return `  - ${path || "(arguments)"}: ${issue.message}`;
-    })
-    .join("\n");
-  return `Invalid arguments for ${toolName}:\n${fields}\nCheck the tool's input schema and call it again with corrected arguments.`;
+  return `Invalid arguments for ${toolName}:\n${formatFieldIssues(error)}\nCheck the tool's input schema and call it again with corrected arguments.`;
 }
 
 /**
@@ -193,48 +187,34 @@ export function createServer() {
   });
 
   server.setRequestHandler(ListPromptsRequestSchema, async () => ({
-    prompts: [
+    prompts: advertisedPrompts(),
+  }));
+  server.setRequestHandler(GetPromptRequestSchema, async (request) => ({
+    messages: [
       {
-        name: "espresso_shot_analyst",
-        description: "System prompt for AI-assisted espresso dial-in",
+        role: "user",
+        content: {
+          type: "text",
+          text: renderPrompt(request.params.name, request.params.arguments),
+        },
       },
     ],
   }));
-  server.setRequestHandler(GetPromptRequestSchema, async (request) => {
-    if (request.params.name === "espresso_shot_analyst") {
-      const prompts = loadPrompts();
-      const prompt = prompts.espresso_shot_analyst;
-      if (!prompt) {
-        throw new Error("Missing prompt: espresso_shot_analyst");
-      }
-      const userContext = prompt.userContext ?? "";
-      return {
-        messages: [
-          {
-            role: "user",
-            content: {
-              type: "text",
-              text: prompt.template
-                .replace("{user_context}", userContext)
-                .replace("{profiles_text}", getAllProfilesText()),
-            },
-          },
-        ],
-      };
-    }
-    throw new Error(`Unknown prompt: ${request.params.name}`);
-  });
 
   server.setRequestHandler(ListResourcesRequestSchema, async () => ({
     resources: [
       {
         uri: "gaggiuino://profiles",
         name: "Available Brew Profiles",
+        description:
+          "Documented brew profiles as a plain-text summary: type, suitable roast levels, target ratio, and target time for each. This is bundled documentation — call list_profiles for what is actually loaded on the machine.",
         mimeType: "text/plain",
       },
       {
         uri: "ui://shot-graph/app.html",
         name: "Shot Graph",
+        description:
+          "The interactive shot chart rendered by view_shot_graph. Hosts fetch this to display that tool's result; there is nothing here to read as text.",
         mimeType: "text/html;profile=mcp-app",
         _meta: {
           ui: {

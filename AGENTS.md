@@ -254,6 +254,69 @@ The rule generalises: adding a capability to `createServer()` means registering
 every request handler that capability implies, not only the ones this server has
 data for. An empty list is a valid answer; `-32601` is not.
 
+## MCP Prompts
+
+| Prompt                  | Arguments (required in bold)              | Purpose                                            |
+| ----------------------- | ----------------------------------------- | -------------------------------------------------- |
+| `espresso_shot_analyst` | —                                         | The dial-in guidance as a system prompt            |
+| `dial_in_new_bag`       | **bean**, roast_level, dose_g, target     | First shots on a coffee: profile, then one variable |
+| `diagnose_last_shot`    | **taste**, changed                        | Read the shot just pulled against how it tasted    |
+| `choose_profile`        | **roast_level**, drink, notes             | Pick a profile the machine actually holds          |
+
+`prompts.ts` mirrors the tool contract: one `definePrompt(...)` per prompt, and
+`renderPrompt` is the only place a prompt is rendered — it `safeParse`s the
+arguments before the render function runs, so a render function receives typed
+values and never re-checks presence. Four things follow from that shape.
+
+- **The advertised `arguments` array is generated, never hand-written.**
+  `promptArguments` runs the same `z.toJSONSchema` path the tool schemas use over
+  the schema `renderPrompt` enforces, so a name, description, or required flag
+  cannot drift from what is actually accepted. Every schema is a **string**
+  schema, because strings are all the protocol carries; `prompts.test.ts` asserts
+  that, since a number-accepting schema would advertise a shape no host can send.
+- **A prompt has no `isError` channel.** A tool answers a bad call with a result
+  the model can read; `prompts/get` has only the JSON-RPC error, which is also
+  what a host needs in order to put the missing field back in front of the user.
+  So `renderPrompt` throws where `handleToolCall` returns. Both render the
+  offending fields through `formatFieldIssues` in `errors.ts` — same list of
+  fields, different closing advice, because "check the input schema" is advice for
+  a model and not for a person filling in a form.
+- **Blank and absent are the same argument.** Hosts render prompt arguments as
+  form fields and an untouched field arrives as `""`, so a required argument
+  trims to `.min(1)` and an optional one transforms `""` back to `undefined`.
+  An optional argument the user skipped then renders its *fallback instruction*
+  rather than vanishing ("Dose: not stated — use the recommended dose for the
+  profile you pick"), because a dropped line leaves the model free to invent a
+  number a tool could have told it.
+- **The workflow plans live in code, not `prompts.yaml`.** What they contain is a
+  numbered plan naming *this server's own tools*, so a local override could point
+  a step at a tool that does not exist — `prompts.test.ts` checks every backticked
+  name in a plan against `TOOLS_BY_NAME` for exactly that reason, and skips
+  `espresso_shot_analyst` because its text is user-editable. The part a user
+  genuinely wants to tune is already `user_context` in the YAML, and every plan
+  picks it up by calling `get_dial_in_guidance` in step 1 instead of restating it.
+
+### One template, two surfaces
+
+`guidance.ts` renders the dial-in guidance, and `get_dial_in_guidance` and the
+`espresso_shot_analyst` prompt both call it. They used to interpolate the same
+template independently, in two files, with the same pair of `.replace()` calls —
+so a placeholder added to `prompts.yaml` would be substituted on one surface and
+left raw on the other. `server.test.ts` asserts the two are byte-identical.
+
+Both surfaces exist on purpose and neither is redundant: a **prompt** is
+user-invoked, so a model that decides mid-conversation it needs the guidance
+cannot reach one — that is what the tool is for. The tool therefore keeps
+returning the whole document rather than a pointer to the prompt, and the ~7KB is
+the price of the expertise it was asked for.
+
+The prompt's advertised **description** comes from the loaded template, not a
+literal. It was hardcoded in the ListPrompts handler, which made a
+`prompts.local.yaml` override the loader honours everywhere else invisible on the
+one surface a host shows the user. That is also why `advertisedPrompts()` is a
+function rather than a module constant like `TOOLS` — the list is built per
+request so a local override stays authoritative.
+
 ## MCP App (Shot Graph)
 
 https://modelcontextprotocol.io/docs/extensions/apps

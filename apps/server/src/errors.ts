@@ -1,11 +1,36 @@
 /**
- * Failure classes raised at the upstream (Gaggiuino machine) boundary.
+ * How this server describes an expected failure to whoever asked.
  *
- * The tool dispatcher turns each of these into an `isError` tool result whose
- * text tells the model what to do next, rather than letting an opaque message
- * escape to the host. Anything not in this file is treated as a programmer
- * error and surfaces as a generic failure.
+ * Most of it is the failure classes raised at the upstream (Gaggiuino machine)
+ * boundary: the tool dispatcher turns each of these into an `isError` tool
+ * result whose text tells the model what to do next, rather than letting an
+ * opaque message escape to the host. Anything not in this file is treated as a
+ * programmer error and surfaces as a generic failure.
+ *
+ * `formatFieldIssues` is the other kind — a caller sent bad arguments rather
+ * than the machine misbehaving — and lives here because it answers the same
+ * question: what does the text say.
  */
+
+import { type z } from "zod";
+
+/**
+ * Render a zod validation failure as an indented list of `field: problem`
+ * lines.
+ *
+ * Shared by the two surfaces that validate caller-supplied arguments — the tool
+ * dispatcher and the prompt renderer — which want the same list of offending
+ * fields under different prose, since the advice for a model calling a tool
+ * ("check the input schema") is not the advice for a user invoking a prompt.
+ */
+export function formatFieldIssues(error: z.ZodError): string {
+  return error.issues
+    .map(
+      (issue) =>
+        `  - ${issue.path.join(".") || "(arguments)"}: ${issue.message}`,
+    )
+    .join("\n");
+}
 
 /** The machine could not be reached at all: DNS, connection refused, timeout. */
 export class UpstreamUnreachableError extends Error {
