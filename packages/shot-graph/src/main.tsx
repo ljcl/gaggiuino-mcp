@@ -34,6 +34,14 @@ import "./global.css";
 /** App-visibility tool that serves the raw shot JSON this chart plots. */
 const RAW_JSON_TOOL = "get_shot_raw_json";
 
+/**
+ * App-visibility tool that resolves "the shot before this one" server-side.
+ *
+ * The button used to ask for `id - 1`, which is only the previous shot when the
+ * machine has never deleted one — and after shot #1 it asked for shot #0.
+ */
+const PREVIOUS_JSON_TOOL = "get_previous_shot_json";
+
 interface ToolArgs {
   shot_id: string;
   compare_shot_id?: string;
@@ -136,11 +144,10 @@ function AppContent({ app, toolArgs, hostContext, mode }: AppContentProps) {
     setCompareLoading(true);
     setCompareError(null);
     try {
-      const previousId = String(Number(view.primaryMeta.id) - 1);
       const shot = await callServerToolData(
         app,
-        RAW_JSON_TOOL,
-        { shot_id: previousId },
+        PREVIOUS_JSON_TOOL,
+        { shot_id: view.primaryMeta.id },
         parseShot,
       );
       setComparisonDismissed(false);

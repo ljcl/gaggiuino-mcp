@@ -1,13 +1,19 @@
 import { type ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import {
+  extractOutcomeMetrics,
+  formatOutcomeMetrics,
+  formatShotLine,
   formatShotSummary,
   generateShotSummary,
   normalizeValue,
+  OutcomeMetricsSchema,
   SCALE_BY_10,
   ShotSummarySchema,
 } from "./analysis";
 import { getClient } from "./client";
+import { MalformedUpstreamError, UpstreamHttpError } from "./errors";
+import { MAX_RECENT_SHOTS, walkShotsBack } from "./history";
 import { loadPrompts } from "./loader";
 import {
   getAllProfilesText,
@@ -88,6 +94,15 @@ const LatestShotIdOutput = z.object({
     .describe(
       "Id of the most recently recorded shot, or null when the machine has no shot history",
     ),
+  summary: OutcomeMetricsSchema.nullable().describe(
+    "Headline numbers for that shot, so the common 'how was my last shot' question needs no second call; null when there is no shot, or when the shot record itself could not be read",
+  ),
+});
+
+const RecentShotsOutput = z.object({
+  shots: z
+    .array(OutcomeMetricsSchema)
+    .describe("One entry per shot found, newest first"),
 });
 
 const ProfileOutput = z.object({
@@ -279,21 +294,86 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   defineTool({
     annotations: READS_MACHINE,
     description:
-      "Get the id of the most recently recorded shot. This is the entry point for any shot question that does not already name an id — call it first, then pass the id to get_shot_data or view_shot_graph.",
+      "Get the most recently recorded shot: its id, and the headline numbers for it — duration, final weight against target, peak pressure, time to first drip, temperature stability. This is the entry point for any shot question that does not already name an id, and for 'how was my last shot' it is the only call needed. Use the returned id with get_shot_data for the phase-by-phase breakdown, or with view_shot_graph to chart it.",
     handler: async () => {
       const shotId = await getClient().getLatestShotId();
+      if (shotId === "") {
+        return {
+          structured: { shotId: null, summary: null },
+          text: "No shot history available.",
+        };
+      }
+
+      // The id is the answer this tool promises; the summary is a bonus that
+      // saves a round trip. A shot record that cannot be read should not cost
+      // the caller the id — an unreachable machine still propagates, since by
+      // then the id is stale news anyway.
+      let summary: z.output<typeof OutcomeMetricsSchema> | null = null;
+      try {
+        summary = extractOutcomeMetrics(await getClient().getShotData(shotId));
+      } catch (error) {
+        if (
+          !(error instanceof UpstreamHttpError) &&
+          !(error instanceof MalformedUpstreamError)
+        ) {
+          throw error;
+        }
+      }
+
       return {
-        structured: { shotId: shotId === "" ? null : shotId },
+        structured: { shotId, summary },
         text:
-          shotId === ""
-            ? "No shot history available."
-            : `Latest shot ID: ${shotId}`,
+          summary === null
+            ? `Latest shot ID: ${shotId}\n\nThe machine could not serve the record for this shot, so there is no summary. Ask for it again, or call get_shot_data with the id.`
+            : `Latest shot ID: ${shotId}\n\n${formatOutcomeMetrics(summary)}`,
       };
     },
     inputSchema: NoArgs,
     name: "get_latest_shot_id",
     outputSchema: LatestShotIdOutput,
-    title: "Get latest shot id",
+    title: "Get latest shot",
+  }),
+
+  defineTool({
+    annotations: READS_MACHINE,
+    description:
+      "List the most recent shots, newest first, each with the headline numbers: duration, final weight against target, peak pressure, time to first drip, temperature stability. Use this for questions about a run of shots — how the last five trended, whether a change helped — rather than calling get_shot_data once per id. The machine keeps a limited history and deleted shots leave gaps, so fewer shots than requested is a normal answer, not an error.",
+    handler: async (input) => {
+      const shots = await walkShotsBack({
+        before: input.before,
+        limit: input.limit,
+      });
+      const metrics = shots.map(extractOutcomeMetrics);
+      const heading =
+        input.before === undefined
+          ? "# Recent shots (newest first)"
+          : `# Shots before #${input.before} (newest first)`;
+      const body =
+        metrics.length === 0
+          ? "No shots found. The machine may have no history, or none older than the id given."
+          : metrics.map(formatShotLine).join("\n");
+      return {
+        structured: { shots: metrics },
+        text: `${heading}\n\n${body}`,
+      };
+    },
+    inputSchema: z.object({
+      before: ShotIdSchema.optional().describe(
+        "Only return shots older than this id. Use it to page further back, passing the oldest id from a previous response.",
+      ),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(MAX_RECENT_SHOTS)
+        .default(5)
+        .describe(
+          `How many shots to return, 1 to ${MAX_RECENT_SHOTS}. Each one is a separate request to the machine, so ask for what you need.`,
+        ),
+    }),
+    name: "list_recent_shots",
+    outputSchema: RecentShotsOutput,
+    title: "List recent shots",
   }),
 
   defineTool({
@@ -458,6 +538,38 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
     name: "get_shot_raw_json",
     title: "Get raw shot JSON",
+  }),
+
+  defineTool({
+    annotations: READS_MACHINE,
+    description:
+      "Raw data for the shot recorded before the given one, for the shot graph UI's comparison overlay. The server finds the real previous id rather than assuming ids are contiguous. Not intended for the model — call list_recent_shots to reason about a run of shots.",
+    handler: async (input) => {
+      const [previous] = await walkShotsBack({
+        before: input.shot_id,
+        limit: 1,
+      });
+      if (!previous) {
+        return {
+          isError: true,
+          text: `There is no shot older than #${input.shot_id} left on the machine. Gaggiuino keeps a limited history, so the shots before this one may have already been deleted.`,
+        };
+      }
+      return { text: JSON.stringify(previous) };
+    },
+    inputSchema: z.object({
+      shot_id: ShotIdSchema.describe(
+        "Id of the shot to look back from. The response is the newest shot older than this one.",
+      ),
+    }),
+    meta: {
+      ui: {
+        resourceUri: "ui://shot-graph/app.html",
+        visibility: ["app"],
+      },
+    },
+    name: "get_previous_shot_json",
+    title: "Get previous shot JSON",
   }),
 ];
 

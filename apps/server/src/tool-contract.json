@@ -109,7 +109,7 @@
       "openWorldHint": true,
       "readOnlyHint": true
     },
-    "description": "Get the id of the most recently recorded shot. This is the entry point for any shot question that does not already name an id — call it first, then pass the id to get_shot_data or view_shot_graph.",
+    "description": "Get the most recently recorded shot: its id, and the headline numbers for it — duration, final weight against target, peak pressure, time to first drip, temperature stability. This is the entry point for any shot question that does not already name an id, and for 'how was my last shot' it is the only call needed. Use the returned id with get_shot_data for the phase-by-phase breakdown, or with view_shot_graph to chart it.",
     "inputSchema": {
       "properties": {},
       "type": "object"
@@ -128,14 +128,205 @@
             }
           ],
           "description": "Id of the most recently recorded shot, or null when the machine has no shot history"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "finalWeightG": {
+                  "description": "Weight in the cup at the end of the shot, in grams",
+                  "type": "number"
+                },
+                "peakPressureBar": {
+                  "description": "Highest pressure reached during the shot, in bar",
+                  "type": "number"
+                },
+                "profileName": {
+                  "description": "Name of the brew profile used",
+                  "type": "string"
+                },
+                "shotId": {
+                  "description": "Id of the shot this summary describes",
+                  "type": "string"
+                },
+                "targetWeightG": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Weight the profile was set to stop at, in grams; null when the profile has no weight stop condition"
+                },
+                "tempStability": {
+                  "description": "Human-readable temperature verdict: \"stable\", or \"drifted +N.NC\" when the spread exceeded 1°C",
+                  "type": "string"
+                },
+                "timeToFirstDripSec": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Seconds from shot start until the scale first read above 0.5 g; null when no drip was detected"
+                },
+                "totalDurationSec": {
+                  "description": "Total shot duration, in seconds",
+                  "type": "number"
+                },
+                "waterPumpedMl": {
+                  "description": "Total water pushed through the puck, in millilitres",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "finalWeightG",
+                "peakPressureBar",
+                "profileName",
+                "shotId",
+                "targetWeightG",
+                "tempStability",
+                "timeToFirstDripSec",
+                "totalDurationSec",
+                "waterPumpedMl"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Headline numbers for that shot, so the common 'how was my last shot' question needs no second call; null when there is no shot, or when the shot record itself could not be read"
         }
       },
       "required": [
-        "shotId"
+        "shotId",
+        "summary"
       ],
       "type": "object"
     },
-    "title": "Get latest shot id"
+    "title": "Get latest shot"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "List the most recent shots, newest first, each with the headline numbers: duration, final weight against target, peak pressure, time to first drip, temperature stability. Use this for questions about a run of shots — how the last five trended, whether a change helped — rather than calling get_shot_data once per id. The machine keeps a limited history and deleted shots leave gaps, so fewer shots than requested is a normal answer, not an error.",
+    "inputSchema": {
+      "properties": {
+        "before": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "description": "Only return shots older than this id. Use it to page further back, passing the oldest id from a previous response."
+        },
+        "limit": {
+          "default": 5,
+          "description": "How many shots to return, 1 to 10. Each one is a separate request to the machine, so ask for what you need.",
+          "maximum": 10,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "name": "list_recent_shots",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "shots": {
+          "description": "One entry per shot found, newest first",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "finalWeightG": {
+                "description": "Weight in the cup at the end of the shot, in grams",
+                "type": "number"
+              },
+              "peakPressureBar": {
+                "description": "Highest pressure reached during the shot, in bar",
+                "type": "number"
+              },
+              "profileName": {
+                "description": "Name of the brew profile used",
+                "type": "string"
+              },
+              "shotId": {
+                "description": "Id of the shot this summary describes",
+                "type": "string"
+              },
+              "targetWeightG": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Weight the profile was set to stop at, in grams; null when the profile has no weight stop condition"
+              },
+              "tempStability": {
+                "description": "Human-readable temperature verdict: \"stable\", or \"drifted +N.NC\" when the spread exceeded 1°C",
+                "type": "string"
+              },
+              "timeToFirstDripSec": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Seconds from shot start until the scale first read above 0.5 g; null when no drip was detected"
+              },
+              "totalDurationSec": {
+                "description": "Total shot duration, in seconds",
+                "type": "number"
+              },
+              "waterPumpedMl": {
+                "description": "Total water pushed through the puck, in millilitres",
+                "type": "number"
+              }
+            },
+            "required": [
+              "finalWeightG",
+              "peakPressureBar",
+              "profileName",
+              "shotId",
+              "targetWeightG",
+              "tempStability",
+              "timeToFirstDripSec",
+              "totalDurationSec",
+              "waterPumpedMl"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "shots"
+      ],
+      "type": "object"
+    },
+    "title": "List recent shots"
   },
   {
     "annotations": {
@@ -690,5 +881,44 @@
     },
     "name": "get_shot_raw_json",
     "title": "Get raw shot JSON"
+  },
+  {
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://shot-graph/app.html",
+        "visibility": [
+          "app"
+        ]
+      }
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Raw data for the shot recorded before the given one, for the shot graph UI's comparison overlay. The server finds the real previous id rather than assuming ids are contiguous. Not intended for the model — call list_recent_shots to reason about a run of shots.",
+    "inputSchema": {
+      "properties": {
+        "shot_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "description": "Id of the shot to look back from. The response is the newest shot older than this one."
+        }
+      },
+      "required": [
+        "shot_id"
+      ],
+      "type": "object"
+    },
+    "name": "get_previous_shot_json",
+    "title": "Get previous shot JSON"
   }
 ]

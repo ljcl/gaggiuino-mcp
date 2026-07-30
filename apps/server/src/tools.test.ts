@@ -86,7 +86,37 @@ describe("tool dispatch", () => {
     it("returns latest shot ID", async () => {
       const result = await handleToolCall("get_latest_shot_id", {});
       expect(result.text).toContain("1706547890");
-      expect(result.structuredContent).toEqual({ shotId: "1706547890" });
+      expect(result.structuredContent).toMatchObject({
+        shotId: "1706547890",
+      });
+    });
+
+    it("folds the shot's headline numbers into the same answer", async () => {
+      // "How was my last shot" used to cost two round trips: an id, then the
+      // shot. The id is cached by the time get_shot_data asks for detail.
+      const result = await handleToolCall("get_latest_shot_id", {});
+      expect(result.structuredContent?.summary).toMatchObject({
+        finalWeightG: 38.1,
+        peakPressureBar: 9.1,
+        profileName: "LMD 9-8 v1.5 (milk)",
+        shotId: "1706547890",
+      });
+      expect(result.text).toContain("Peak Pressure: 9.1 bar");
+    });
+
+    it("still returns the id when the shot record cannot be read", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/shots/1706547890", () =>
+          HttpResponse.json({ error: "gone" }, { status: 404 }),
+        ),
+      );
+      const result = await handleToolCall("get_latest_shot_id", {});
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toEqual({
+        shotId: "1706547890",
+        summary: null,
+      });
+      expect(result.text).toContain("Latest shot ID: 1706547890");
     });
 
     it("returns message when no shot available", async () => {
@@ -97,7 +127,7 @@ describe("tool dispatch", () => {
       );
       const result = await handleToolCall("get_latest_shot_id", {});
       expect(result.text).toContain("No shot history available");
-      expect(result.structuredContent).toEqual({ shotId: null });
+      expect(result.structuredContent).toEqual({ shotId: null, summary: null });
     });
 
     it("stringifies a numeric id from the machine", async () => {
@@ -107,7 +137,122 @@ describe("tool dispatch", () => {
         ),
       );
       const result = await handleToolCall("get_latest_shot_id", {});
-      expect(result.structuredContent).toEqual({ shotId: "1706547890" });
+      expect(result.structuredContent?.shotId).toBe("1706547890");
+    });
+  });
+
+  describe("list_recent_shots", () => {
+    /** A machine holding exactly these ids, 404 for everything else. */
+    function machineWith(ids: number[]) {
+      const present = new Set(ids.map(String));
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/shots/latest", () =>
+          HttpResponse.json([{ lastShotId: String(Math.max(...ids)) }]),
+        ),
+        http.get("http://gaggiuino.local/api/shots/:id", ({ params }) => {
+          const id = String(params.id);
+          if (!present.has(id)) {
+            return HttpResponse.json({ error: "not found" }, { status: 404 });
+          }
+          return HttpResponse.json([{ ...mockShotData, id }]);
+        }),
+      );
+    }
+
+    it("summarizes several shots in one call", async () => {
+      machineWith([1, 2, 3, 4, 5]);
+      const result = await handleToolCall("list_recent_shots", { limit: 3 });
+      const shots = result.structuredContent?.shots as Array<{
+        shotId: string;
+      }>;
+
+      expect(shots.map((shot) => shot.shotId)).toEqual(["5", "4", "3"]);
+      expect(result.text).toContain("Recent shots");
+      expect(result.text).toContain("peak 9.1 bar");
+    });
+
+    it("defaults to five shots", async () => {
+      machineWith([1, 2, 3, 4, 5, 6, 7]);
+      const result = await handleToolCall("list_recent_shots", {});
+      expect(result.structuredContent?.shots).toHaveLength(5);
+    });
+
+    it("returns fewer shots than asked for rather than failing", async () => {
+      machineWith([9]);
+      const result = await handleToolCall("list_recent_shots", { limit: 5 });
+      expect(result.structuredContent?.shots).toHaveLength(1);
+    });
+
+    it("says so plainly when there is nothing to list", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/shots/latest", () =>
+          HttpResponse.json([{}]),
+        ),
+      );
+      const result = await handleToolCall("list_recent_shots", { limit: 5 });
+      expect(result.isError).toBeFalsy();
+      expect(result.text).toContain("No shots found");
+    });
+
+    it("pages further back from a given id", async () => {
+      machineWith([1, 2, 3, 4, 5]);
+      const result = await handleToolCall("list_recent_shots", {
+        before: "4",
+        limit: 2,
+      });
+      const shots = result.structuredContent?.shots as Array<{
+        shotId: string;
+      }>;
+
+      expect(shots.map((shot) => shot.shotId)).toEqual(["3", "2"]);
+      expect(result.text).toContain("before #4");
+    });
+
+    it("refuses a limit that would flood the machine", async () => {
+      const result = await handleToolCall("list_recent_shots", { limit: 500 });
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("limit");
+    });
+  });
+
+  describe("get_previous_shot_json", () => {
+    it("resolves the real previous shot across a gap", async () => {
+      // The compare button used to ask for `id - 1`, which is the previous
+      // shot only on a machine that has never deleted one.
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/shots/9", () =>
+          HttpResponse.json({ error: "not found" }, { status: 404 }),
+        ),
+        http.get("http://gaggiuino.local/api/shots/8", () =>
+          HttpResponse.json([{ ...mockShotData, id: "8" }]),
+        ),
+      );
+
+      const result = await handleToolCall("get_previous_shot_json", {
+        shot_id: "10",
+      });
+      expect(JSON.parse(result.text).id).toBe("8");
+    });
+
+    it("explains itself when there is no older shot", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/shots/:id", () =>
+          HttpResponse.json({ error: "not found" }, { status: 404 }),
+        ),
+      );
+
+      const result = await handleToolCall("get_previous_shot_json", {
+        shot_id: "3",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("no shot older than #3");
+    });
+
+    it("has no older shot to offer for the very first one", async () => {
+      const result = await handleToolCall("get_previous_shot_json", {
+        shot_id: "1",
+      });
+      expect(result.isError).toBe(true);
     });
   });
 

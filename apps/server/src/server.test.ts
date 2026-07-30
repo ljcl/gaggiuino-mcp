@@ -258,6 +258,7 @@ describe("ListTools", () => {
     expect(withOutput).toEqual([
       "get_status",
       "get_latest_shot_id",
+      "list_recent_shots",
       "get_shot_data",
       "list_profiles",
       "get_profile_info",
