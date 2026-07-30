@@ -42,6 +42,14 @@ export const SHOT_TTL_MS = 10 * 60_000;
 export const LATEST_SHOT_TTL_MS = 5_000;
 
 /**
+ * Profiles and settings are edited on the machine itself, so they are cached
+ * only long enough to fold the burst one question makes of them — list the
+ * profiles, then describe one — not long enough to keep serving a profile the
+ * user just deleted.
+ */
+export const MACHINE_CONFIG_TTL_MS = 30_000;
+
+/**
  * Statuses worth trying again.
  *
  * Every HTTP status used to short-circuit the retry loop on the reasoning that
@@ -96,6 +104,40 @@ export type MachineStatus = z.output<typeof MachineStatusSchema>;
 const LatestShotSchema = z.looseObject({
   lastShotId: IdSchema.optional(),
 });
+
+const MachineProfileSchema = z.looseObject({
+  /**
+   * The value `/api/profile-select/{id}` wants. Optional because a firmware
+   * that only lists names is still a useful answer to "what is on the machine"
+   * — it just cannot be selected from here.
+   */
+  id: IdSchema.optional(),
+  name: z.string(),
+});
+
+export type MachineProfile = z.output<typeof MachineProfileSchema>;
+
+/**
+ * Firmware disagrees with itself about whether a collection is the response or
+ * lives under a key, so both are accepted and normalized to the array. This is
+ * the same tolerance `unwrapArray` applies to single objects, in the other
+ * direction.
+ */
+const MachineProfilesSchema = z.union([
+  z.array(MachineProfileSchema),
+  z
+    .looseObject({ profiles: z.array(MachineProfileSchema) })
+    .transform((body) => body.profiles),
+]);
+
+/**
+ * Settings are passed through untouched: which knobs exist is a firmware
+ * decision, and pinning them here would drop fields a newer build added rather
+ * than showing them to the user.
+ */
+const MachineSettingsSchema = z.looseObject({});
+
+export type MachineSettings = z.output<typeof MachineSettingsSchema>;
 
 const NumberSeries = z.array(z.number());
 
@@ -212,12 +254,18 @@ export function createClient(config: ClientConfig) {
   interface RequestOptions {
     /** Serve this path from cache for this long. Omit to always fetch. */
     ttlMs?: number;
+    /**
+     * Whether a one-element array should be treated as the object inside it.
+     * True for every endpoint that returns a single record, and false for the
+     * ones whose array *is* the answer.
+     */
+    unwrap?: boolean;
   }
 
   async function request<T>(
     path: string,
     schema: z.ZodType<T>,
-    { ttlMs }: RequestOptions = {},
+    { ttlMs, unwrap = true }: RequestOptions = {},
   ): Promise<T> {
     if (ttlMs !== undefined) {
       const hit = cache.get(path);
@@ -266,7 +314,7 @@ export function createClient(config: ClientConfig) {
         }
 
         const body = await response.json();
-        const parsed = schema.safeParse(unwrapArray(body));
+        const parsed = schema.safeParse(unwrap ? unwrapArray(body) : body);
         if (!parsed.success) {
           throw new MalformedUpstreamError(path, describeIssues(parsed.error));
         }
@@ -318,6 +366,19 @@ export function createClient(config: ClientConfig) {
     async getShotData(shotId: string): Promise<ShotData> {
       return request(`/api/shots/${shotId}`, ShotDataSchema, {
         ttlMs: SHOT_TTL_MS,
+      });
+    },
+
+    async getMachineProfiles(): Promise<MachineProfile[]> {
+      return request("/api/profiles/all", MachineProfilesSchema, {
+        ttlMs: MACHINE_CONFIG_TTL_MS,
+        unwrap: false,
+      });
+    },
+
+    async getSettings(): Promise<MachineSettings> {
+      return request("/api/settings", MachineSettingsSchema, {
+        ttlMs: MACHINE_CONFIG_TTL_MS,
       });
     },
 

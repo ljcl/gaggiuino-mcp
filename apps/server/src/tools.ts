@@ -16,11 +16,12 @@ import { MalformedUpstreamError, UpstreamHttpError } from "./errors";
 import { MAX_RECENT_SHOTS, walkShotsBack } from "./history";
 import { loadPrompts } from "./loader";
 import {
-  getAllProfilesText,
-  getProfile,
-  listProfileEntries,
-  listProfileNames,
-} from "./profiles";
+  type CatalogEntry,
+  findCatalogEntry,
+  loadProfileCatalog,
+  type ProfileCatalog,
+} from "./profileCatalog";
+import { getAllProfilesText } from "./profiles";
 
 /**
  * Every tool in this server reads: nothing here mutates the machine or any
@@ -105,6 +106,13 @@ const RecentShotsOutput = z.object({
     .describe("One entry per shot found, newest first"),
 });
 
+/**
+ * Every documentation-derived field is nullable, because a profile the user
+ * built on the machine is real and selectable and has none of them. Before the
+ * machine was the source of truth those fields could be required; a schema that
+ * still required them would force the merge to drop exactly the profiles the
+ * user cares most about.
+ */
 const ProfileOutput = z.object({
   basketNotes: z
     .string()
@@ -112,29 +120,66 @@ const ProfileOutput = z.object({
     .describe("Basket and dose notes for this profile, when documented"),
   description: z
     .string()
-    .describe("What the profile does and when to reach for it"),
+    .nullable()
+    .describe(
+      "What the profile does and when to reach for it; null for a profile this server has no documentation for",
+    ),
+  documented: z
+    .boolean()
+    .describe("Whether this server holds curated documentation for it"),
   id: z.string().describe('Id to pass to get_profile_info, e.g. "zer0"'),
+  machineProfileId: z
+    .string()
+    .nullable()
+    .describe(
+      "Id the machine knows this profile by, and the one select_profile takes; null when the profile is not on the machine or the machine did not supply one",
+    ),
   name: z.string().describe("Display name as shown on the machine"),
+  onMachine: z
+    .boolean()
+    .nullable()
+    .describe(
+      "True when the machine reported this profile, false when it did not, null when the machine could not be reached to ask",
+    ),
   recommendedDose: z
     .string()
     .nullable()
     .describe("Suggested dry dose, when documented"),
   roastLevels: z
     .array(z.string())
-    .describe('Roast levels this profile suits, e.g. ["light", "medium"]'),
+    .describe(
+      'Roast levels this profile suits, e.g. ["light", "medium"]; empty when undocumented',
+    ),
   targetRatio: z
     .string()
+    .nullable()
     .describe('Intended brew ratio, e.g. "1:2" (dose to yield)'),
-  targetTime: z.string().describe('Intended total shot time, e.g. "28-32s"'),
+  targetTime: z
+    .string()
+    .nullable()
+    .describe('Intended total shot time, e.g. "28-32s"'),
   type: z
     .string()
+    .nullable()
     .describe('Control strategy the profile uses, e.g. "flow" or "pressure"'),
 });
 
 const ProfileListOutput = z.object({
+  note: z
+    .string()
+    .describe(
+      "Where this list came from, and any caveat that applies to reading it",
+    ),
   profiles: z
     .array(ProfileOutput)
-    .describe("Every documented profile, complete — no follow-up call needed"),
+    .describe(
+      "Every profile, complete — no follow-up call needed. Machine profiles first, documented-but-absent ones last",
+    ),
+  source: z
+    .enum(["documentation", "machine"])
+    .describe(
+      "'machine' when the machine answered, 'documentation' when this server fell back to its bundled docs",
+    ),
 });
 
 type ObjectSchema = z.ZodObject;
@@ -244,20 +289,56 @@ function formatRawShotData(shot: Record<string, unknown>): string {
   return lines.join("\n");
 }
 
-function toProfileOutput(
-  profile: ReturnType<typeof listProfileEntries>[number],
-): z.input<typeof ProfileOutput> {
-  return {
-    basketNotes: profile.basketNotes ?? null,
-    description: profile.description,
-    id: profile.id,
-    name: profile.name,
-    recommendedDose: profile.recommendedDose ?? null,
-    roastLevels: profile.roastLevel,
-    targetRatio: profile.targetRatio,
-    targetTime: profile.targetTime,
-    type: profile.type,
-  };
+function formatProfileLine(entry: CatalogEntry): string {
+  const lines = [`### ${entry.name} (\`${entry.id}\`)`];
+  if (entry.onMachine === false) {
+    lines.push("- **Not currently on the machine** (documented here only)");
+  }
+  if (entry.machineProfileId !== null) {
+    lines.push(`- Machine profile id: ${entry.machineProfileId}`);
+  }
+  if (!entry.documented) {
+    lines.push("- No documentation on this server; created on the machine");
+    return lines.join("\n");
+  }
+  lines.push(
+    `- Type: ${entry.type}`,
+    `- Best for: ${entry.roastLevels.join(", ")} roasts`,
+    `- Target ratio: ${entry.targetRatio}`,
+    `- Target time: ${entry.targetTime}`,
+  );
+  return lines.join("\n");
+}
+
+function formatCatalog(catalog: ProfileCatalog): string {
+  return [
+    "# Brew Profiles",
+    "",
+    catalog.note,
+    "",
+    ...catalog.entries.map(formatProfileLine).flatMap((block) => [block, ""]),
+  ].join("\n");
+}
+
+/**
+ * Settings are printed rather than modelled. Which knobs a build exposes is a
+ * firmware decision, and a hand-written schema would silently drop the one a
+ * newer build added — which is the field a user asking about settings is most
+ * likely to be asking about.
+ */
+function formatSettings(value: unknown, indent = "  "): string[] {
+  if (value === null || typeof value !== "object") {
+    return [`${indent}${String(value)}`];
+  }
+  const lines: string[] = [];
+  for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
+    if (inner !== null && typeof inner === "object") {
+      lines.push(`${indent}${key}:`, ...formatSettings(inner, `${indent}  `));
+    } else {
+      lines.push(`${indent}${key}: ${String(inner)}`);
+    }
+  }
+  return lines;
 }
 
 async function summarizeShot(shotId: string): Promise<string> {
@@ -407,14 +488,18 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   }),
 
   defineTool({
-    annotations: READS_LOCAL_DATA,
+    annotations: READS_MACHINE,
     description:
-      "List the documented brew profiles with their control type, suited roast levels, target ratio, and target time. Returns each profile in full, so no follow-up call is needed to describe one. These come from this server's bundled documentation, not from the machine, so a profile the user created themselves may not appear.",
-    handler: () => {
-      const profiles = listProfileEntries().map(toProfileOutput);
+      "List the brew profiles on the machine, each merged with this server's documentation for it — control type, suited roast levels, target ratio, target time. Returns each profile in full, so no follow-up call is needed to describe one. A profile the user built on the machine appears with its documentation fields null; a profile this server documents that is not currently loaded appears with onMachine false. If the machine cannot be reached the bundled documentation is returned instead, and 'source' and 'note' say so.",
+    handler: async () => {
+      const catalog = await loadProfileCatalog();
       return {
-        structured: { profiles },
-        text: `# Available Brew Profiles\n\n${getAllProfilesText()}`,
+        structured: {
+          note: catalog.note,
+          profiles: catalog.entries,
+          source: catalog.source,
+        },
+        text: formatCatalog(catalog),
       };
     },
     inputSchema: NoArgs,
@@ -424,45 +509,71 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   }),
 
   defineTool({
-    annotations: READS_LOCAL_DATA,
+    annotations: READS_MACHINE,
     description:
-      "Get the full documentation for one brew profile, including its prose description. Call list_profiles first if you do not already have a profile id.",
-    handler: (input) => {
-      const profile = getProfile(input.profile_id);
-      if (!profile) {
+      "Get everything known about one brew profile: whether it is on the machine, the id select_profile would take, and its prose documentation when this server has any. Accepts a documented id, a machine profile id, or the profile's name. Call list_profiles first if you do not already have one.",
+    handler: async (input) => {
+      const { catalog, entry } = await findCatalogEntry(input.profile_id);
+      if (!entry) {
         return {
           isError: true,
-          text: `No documented profile with id '${input.profile_id}'. Available ids: ${listProfileNames().join(", ")}.`,
+          text: `No profile matching '${input.profile_id}'. Available ids: ${catalog.entries.map((candidate) => candidate.id).join(", ")}.`,
         };
       }
-      const structured = toProfileOutput({ id: input.profile_id, ...profile });
-      return {
-        structured,
-        text: [
-          `# ${profile.name}`,
+      const lines = [`# ${entry.name}`, ""];
+      if (entry.onMachine === false) {
+        lines.push(
+          "**Not currently on the machine.** This server documents it, but the machine did not report it.",
           "",
-          `**Type:** ${profile.type}`,
-          `**Best for:** ${profile.roastLevel.join(", ")} roasts`,
-          `**Target ratio:** ${profile.targetRatio}`,
-          `**Target time:** ${profile.targetTime}`,
+        );
+      }
+      if (entry.machineProfileId !== null) {
+        lines.push(`**Machine profile id:** ${entry.machineProfileId}`, "");
+      }
+      if (entry.documented) {
+        lines.push(
+          `**Type:** ${entry.type}`,
+          `**Best for:** ${entry.roastLevels.join(", ")} roasts`,
+          `**Target ratio:** ${entry.targetRatio}`,
+          `**Target time:** ${entry.targetTime}`,
           "",
           "## Description",
           "",
-          profile.description,
-        ].join("\n"),
-      };
+          entry.description ?? "",
+        );
+      } else {
+        lines.push(
+          "This profile was created on the machine, so this server has no documentation for it. Read its behaviour from a shot pulled with it — get_shot_data reports the phases the profile actually ran.",
+        );
+      }
+      return { structured: entry, text: lines.join("\n") };
     },
     inputSchema: z.object({
       profile_id: z
         .string()
         .min(1)
         .describe(
-          'Id of a documented profile as listed by list_profiles, e.g. "zer0".',
+          'Id, machine profile id, or name of a profile as listed by list_profiles, e.g. "zer0".',
         ),
     }),
     name: "get_profile_info",
     outputSchema: ProfileOutput,
     title: "Get brew profile details",
+  }),
+
+  defineTool({
+    annotations: READS_MACHINE,
+    description:
+      "Read the machine's configuration: boiler and steam setpoints, temperature offset, scale and predictive-stop settings, and whatever else this firmware exposes. Useful as dial-in context — a brew temperature that never matches the profile usually shows up here as an offset rather than in the shot data. The fields are whatever the machine sends, so treat unfamiliar names as firmware-specific.",
+    handler: async () => {
+      const settings = await getClient().getSettings();
+      return {
+        text: ["Gaggiuino Settings:", ...formatSettings(settings)].join("\n"),
+      };
+    },
+    inputSchema: NoArgs,
+    name: "get_machine_settings",
+    title: "Get machine settings",
   }),
 
   defineTool({

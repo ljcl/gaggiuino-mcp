@@ -237,7 +237,10 @@ describe("ListTools", () => {
     );
     expect(openWorld.get("get_status")).toBe(true);
     expect(openWorld.get("get_shot_data")).toBe(true);
-    expect(openWorld.get("list_profiles")).toBe(false);
+    // list_profiles reads the machine's own inventory now, so closed-world
+    // would be a lie even though it can fall back to bundled documentation.
+    expect(openWorld.get("list_profiles")).toBe(true);
+    expect(openWorld.get("get_machine_settings")).toBe(true);
     expect(openWorld.get("get_dial_in_guidance")).toBe(false);
   });
 

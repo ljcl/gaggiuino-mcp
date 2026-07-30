@@ -333,27 +333,141 @@ describe("tool dispatch", () => {
   });
 
   describe("list_profiles", () => {
+    /** What the machine reports it is holding. */
+    function machineProfiles(profiles: Array<Record<string, unknown>>) {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.json(profiles),
+        ),
+      );
+    }
+
+    function profilesOf(result: { structuredContent?: unknown }) {
+      return (
+        result.structuredContent as {
+          profiles: Array<Record<string, unknown>>;
+        }
+      ).profiles;
+    }
+
     it("returns list of available profiles", async () => {
+      machineProfiles([{ id: "15", name: "Zer0" }]);
       const result = await handleToolCall("list_profiles", {});
       expect(result.text).toContain("Zer0");
       expect(result.text).toContain("Adaptive");
     });
 
     it("returns every profile in full as structured content", async () => {
+      machineProfiles([{ id: "15", name: "Zer0" }]);
       const result = await handleToolCall("list_profiles", {});
-      const { profiles } = result.structuredContent as {
-        profiles: Array<Record<string, unknown>>;
-      };
+      const profiles = profilesOf(result);
       expect(profiles.length).toBeGreaterThan(1);
       expect(profiles[0]).toMatchObject({
-        id: expect.any(String),
         description: expect.any(String),
+        id: expect.any(String),
         roastLevels: expect.any(Array),
       });
+    });
+
+    it("enriches a machine profile with the documentation for its name", async () => {
+      machineProfiles([{ id: "15", name: "Zer0" }]);
+      const result = await handleToolCall("list_profiles", {});
+      const zer0 = profilesOf(result).find(
+        (profile) => profile.name === "Zer0",
+      );
+
+      expect(zer0).toMatchObject({
+        documented: true,
+        id: "zer0",
+        machineProfileId: "15",
+        onMachine: true,
+      });
+      expect(zer0?.description).toEqual(expect.any(String));
+      expect(result.structuredContent?.source).toBe("machine");
+    });
+
+    it("lists a profile the user built on the machine, undocumented", async () => {
+      // The case the whole merge exists for: real, selectable, and invisible
+      // to a server that only ever read its own YAML.
+      machineProfiles([{ id: "42", name: "Sunday Filter Experiment" }]);
+      const result = await handleToolCall("list_profiles", {});
+      const custom = profilesOf(result).find(
+        (profile) => profile.name === "Sunday Filter Experiment",
+      );
+
+      expect(custom).toMatchObject({
+        description: null,
+        documented: false,
+        machineProfileId: "42",
+        onMachine: true,
+        roastLevels: [],
+        type: null,
+      });
+    });
+
+    it("flags a documented profile the machine is not holding", async () => {
+      machineProfiles([{ id: "15", name: "Zer0" }]);
+      const result = await handleToolCall("list_profiles", {});
+      const absent = profilesOf(result).filter(
+        (profile) => profile.onMachine === false,
+      );
+
+      expect(absent.length).toBeGreaterThan(0);
+      expect(result.text).toContain("Not currently on the machine");
+      expect(String(result.structuredContent?.note)).toContain(
+        "not currently on the machine",
+      );
+    });
+
+    it("matches names case- and whitespace-insensitively", async () => {
+      machineProfiles([{ id: "15", name: "  zer0  " }]);
+      const result = await handleToolCall("list_profiles", {});
+      const documented = profilesOf(result).filter(
+        (profile) => profile.machineProfileId === "15",
+      );
+
+      expect(documented[0]).toMatchObject({ documented: true, id: "zer0" });
+    });
+
+    it("accepts a firmware that wraps the list under a key", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.json({ profiles: [{ id: "15", name: "Zer0" }] }),
+        ),
+      );
+      const result = await handleToolCall("list_profiles", {});
+      expect(result.structuredContent?.source).toBe("machine");
+    });
+
+    it("falls back to bundled documentation and says why", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.error(),
+        ),
+      );
+      const result = await handleToolCall("list_profiles", {});
+
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent?.source).toBe("documentation");
+      // The upstream diagnostic is reused rather than replaced with a generic
+      // "unavailable", so the user is told what to check.
+      expect(String(result.structuredContent?.note)).toContain(
+        "Could not reach the Gaggiuino machine",
+      );
+      // "We did not check" is not the same claim as "it is not there".
+      expect(profilesOf(result).every((p) => p.onMachine === null)).toBe(true);
     });
   });
 
   describe("get_profile_info", () => {
+    beforeEach(() => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.json([{ id: "15", name: "Zer0" }]),
+        ),
+      );
+    });
+
     it("returns profile details", async () => {
       const result = await handleToolCall("get_profile_info", {
         profile_id: "zer0",
@@ -363,8 +477,31 @@ describe("tool dispatch", () => {
       expect(result.text).toContain("Description");
       expect(result.structuredContent).toMatchObject({
         id: "zer0",
+        machineProfileId: "15",
         name: "Zer0",
       });
+    });
+
+    it("resolves a machine profile id as well as a documented one", async () => {
+      const result = await handleToolCall("get_profile_info", {
+        profile_id: "15",
+      });
+      expect(result.structuredContent).toMatchObject({ name: "Zer0" });
+    });
+
+    it("describes an undocumented machine profile without pretending", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.json([{ id: "42", name: "Sunday Filter Experiment" }]),
+        ),
+      );
+      const result = await handleToolCall("get_profile_info", {
+        profile_id: "42",
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(result.text).toContain("created on the machine");
+      expect(result.structuredContent).toMatchObject({ documented: false });
     });
 
     it("returns an actionable error result for an unknown profile", async () => {
@@ -375,6 +512,49 @@ describe("tool dispatch", () => {
       expect(result.text).toContain("nonexistent");
       expect(result.text).toContain("Available ids:");
       expect(result.structuredContent).toBeUndefined();
+    });
+  });
+
+  describe("get_machine_settings", () => {
+    it("prints whatever the machine exposes, nested", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/settings", () =>
+          HttpResponse.json([
+            {
+              boiler: { offsetTemp: 8, steamSetPoint: 155 },
+              brew: { basketPrefill: true },
+            },
+          ]),
+        ),
+      );
+      const result = await handleToolCall("get_machine_settings", {});
+
+      expect(result.text).toContain("steamSetPoint: 155");
+      expect(result.text).toContain("offsetTemp: 8");
+      expect(result.text).toContain("basketPrefill: true");
+    });
+
+    it("passes through a field this server has never heard of", async () => {
+      // A schema that modelled the known knobs would drop exactly the field a
+      // user asking about a new firmware setting wants to see.
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/settings", () =>
+          HttpResponse.json([{ someFutureKnob: 3 }]),
+        ),
+      );
+      const result = await handleToolCall("get_machine_settings", {});
+      expect(result.text).toContain("someFutureKnob: 3");
+    });
+
+    it("reports an unreachable machine rather than inventing defaults", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/settings", () =>
+          HttpResponse.error(),
+        ),
+      );
+      const result = await handleToolCall("get_machine_settings", {});
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("Could not reach the Gaggiuino machine");
     });
   });
 

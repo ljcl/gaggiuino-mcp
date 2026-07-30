@@ -5,11 +5,6 @@ export function getProfile(profileId: string): Profile | undefined {
   return profiles[profileId];
 }
 
-export function listProfileNames(): string[] {
-  const profiles = loadProfiles();
-  return Object.keys(profiles);
-}
-
 /** Every profile, each carrying the id it is keyed by. */
 export function listProfileEntries(): Array<Profile & { id: string }> {
   return Object.entries(loadProfiles()).map(([id, profile]) => ({
