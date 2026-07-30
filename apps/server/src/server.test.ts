@@ -206,7 +206,15 @@ describe("ListTools", () => {
     );
   });
 
-  it("gives every tool a title and honest read-only annotations", async () => {
+  /**
+   * The tools that change the machine, named here rather than derived from the
+   * annotations they are being checked against. A new write tool has to be
+   * added to this list deliberately; a read tool that quietly loses
+   * `readOnlyHint` fails instead of redefining what the test asserts.
+   */
+  const WRITE_TOOLS = new Set(["select_profile"]);
+
+  it("gives every tool a title and honest annotations", async () => {
     const { tools } = await client.listTools();
     expect(tools.length).toBeGreaterThan(0);
     for (const tool of tools) {
@@ -214,8 +222,11 @@ describe("ListTools", () => {
       expect(tool.description, `${tool.name} description`).toBeTruthy();
       expect(tool.annotations, `${tool.name} annotations`).toBeDefined();
       expect(tool.annotations?.readOnlyHint, `${tool.name} readOnly`).toBe(
-        true,
+        !WRITE_TOOLS.has(tool.name),
       );
+      // True for every tool here, read or write: selecting a profile replaces
+      // a selection rather than destroying anything, and doing it twice lands
+      // in the same place as doing it once.
       expect(
         tool.annotations?.destructiveHint,
         `${tool.name} destructive`,
@@ -230,6 +241,15 @@ describe("ListTools", () => {
     }
   });
 
+  it("advertises the machine write as a write", async () => {
+    // A write tool arriving without readOnlyHint: false is read by the host as
+    // just another read, which is how a machine gets changed with no prompt.
+    const tool = await toolNamed("select_profile");
+    expect(tool.annotations?.readOnlyHint).toBe(false);
+    expect(tool.annotations?.openWorldHint).toBe(true);
+    expect(tool.description).toContain("confirm the profile with the user");
+  });
+
   it("marks machine reads open-world and bundled-data reads closed-world", async () => {
     const { tools } = await client.listTools();
     const openWorld = new Map(
@@ -237,7 +257,10 @@ describe("ListTools", () => {
     );
     expect(openWorld.get("get_status")).toBe(true);
     expect(openWorld.get("get_shot_data")).toBe(true);
-    expect(openWorld.get("list_profiles")).toBe(false);
+    // list_profiles reads the machine's own inventory now, so closed-world
+    // would be a lie even though it can fall back to bundled documentation.
+    expect(openWorld.get("list_profiles")).toBe(true);
+    expect(openWorld.get("get_machine_settings")).toBe(true);
     expect(openWorld.get("get_dial_in_guidance")).toBe(false);
   });
 
@@ -258,6 +281,7 @@ describe("ListTools", () => {
     expect(withOutput).toEqual([
       "get_status",
       "get_latest_shot_id",
+      "list_recent_shots",
       "get_shot_data",
       "list_profiles",
       "get_profile_info",

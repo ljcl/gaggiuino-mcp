@@ -109,7 +109,7 @@
       "openWorldHint": true,
       "readOnlyHint": true
     },
-    "description": "Get the id of the most recently recorded shot. This is the entry point for any shot question that does not already name an id — call it first, then pass the id to get_shot_data or view_shot_graph.",
+    "description": "Get the most recently recorded shot: its id, and the headline numbers for it — duration, final weight against target, peak pressure, time to first drip, temperature stability. This is the entry point for any shot question that does not already name an id, and for 'how was my last shot' it is the only call needed. Use the returned id with get_shot_data for the phase-by-phase breakdown, or with view_shot_graph to chart it.",
     "inputSchema": {
       "properties": {},
       "type": "object"
@@ -128,14 +128,205 @@
             }
           ],
           "description": "Id of the most recently recorded shot, or null when the machine has no shot history"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "finalWeightG": {
+                  "description": "Weight in the cup at the end of the shot, in grams",
+                  "type": "number"
+                },
+                "peakPressureBar": {
+                  "description": "Highest pressure reached during the shot, in bar",
+                  "type": "number"
+                },
+                "profileName": {
+                  "description": "Name of the brew profile used",
+                  "type": "string"
+                },
+                "shotId": {
+                  "description": "Id of the shot this summary describes",
+                  "type": "string"
+                },
+                "targetWeightG": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Weight the profile was set to stop at, in grams; null when the profile has no weight stop condition"
+                },
+                "tempStability": {
+                  "description": "Human-readable temperature verdict: \"stable\", or \"drifted +N.NC\" when the spread exceeded 1°C",
+                  "type": "string"
+                },
+                "timeToFirstDripSec": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Seconds from shot start until the scale first read above 0.5 g; null when no drip was detected"
+                },
+                "totalDurationSec": {
+                  "description": "Total shot duration, in seconds",
+                  "type": "number"
+                },
+                "waterPumpedMl": {
+                  "description": "Total water pushed through the puck, in millilitres",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "finalWeightG",
+                "peakPressureBar",
+                "profileName",
+                "shotId",
+                "targetWeightG",
+                "tempStability",
+                "timeToFirstDripSec",
+                "totalDurationSec",
+                "waterPumpedMl"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Headline numbers for that shot, so the common 'how was my last shot' question needs no second call; null when there is no shot, or when the shot record itself could not be read"
         }
       },
       "required": [
-        "shotId"
+        "shotId",
+        "summary"
       ],
       "type": "object"
     },
-    "title": "Get latest shot id"
+    "title": "Get latest shot"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "List the most recent shots, newest first, each with the headline numbers: duration, final weight against target, peak pressure, time to first drip, temperature stability. Use this for questions about a run of shots — how the last five trended, whether a change helped — rather than calling get_shot_data once per id. The machine keeps a limited history and deleted shots leave gaps, so fewer shots than requested is a normal answer, not an error.",
+    "inputSchema": {
+      "properties": {
+        "before": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "description": "Only return shots older than this id. Use it to page further back, passing the oldest id from a previous response."
+        },
+        "limit": {
+          "default": 5,
+          "description": "How many shots to return, 1 to 10. Each one is a separate request to the machine, so ask for what you need.",
+          "maximum": 10,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "name": "list_recent_shots",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "shots": {
+          "description": "One entry per shot found, newest first",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "finalWeightG": {
+                "description": "Weight in the cup at the end of the shot, in grams",
+                "type": "number"
+              },
+              "peakPressureBar": {
+                "description": "Highest pressure reached during the shot, in bar",
+                "type": "number"
+              },
+              "profileName": {
+                "description": "Name of the brew profile used",
+                "type": "string"
+              },
+              "shotId": {
+                "description": "Id of the shot this summary describes",
+                "type": "string"
+              },
+              "targetWeightG": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Weight the profile was set to stop at, in grams; null when the profile has no weight stop condition"
+              },
+              "tempStability": {
+                "description": "Human-readable temperature verdict: \"stable\", or \"drifted +N.NC\" when the spread exceeded 1°C",
+                "type": "string"
+              },
+              "timeToFirstDripSec": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Seconds from shot start until the scale first read above 0.5 g; null when no drip was detected"
+              },
+              "totalDurationSec": {
+                "description": "Total shot duration, in seconds",
+                "type": "number"
+              },
+              "waterPumpedMl": {
+                "description": "Total water pushed through the puck, in millilitres",
+                "type": "number"
+              }
+            },
+            "required": [
+              "finalWeightG",
+              "peakPressureBar",
+              "profileName",
+              "shotId",
+              "targetWeightG",
+              "tempStability",
+              "timeToFirstDripSec",
+              "totalDurationSec",
+              "waterPumpedMl"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "shots"
+      ],
+      "type": "object"
+    },
+    "title": "List recent shots"
   },
   {
     "annotations": {
@@ -401,10 +592,10 @@
     "annotations": {
       "destructiveHint": false,
       "idempotentHint": true,
-      "openWorldHint": false,
+      "openWorldHint": true,
       "readOnlyHint": true
     },
-    "description": "List the documented brew profiles with their control type, suited roast levels, target ratio, and target time. Returns each profile in full, so no follow-up call is needed to describe one. These come from this server's bundled documentation, not from the machine, so a profile the user created themselves may not appear.",
+    "description": "List the brew profiles on the machine, each merged with this server's documentation for it — control type, suited roast levels, target ratio, target time. Returns each profile in full, so no follow-up call is needed to describe one. A profile the user built on the machine appears with its documentation fields null; a profile this server documents that is not currently loaded appears with onMachine false. If the machine cannot be reached the bundled documentation is returned instead, and 'source' and 'note' say so.",
     "inputSchema": {
       "properties": {},
       "type": "object"
@@ -413,8 +604,12 @@
     "outputSchema": {
       "additionalProperties": false,
       "properties": {
+        "note": {
+          "description": "Where this list came from, and any caveat that applies to reading it",
+          "type": "string"
+        },
         "profiles": {
-          "description": "Every documented profile, complete — no follow-up call needed",
+          "description": "Every profile, complete — no follow-up call needed. Machine profiles first, documented-but-absent ones last",
           "items": {
             "additionalProperties": false,
             "properties": {
@@ -430,16 +625,49 @@
                 "description": "Basket and dose notes for this profile, when documented"
               },
               "description": {
-                "description": "What the profile does and when to reach for it",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "What the profile does and when to reach for it; null for a profile this server has no documentation for"
+              },
+              "documented": {
+                "description": "Whether this server holds curated documentation for it",
+                "type": "boolean"
               },
               "id": {
                 "description": "Id to pass to get_profile_info, e.g. \"zer0\"",
                 "type": "string"
               },
+              "machineProfileId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Id the machine knows this profile by, and the one select_profile takes; null when the profile is not on the machine or the machine did not supply one"
+              },
               "name": {
                 "description": "Display name as shown on the machine",
                 "type": "string"
+              },
+              "onMachine": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "True when the machine reported this profile, false when it did not, null when the machine could not be reached to ask"
               },
               "recommendedDose": {
                 "anyOf": [
@@ -453,30 +681,54 @@
                 "description": "Suggested dry dose, when documented"
               },
               "roastLevels": {
-                "description": "Roast levels this profile suits, e.g. [\"light\", \"medium\"]",
+                "description": "Roast levels this profile suits, e.g. [\"light\", \"medium\"]; empty when undocumented",
                 "items": {
                   "type": "string"
                 },
                 "type": "array"
               },
               "targetRatio": {
-                "description": "Intended brew ratio, e.g. \"1:2\" (dose to yield)",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Intended brew ratio, e.g. \"1:2\" (dose to yield)"
               },
               "targetTime": {
-                "description": "Intended total shot time, e.g. \"28-32s\"",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Intended total shot time, e.g. \"28-32s\""
               },
               "type": {
-                "description": "Control strategy the profile uses, e.g. \"flow\" or \"pressure\"",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Control strategy the profile uses, e.g. \"flow\" or \"pressure\""
               }
             },
             "required": [
               "basketNotes",
               "description",
+              "documented",
               "id",
+              "machineProfileId",
               "name",
+              "onMachine",
               "recommendedDose",
               "roastLevels",
               "targetRatio",
@@ -486,10 +738,20 @@
             "type": "object"
           },
           "type": "array"
+        },
+        "source": {
+          "description": "'machine' when the machine answered, 'documentation' when this server fell back to its bundled docs",
+          "enum": [
+            "documentation",
+            "machine"
+          ],
+          "type": "string"
         }
       },
       "required": [
-        "profiles"
+        "note",
+        "profiles",
+        "source"
       ],
       "type": "object"
     },
@@ -499,14 +761,14 @@
     "annotations": {
       "destructiveHint": false,
       "idempotentHint": true,
-      "openWorldHint": false,
+      "openWorldHint": true,
       "readOnlyHint": true
     },
-    "description": "Get the full documentation for one brew profile, including its prose description. Call list_profiles first if you do not already have a profile id.",
+    "description": "Get everything known about one brew profile: whether it is on the machine, the id select_profile would take, and its prose documentation when this server has any. Accepts a documented id, a machine profile id, or the profile's name. Call list_profiles first if you do not already have one.",
     "inputSchema": {
       "properties": {
         "profile_id": {
-          "description": "Id of a documented profile as listed by list_profiles, e.g. \"zer0\".",
+          "description": "Id, machine profile id, or name of a profile as listed by list_profiles, e.g. \"zer0\".",
           "minLength": 1,
           "type": "string"
         }
@@ -532,16 +794,49 @@
           "description": "Basket and dose notes for this profile, when documented"
         },
         "description": {
-          "description": "What the profile does and when to reach for it",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the profile does and when to reach for it; null for a profile this server has no documentation for"
+        },
+        "documented": {
+          "description": "Whether this server holds curated documentation for it",
+          "type": "boolean"
         },
         "id": {
           "description": "Id to pass to get_profile_info, e.g. \"zer0\"",
           "type": "string"
         },
+        "machineProfileId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Id the machine knows this profile by, and the one select_profile takes; null when the profile is not on the machine or the machine did not supply one"
+        },
         "name": {
           "description": "Display name as shown on the machine",
           "type": "string"
+        },
+        "onMachine": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "True when the machine reported this profile, false when it did not, null when the machine could not be reached to ask"
         },
         "recommendedDose": {
           "anyOf": [
@@ -555,30 +850,54 @@
           "description": "Suggested dry dose, when documented"
         },
         "roastLevels": {
-          "description": "Roast levels this profile suits, e.g. [\"light\", \"medium\"]",
+          "description": "Roast levels this profile suits, e.g. [\"light\", \"medium\"]; empty when undocumented",
           "items": {
             "type": "string"
           },
           "type": "array"
         },
         "targetRatio": {
-          "description": "Intended brew ratio, e.g. \"1:2\" (dose to yield)",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Intended brew ratio, e.g. \"1:2\" (dose to yield)"
         },
         "targetTime": {
-          "description": "Intended total shot time, e.g. \"28-32s\"",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Intended total shot time, e.g. \"28-32s\""
         },
         "type": {
-          "description": "Control strategy the profile uses, e.g. \"flow\" or \"pressure\"",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Control strategy the profile uses, e.g. \"flow\" or \"pressure\""
         }
       },
       "required": [
         "basketNotes",
         "description",
+        "documented",
         "id",
+        "machineProfileId",
         "name",
+        "onMachine",
         "recommendedDose",
         "roastLevels",
         "targetRatio",
@@ -588,6 +907,45 @@
       "type": "object"
     },
     "title": "Get brew profile details"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Read the machine's configuration: boiler and steam setpoints, temperature offset, scale and predictive-stop settings, and whatever else this firmware exposes. Useful as dial-in context — a brew temperature that never matches the profile usually shows up here as an offset rather than in the shot data. The fields are whatever the machine sends, so treat unfamiliar names as firmware-specific.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "get_machine_settings",
+    "title": "Get machine settings"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    },
+    "description": "Switch the machine to a different brew profile. This changes the machine, so confirm the profile with the user before calling it — do not select one on your own initiative from dial-in advice. Takes the id from list_profiles (either the documented id or the machineProfileId). The profile must already be on the machine; this cannot create one. Refuses unless this server is configured with an auth token, since an unauthenticated server exposed over a tunnel would let anyone reach it.",
+    "inputSchema": {
+      "properties": {
+        "profile_id": {
+          "description": "Id of the profile to select, as listed by list_profiles — either its documented id (\"zer0\") or its machineProfileId (\"15\").",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "profile_id"
+      ],
+      "type": "object"
+    },
+    "name": "select_profile",
+    "title": "Select brew profile"
   },
   {
     "annotations": {
@@ -690,5 +1048,44 @@
     },
     "name": "get_shot_raw_json",
     "title": "Get raw shot JSON"
+  },
+  {
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://shot-graph/app.html",
+        "visibility": [
+          "app"
+        ]
+      }
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Raw data for the shot recorded before the given one, for the shot graph UI's comparison overlay. The server finds the real previous id rather than assuming ids are contiguous. Not intended for the model — call list_recent_shots to reason about a run of shots.",
+    "inputSchema": {
+      "properties": {
+        "shot_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "description": "Id of the shot to look back from. The response is the newest shot older than this one."
+        }
+      },
+      "required": [
+        "shot_id"
+      ],
+      "type": "object"
+    },
+    "name": "get_previous_shot_json",
+    "title": "Get previous shot JSON"
   }
 ]

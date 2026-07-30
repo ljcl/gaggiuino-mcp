@@ -1,5 +1,5 @@
 import { HttpResponse, http } from "msw";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   mockLatestShotResponse,
   mockMachineStatus,
@@ -86,7 +86,50 @@ describe("tool dispatch", () => {
     it("returns latest shot ID", async () => {
       const result = await handleToolCall("get_latest_shot_id", {});
       expect(result.text).toContain("1706547890");
-      expect(result.structuredContent).toEqual({ shotId: "1706547890" });
+      expect(result.structuredContent).toMatchObject({
+        shotId: "1706547890",
+      });
+    });
+
+    it("folds the shot's headline numbers into the same answer", async () => {
+      // "How was my last shot" used to cost two round trips: an id, then the
+      // shot. The id is cached by the time get_shot_data asks for detail.
+      const result = await handleToolCall("get_latest_shot_id", {});
+      expect(result.structuredContent?.summary).toMatchObject({
+        finalWeightG: 38.1,
+        peakPressureBar: 9.1,
+        profileName: "LMD 9-8 v1.5 (milk)",
+        shotId: "1706547890",
+      });
+      expect(result.text).toContain("Peak Pressure: 9.1 bar");
+    });
+
+    it("still returns the id when the shot record cannot be read", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/shots/1706547890", () =>
+          HttpResponse.json({ error: "gone" }, { status: 404 }),
+        ),
+      );
+      const result = await handleToolCall("get_latest_shot_id", {});
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toEqual({
+        shotId: "1706547890",
+        summary: null,
+      });
+      expect(result.text).toContain("Latest shot ID: 1706547890");
+    });
+
+    it("reports a machine that vanished mid-call instead of a bare id", async () => {
+      // A 404 costs the summary and keeps the id; losing the machine entirely
+      // is worth telling the user about, because the id is stale news by then.
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/shots/1706547890", () =>
+          HttpResponse.error(),
+        ),
+      );
+      const result = await handleToolCall("get_latest_shot_id", {});
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("Could not reach the Gaggiuino machine");
     });
 
     it("returns message when no shot available", async () => {
@@ -97,7 +140,7 @@ describe("tool dispatch", () => {
       );
       const result = await handleToolCall("get_latest_shot_id", {});
       expect(result.text).toContain("No shot history available");
-      expect(result.structuredContent).toEqual({ shotId: null });
+      expect(result.structuredContent).toEqual({ shotId: null, summary: null });
     });
 
     it("stringifies a numeric id from the machine", async () => {
@@ -107,7 +150,122 @@ describe("tool dispatch", () => {
         ),
       );
       const result = await handleToolCall("get_latest_shot_id", {});
-      expect(result.structuredContent).toEqual({ shotId: "1706547890" });
+      expect(result.structuredContent?.shotId).toBe("1706547890");
+    });
+  });
+
+  describe("list_recent_shots", () => {
+    /** A machine holding exactly these ids, 404 for everything else. */
+    function machineWith(ids: number[]) {
+      const present = new Set(ids.map(String));
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/shots/latest", () =>
+          HttpResponse.json([{ lastShotId: String(Math.max(...ids)) }]),
+        ),
+        http.get("http://gaggiuino.local/api/shots/:id", ({ params }) => {
+          const id = String(params.id);
+          if (!present.has(id)) {
+            return HttpResponse.json({ error: "not found" }, { status: 404 });
+          }
+          return HttpResponse.json([{ ...mockShotData, id }]);
+        }),
+      );
+    }
+
+    it("summarizes several shots in one call", async () => {
+      machineWith([1, 2, 3, 4, 5]);
+      const result = await handleToolCall("list_recent_shots", { limit: 3 });
+      const shots = result.structuredContent?.shots as Array<{
+        shotId: string;
+      }>;
+
+      expect(shots.map((shot) => shot.shotId)).toEqual(["5", "4", "3"]);
+      expect(result.text).toContain("Recent shots");
+      expect(result.text).toContain("peak 9.1 bar");
+    });
+
+    it("defaults to five shots", async () => {
+      machineWith([1, 2, 3, 4, 5, 6, 7]);
+      const result = await handleToolCall("list_recent_shots", {});
+      expect(result.structuredContent?.shots).toHaveLength(5);
+    });
+
+    it("returns fewer shots than asked for rather than failing", async () => {
+      machineWith([9]);
+      const result = await handleToolCall("list_recent_shots", { limit: 5 });
+      expect(result.structuredContent?.shots).toHaveLength(1);
+    });
+
+    it("says so plainly when there is nothing to list", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/shots/latest", () =>
+          HttpResponse.json([{}]),
+        ),
+      );
+      const result = await handleToolCall("list_recent_shots", { limit: 5 });
+      expect(result.isError).toBeFalsy();
+      expect(result.text).toContain("No shots found");
+    });
+
+    it("pages further back from a given id", async () => {
+      machineWith([1, 2, 3, 4, 5]);
+      const result = await handleToolCall("list_recent_shots", {
+        before: "4",
+        limit: 2,
+      });
+      const shots = result.structuredContent?.shots as Array<{
+        shotId: string;
+      }>;
+
+      expect(shots.map((shot) => shot.shotId)).toEqual(["3", "2"]);
+      expect(result.text).toContain("before #4");
+    });
+
+    it("refuses a limit that would flood the machine", async () => {
+      const result = await handleToolCall("list_recent_shots", { limit: 500 });
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("limit");
+    });
+  });
+
+  describe("get_previous_shot_json", () => {
+    it("resolves the real previous shot across a gap", async () => {
+      // The compare button used to ask for `id - 1`, which is the previous
+      // shot only on a machine that has never deleted one.
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/shots/9", () =>
+          HttpResponse.json({ error: "not found" }, { status: 404 }),
+        ),
+        http.get("http://gaggiuino.local/api/shots/8", () =>
+          HttpResponse.json([{ ...mockShotData, id: "8" }]),
+        ),
+      );
+
+      const result = await handleToolCall("get_previous_shot_json", {
+        shot_id: "10",
+      });
+      expect(JSON.parse(result.text).id).toBe("8");
+    });
+
+    it("explains itself when there is no older shot", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/shots/:id", () =>
+          HttpResponse.json({ error: "not found" }, { status: 404 }),
+        ),
+      );
+
+      const result = await handleToolCall("get_previous_shot_json", {
+        shot_id: "3",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("no shot older than #3");
+    });
+
+    it("has no older shot to offer for the very first one", async () => {
+      const result = await handleToolCall("get_previous_shot_json", {
+        shot_id: "1",
+      });
+      expect(result.isError).toBe(true);
     });
   });
 
@@ -188,27 +346,141 @@ describe("tool dispatch", () => {
   });
 
   describe("list_profiles", () => {
+    /** What the machine reports it is holding. */
+    function machineProfiles(profiles: Array<Record<string, unknown>>) {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.json(profiles),
+        ),
+      );
+    }
+
+    function profilesOf(result: { structuredContent?: unknown }) {
+      return (
+        result.structuredContent as {
+          profiles: Array<Record<string, unknown>>;
+        }
+      ).profiles;
+    }
+
     it("returns list of available profiles", async () => {
+      machineProfiles([{ id: "15", name: "Zer0" }]);
       const result = await handleToolCall("list_profiles", {});
       expect(result.text).toContain("Zer0");
       expect(result.text).toContain("Adaptive");
     });
 
     it("returns every profile in full as structured content", async () => {
+      machineProfiles([{ id: "15", name: "Zer0" }]);
       const result = await handleToolCall("list_profiles", {});
-      const { profiles } = result.structuredContent as {
-        profiles: Array<Record<string, unknown>>;
-      };
+      const profiles = profilesOf(result);
       expect(profiles.length).toBeGreaterThan(1);
       expect(profiles[0]).toMatchObject({
-        id: expect.any(String),
         description: expect.any(String),
+        id: expect.any(String),
         roastLevels: expect.any(Array),
       });
+    });
+
+    it("enriches a machine profile with the documentation for its name", async () => {
+      machineProfiles([{ id: "15", name: "Zer0" }]);
+      const result = await handleToolCall("list_profiles", {});
+      const zer0 = profilesOf(result).find(
+        (profile) => profile.name === "Zer0",
+      );
+
+      expect(zer0).toMatchObject({
+        documented: true,
+        id: "zer0",
+        machineProfileId: "15",
+        onMachine: true,
+      });
+      expect(zer0?.description).toEqual(expect.any(String));
+      expect(result.structuredContent?.source).toBe("machine");
+    });
+
+    it("lists a profile the user built on the machine, undocumented", async () => {
+      // The case the whole merge exists for: real, selectable, and invisible
+      // to a server that only ever read its own YAML.
+      machineProfiles([{ id: "42", name: "Sunday Filter Experiment" }]);
+      const result = await handleToolCall("list_profiles", {});
+      const custom = profilesOf(result).find(
+        (profile) => profile.name === "Sunday Filter Experiment",
+      );
+
+      expect(custom).toMatchObject({
+        description: null,
+        documented: false,
+        machineProfileId: "42",
+        onMachine: true,
+        roastLevels: [],
+        type: null,
+      });
+    });
+
+    it("flags a documented profile the machine is not holding", async () => {
+      machineProfiles([{ id: "15", name: "Zer0" }]);
+      const result = await handleToolCall("list_profiles", {});
+      const absent = profilesOf(result).filter(
+        (profile) => profile.onMachine === false,
+      );
+
+      expect(absent.length).toBeGreaterThan(0);
+      expect(result.text).toContain("Not currently on the machine");
+      expect(String(result.structuredContent?.note)).toContain(
+        "not currently on the machine",
+      );
+    });
+
+    it("matches names case- and whitespace-insensitively", async () => {
+      machineProfiles([{ id: "15", name: "  zer0  " }]);
+      const result = await handleToolCall("list_profiles", {});
+      const documented = profilesOf(result).filter(
+        (profile) => profile.machineProfileId === "15",
+      );
+
+      expect(documented[0]).toMatchObject({ documented: true, id: "zer0" });
+    });
+
+    it("accepts a firmware that wraps the list under a key", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.json({ profiles: [{ id: "15", name: "Zer0" }] }),
+        ),
+      );
+      const result = await handleToolCall("list_profiles", {});
+      expect(result.structuredContent?.source).toBe("machine");
+    });
+
+    it("falls back to bundled documentation and says why", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.error(),
+        ),
+      );
+      const result = await handleToolCall("list_profiles", {});
+
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent?.source).toBe("documentation");
+      // The upstream diagnostic is reused rather than replaced with a generic
+      // "unavailable", so the user is told what to check.
+      expect(String(result.structuredContent?.note)).toContain(
+        "Could not reach the Gaggiuino machine",
+      );
+      // "We did not check" is not the same claim as "it is not there".
+      expect(profilesOf(result).every((p) => p.onMachine === null)).toBe(true);
     });
   });
 
   describe("get_profile_info", () => {
+    beforeEach(() => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.json([{ id: "15", name: "Zer0" }]),
+        ),
+      );
+    });
+
     it("returns profile details", async () => {
       const result = await handleToolCall("get_profile_info", {
         profile_id: "zer0",
@@ -218,8 +490,40 @@ describe("tool dispatch", () => {
       expect(result.text).toContain("Description");
       expect(result.structuredContent).toMatchObject({
         id: "zer0",
+        machineProfileId: "15",
         name: "Zer0",
       });
+    });
+
+    it("resolves a machine profile id as well as a documented one", async () => {
+      const result = await handleToolCall("get_profile_info", {
+        profile_id: "15",
+      });
+      expect(result.structuredContent).toMatchObject({ name: "Zer0" });
+    });
+
+    it("describes an undocumented machine profile without pretending", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.json([{ id: "42", name: "Sunday Filter Experiment" }]),
+        ),
+      );
+      const result = await handleToolCall("get_profile_info", {
+        profile_id: "42",
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(result.text).toContain("created on the machine");
+      expect(result.structuredContent).toMatchObject({ documented: false });
+    });
+
+    it("says when a documented profile is not loaded on the machine", async () => {
+      const result = await handleToolCall("get_profile_info", {
+        profile_id: "adaptive",
+      });
+      expect(result.isError).toBeFalsy();
+      expect(result.text).toContain("Not currently on the machine");
+      expect(result.structuredContent).toMatchObject({ onMachine: false });
     });
 
     it("returns an actionable error result for an unknown profile", async () => {
@@ -230,6 +534,183 @@ describe("tool dispatch", () => {
       expect(result.text).toContain("nonexistent");
       expect(result.text).toContain("Available ids:");
       expect(result.structuredContent).toBeUndefined();
+    });
+  });
+
+  describe("get_machine_settings", () => {
+    it("prints whatever the machine exposes, nested", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/settings", () =>
+          HttpResponse.json([
+            {
+              boiler: { offsetTemp: 8, steamSetPoint: 155 },
+              brew: { basketPrefill: true },
+            },
+          ]),
+        ),
+      );
+      const result = await handleToolCall("get_machine_settings", {});
+
+      expect(result.text).toContain("steamSetPoint: 155");
+      expect(result.text).toContain("offsetTemp: 8");
+      expect(result.text).toContain("basketPrefill: true");
+    });
+
+    it("passes through a field this server has never heard of", async () => {
+      // A schema that modelled the known knobs would drop exactly the field a
+      // user asking about a new firmware setting wants to see.
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/settings", () =>
+          HttpResponse.json([{ someFutureKnob: 3 }]),
+        ),
+      );
+      const result = await handleToolCall("get_machine_settings", {});
+      expect(result.text).toContain("someFutureKnob: 3");
+    });
+
+    it("reports an unreachable machine rather than inventing defaults", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/settings", () =>
+          HttpResponse.error(),
+        ),
+      );
+      const result = await handleToolCall("get_machine_settings", {});
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("Could not reach the Gaggiuino machine");
+    });
+  });
+
+  describe("select_profile", () => {
+    // `vi.stubEnv` outlives the test that set it, and this suite shares a
+    // process with the auth tests — leaving MCP_AUTH_TOKEN set would silently
+    // change what they are testing.
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    /** What the machine holds, plus a record of what it was asked to select. */
+    function machineHolding(profiles: Array<Record<string, unknown>>) {
+      const selected: string[] = [];
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.json(profiles),
+        ),
+        http.post(
+          "http://gaggiuino.local/api/profile-select/:id",
+          ({ params }) => {
+            selected.push(String(params.id));
+            return HttpResponse.text("OK");
+          },
+        ),
+      );
+      return selected;
+    }
+
+    it("refuses when the server has no auth token", async () => {
+      // The gate is the whole reason this tool waited on #19: an open /mcp
+      // over a tunnel would let anyone drive the machine.
+      vi.stubEnv("MCP_AUTH_TOKEN", "");
+      machineHolding([{ id: "15", name: "Zer0" }]);
+
+      const result = await handleToolCall("select_profile", {
+        profile_id: "zer0",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("MCP_AUTH_TOKEN");
+    });
+
+    describe("with the endpoint authenticated", () => {
+      beforeEach(() => {
+        vi.stubEnv("MCP_AUTH_TOKEN", "test-secret");
+      });
+
+      it("selects by documented id, posting the machine's own id", async () => {
+        const selected = machineHolding([{ id: "15", name: "Zer0" }]);
+
+        const result = await handleToolCall("select_profile", {
+          profile_id: "zer0",
+        });
+        expect(result.isError).toBeFalsy();
+        expect(selected).toEqual(["15"]);
+        expect(result.text).toContain("Zer0");
+      });
+
+      it("selects by the machine's own profile id", async () => {
+        const selected = machineHolding([{ id: "15", name: "Zer0" }]);
+
+        await handleToolCall("select_profile", { profile_id: "15" });
+        expect(selected).toEqual(["15"]);
+      });
+
+      it("accepts an ack that is not JSON", async () => {
+        // The reply format is a firmware detail. Parsing it would turn a
+        // successful selection into a failure, and then retry it.
+        const selected = machineHolding([{ id: "15", name: "Zer0" }]);
+        mockServer.use(
+          http.post("http://gaggiuino.local/api/profile-select/15", () => {
+            selected.push("15");
+            return new HttpResponse("done", { status: 200 });
+          }),
+        );
+
+        const result = await handleToolCall("select_profile", {
+          profile_id: "15",
+        });
+        expect(result.isError).toBeFalsy();
+        expect(selected).toEqual(["15"]);
+      });
+
+      it("will not select a documented profile the machine does not hold", async () => {
+        machineHolding([{ id: "15", name: "Zer0" }]);
+
+        const result = await handleToolCall("select_profile", {
+          profile_id: "adaptive",
+        });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("not loaded on the machine");
+      });
+
+      it("refuses rather than guessing when the machine is unreachable", async () => {
+        mockServer.use(
+          http.get("http://gaggiuino.local/api/profiles/all", () =>
+            HttpResponse.error(),
+          ),
+        );
+
+        const result = await handleToolCall("select_profile", {
+          profile_id: "zer0",
+        });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("could not be reached");
+      });
+
+      it("names the id it could not find", async () => {
+        machineHolding([{ id: "15", name: "Zer0" }]);
+
+        const result = await handleToolCall("select_profile", {
+          profile_id: "not-a-profile",
+        });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("Available ids:");
+      });
+
+      it("blames the id, not the firmware, on a 404 from the machine", async () => {
+        mockServer.use(
+          http.get("http://gaggiuino.local/api/profiles/all", () =>
+            HttpResponse.json([{ id: "99", name: "Zer0" }]),
+          ),
+          http.post("http://gaggiuino.local/api/profile-select/99", () =>
+            HttpResponse.json({ error: "no such profile" }, { status: 404 }),
+          ),
+        );
+
+        const result = await handleToolCall("select_profile", {
+          profile_id: "99",
+        });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("no profile with id '99'");
+        expect(result.text).not.toContain("firmware version");
+      });
     });
   });
 
@@ -263,6 +744,35 @@ describe("tool dispatch", () => {
       expect(result.text).toContain("Comparison shot:");
       expect(result.text).toContain("Time Stop Profile");
       expect(result.text).toContain("with comparison overlay");
+    });
+
+    it("costs one upstream fetch per shot, not one per caller", async () => {
+      // Rendering a graph is two reads of the same shot: this tool builds the
+      // text summary, then the app it renders calls get_shot_raw_json for the
+      // same id. With a comparison overlay that was four round trips to an
+      // ESP32 for two shots that had already finished.
+      let primary = 0;
+      let comparison = 0;
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/shots/1706547890", () => {
+          primary += 1;
+          return HttpResponse.json([mockShotData]);
+        }),
+        http.get("http://gaggiuino.local/api/shots/1706547894", () => {
+          comparison += 1;
+          return HttpResponse.json([mockShotWithTimeStop]);
+        }),
+      );
+
+      await handleToolCall("view_shot_graph", {
+        compare_shot_id: "1706547894",
+        shot_id: "1706547890",
+      });
+      await handleToolCall("get_shot_raw_json", { shot_id: "1706547890" });
+      await handleToolCall("get_shot_raw_json", { shot_id: "1706547894" });
+
+      expect(primary).toBe(1);
+      expect(comparison).toBe(1);
     });
   });
 

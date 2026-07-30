@@ -1,20 +1,28 @@
 import { type ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import {
+  extractOutcomeMetrics,
+  formatOutcomeMetrics,
+  formatShotLine,
   formatShotSummary,
   generateShotSummary,
   normalizeValue,
+  OutcomeMetricsSchema,
   SCALE_BY_10,
   ShotSummarySchema,
 } from "./analysis";
 import { getClient } from "./client";
+import { MalformedUpstreamError, UpstreamHttpError } from "./errors";
+import { MAX_RECENT_SHOTS, walkShotsBack } from "./history";
 import { loadPrompts } from "./loader";
+import { loadSecurityConfig } from "./mcpAuth";
 import {
-  getAllProfilesText,
-  getProfile,
-  listProfileEntries,
-  listProfileNames,
-} from "./profiles";
+  type CatalogEntry,
+  findCatalogEntry,
+  loadProfileCatalog,
+  type ProfileCatalog,
+} from "./profileCatalog";
+import { getAllProfilesText } from "./profiles";
 
 /**
  * Every tool in this server reads: nothing here mutates the machine or any
@@ -33,6 +41,26 @@ const READS_LOCAL_DATA: ToolAnnotations = {
   idempotentHint: true,
   openWorldHint: false,
   readOnlyHint: true,
+};
+
+/**
+ * The one tool that changes the machine.
+ *
+ * `readOnlyHint: false` is what tells a host to treat this differently from
+ * everything else here — it is the signal an approval prompt is keyed on, and
+ * claiming otherwise to avoid the prompt would be the dishonest annotation this
+ * repo's tests exist to catch.
+ *
+ * `destructiveHint: false` and `idempotentHint: true` are equally literal:
+ * selecting a profile replaces a selection rather than destroying anything, and
+ * selecting the same one twice leaves the machine exactly where selecting it
+ * once did. Nothing about the shot history changes.
+ */
+const WRITES_MACHINE: ToolAnnotations = {
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
+  readOnlyHint: false,
 };
 
 /**
@@ -88,8 +116,24 @@ const LatestShotIdOutput = z.object({
     .describe(
       "Id of the most recently recorded shot, or null when the machine has no shot history",
     ),
+  summary: OutcomeMetricsSchema.nullable().describe(
+    "Headline numbers for that shot, so the common 'how was my last shot' question needs no second call; null when there is no shot, or when the shot record itself could not be read",
+  ),
 });
 
+const RecentShotsOutput = z.object({
+  shots: z
+    .array(OutcomeMetricsSchema)
+    .describe("One entry per shot found, newest first"),
+});
+
+/**
+ * Every documentation-derived field is nullable, because a profile the user
+ * built on the machine is real and selectable and has none of them. Before the
+ * machine was the source of truth those fields could be required; a schema that
+ * still required them would force the merge to drop exactly the profiles the
+ * user cares most about.
+ */
 const ProfileOutput = z.object({
   basketNotes: z
     .string()
@@ -97,29 +141,66 @@ const ProfileOutput = z.object({
     .describe("Basket and dose notes for this profile, when documented"),
   description: z
     .string()
-    .describe("What the profile does and when to reach for it"),
+    .nullable()
+    .describe(
+      "What the profile does and when to reach for it; null for a profile this server has no documentation for",
+    ),
+  documented: z
+    .boolean()
+    .describe("Whether this server holds curated documentation for it"),
   id: z.string().describe('Id to pass to get_profile_info, e.g. "zer0"'),
+  machineProfileId: z
+    .string()
+    .nullable()
+    .describe(
+      "Id the machine knows this profile by, and the one select_profile takes; null when the profile is not on the machine or the machine did not supply one",
+    ),
   name: z.string().describe("Display name as shown on the machine"),
+  onMachine: z
+    .boolean()
+    .nullable()
+    .describe(
+      "True when the machine reported this profile, false when it did not, null when the machine could not be reached to ask",
+    ),
   recommendedDose: z
     .string()
     .nullable()
     .describe("Suggested dry dose, when documented"),
   roastLevels: z
     .array(z.string())
-    .describe('Roast levels this profile suits, e.g. ["light", "medium"]'),
+    .describe(
+      'Roast levels this profile suits, e.g. ["light", "medium"]; empty when undocumented',
+    ),
   targetRatio: z
     .string()
+    .nullable()
     .describe('Intended brew ratio, e.g. "1:2" (dose to yield)'),
-  targetTime: z.string().describe('Intended total shot time, e.g. "28-32s"'),
+  targetTime: z
+    .string()
+    .nullable()
+    .describe('Intended total shot time, e.g. "28-32s"'),
   type: z
     .string()
+    .nullable()
     .describe('Control strategy the profile uses, e.g. "flow" or "pressure"'),
 });
 
 const ProfileListOutput = z.object({
+  note: z
+    .string()
+    .describe(
+      "Where this list came from, and any caveat that applies to reading it",
+    ),
   profiles: z
     .array(ProfileOutput)
-    .describe("Every documented profile, complete — no follow-up call needed"),
+    .describe(
+      "Every profile, complete — no follow-up call needed. Machine profiles first, documented-but-absent ones last",
+    ),
+  source: z
+    .enum(["documentation", "machine"])
+    .describe(
+      "'machine' when the machine answered, 'documentation' when this server fell back to its bundled docs",
+    ),
 });
 
 type ObjectSchema = z.ZodObject;
@@ -229,20 +310,59 @@ function formatRawShotData(shot: Record<string, unknown>): string {
   return lines.join("\n");
 }
 
-function toProfileOutput(
-  profile: ReturnType<typeof listProfileEntries>[number],
-): z.input<typeof ProfileOutput> {
-  return {
-    basketNotes: profile.basketNotes ?? null,
-    description: profile.description,
-    id: profile.id,
-    name: profile.name,
-    recommendedDose: profile.recommendedDose ?? null,
-    roastLevels: profile.roastLevel,
-    targetRatio: profile.targetRatio,
-    targetTime: profile.targetTime,
-    type: profile.type,
-  };
+function formatProfileLine(entry: CatalogEntry): string {
+  const lines = [`### ${entry.name} (\`${entry.id}\`)`];
+  if (entry.onMachine === false) {
+    lines.push("- **Not currently on the machine** (documented here only)");
+  }
+  if (entry.machineProfileId !== null) {
+    lines.push(`- Machine profile id: ${entry.machineProfileId}`);
+  }
+  if (!entry.documented) {
+    lines.push("- No documentation on this server; created on the machine");
+    return lines.join("\n");
+  }
+  lines.push(
+    `- Type: ${entry.type}`,
+    `- Best for: ${entry.roastLevels.join(", ")} roasts`,
+    `- Target ratio: ${entry.targetRatio}`,
+    `- Target time: ${entry.targetTime}`,
+  );
+  return lines.join("\n");
+}
+
+function formatCatalog(catalog: ProfileCatalog): string {
+  return [
+    "# Brew Profiles",
+    "",
+    catalog.note,
+    "",
+    ...catalog.entries.map(formatProfileLine).flatMap((block) => [block, ""]),
+  ].join("\n");
+}
+
+/**
+ * Settings are printed rather than modelled. Which knobs a build exposes is a
+ * firmware decision, and a hand-written schema would silently drop the one a
+ * newer build added — which is the field a user asking about settings is most
+ * likely to be asking about.
+ */
+function formatSettings(
+  settings: Record<string, unknown>,
+  indent = "  ",
+): string[] {
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(settings)) {
+    if (value !== null && typeof value === "object") {
+      lines.push(
+        `${indent}${key}:`,
+        ...formatSettings(value as Record<string, unknown>, `${indent}  `),
+      );
+    } else {
+      lines.push(`${indent}${key}: ${String(value)}`);
+    }
+  }
+  return lines;
 }
 
 async function summarizeShot(shotId: string): Promise<string> {
@@ -279,21 +399,86 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   defineTool({
     annotations: READS_MACHINE,
     description:
-      "Get the id of the most recently recorded shot. This is the entry point for any shot question that does not already name an id — call it first, then pass the id to get_shot_data or view_shot_graph.",
+      "Get the most recently recorded shot: its id, and the headline numbers for it — duration, final weight against target, peak pressure, time to first drip, temperature stability. This is the entry point for any shot question that does not already name an id, and for 'how was my last shot' it is the only call needed. Use the returned id with get_shot_data for the phase-by-phase breakdown, or with view_shot_graph to chart it.",
     handler: async () => {
       const shotId = await getClient().getLatestShotId();
+      if (shotId === "") {
+        return {
+          structured: { shotId: null, summary: null },
+          text: "No shot history available.",
+        };
+      }
+
+      // The id is the answer this tool promises; the summary is a bonus that
+      // saves a round trip. A shot record that cannot be read should not cost
+      // the caller the id — an unreachable machine still propagates, since by
+      // then the id is stale news anyway.
+      let summary: z.output<typeof OutcomeMetricsSchema> | null = null;
+      try {
+        summary = extractOutcomeMetrics(await getClient().getShotData(shotId));
+      } catch (error) {
+        if (
+          !(error instanceof UpstreamHttpError) &&
+          !(error instanceof MalformedUpstreamError)
+        ) {
+          throw error;
+        }
+      }
+
       return {
-        structured: { shotId: shotId === "" ? null : shotId },
+        structured: { shotId, summary },
         text:
-          shotId === ""
-            ? "No shot history available."
-            : `Latest shot ID: ${shotId}`,
+          summary === null
+            ? `Latest shot ID: ${shotId}\n\nThe machine could not serve the record for this shot, so there is no summary. Ask for it again, or call get_shot_data with the id.`
+            : `Latest shot ID: ${shotId}\n\n${formatOutcomeMetrics(summary)}`,
       };
     },
     inputSchema: NoArgs,
     name: "get_latest_shot_id",
     outputSchema: LatestShotIdOutput,
-    title: "Get latest shot id",
+    title: "Get latest shot",
+  }),
+
+  defineTool({
+    annotations: READS_MACHINE,
+    description:
+      "List the most recent shots, newest first, each with the headline numbers: duration, final weight against target, peak pressure, time to first drip, temperature stability. Use this for questions about a run of shots — how the last five trended, whether a change helped — rather than calling get_shot_data once per id. The machine keeps a limited history and deleted shots leave gaps, so fewer shots than requested is a normal answer, not an error.",
+    handler: async (input) => {
+      const shots = await walkShotsBack({
+        before: input.before,
+        limit: input.limit,
+      });
+      const metrics = shots.map(extractOutcomeMetrics);
+      const heading =
+        input.before === undefined
+          ? "# Recent shots (newest first)"
+          : `# Shots before #${input.before} (newest first)`;
+      const body =
+        metrics.length === 0
+          ? "No shots found. The machine may have no history, or none older than the id given."
+          : metrics.map(formatShotLine).join("\n");
+      return {
+        structured: { shots: metrics },
+        text: `${heading}\n\n${body}`,
+      };
+    },
+    inputSchema: z.object({
+      before: ShotIdSchema.optional().describe(
+        "Only return shots older than this id. Use it to page further back, passing the oldest id from a previous response.",
+      ),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(MAX_RECENT_SHOTS)
+        .default(5)
+        .describe(
+          `How many shots to return, 1 to ${MAX_RECENT_SHOTS}. Each one is a separate request to the machine, so ask for what you need.`,
+        ),
+    }),
+    name: "list_recent_shots",
+    outputSchema: RecentShotsOutput,
+    title: "List recent shots",
   }),
 
   defineTool({
@@ -327,14 +512,18 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   }),
 
   defineTool({
-    annotations: READS_LOCAL_DATA,
+    annotations: READS_MACHINE,
     description:
-      "List the documented brew profiles with their control type, suited roast levels, target ratio, and target time. Returns each profile in full, so no follow-up call is needed to describe one. These come from this server's bundled documentation, not from the machine, so a profile the user created themselves may not appear.",
-    handler: () => {
-      const profiles = listProfileEntries().map(toProfileOutput);
+      "List the brew profiles on the machine, each merged with this server's documentation for it — control type, suited roast levels, target ratio, target time. Returns each profile in full, so no follow-up call is needed to describe one. A profile the user built on the machine appears with its documentation fields null; a profile this server documents that is not currently loaded appears with onMachine false. If the machine cannot be reached the bundled documentation is returned instead, and 'source' and 'note' say so.",
+    handler: async () => {
+      const catalog = await loadProfileCatalog();
       return {
-        structured: { profiles },
-        text: `# Available Brew Profiles\n\n${getAllProfilesText()}`,
+        structured: {
+          note: catalog.note,
+          profiles: catalog.entries,
+          source: catalog.source,
+        },
+        text: formatCatalog(catalog),
       };
     },
     inputSchema: NoArgs,
@@ -344,32 +533,109 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   }),
 
   defineTool({
-    annotations: READS_LOCAL_DATA,
+    annotations: READS_MACHINE,
     description:
-      "Get the full documentation for one brew profile, including its prose description. Call list_profiles first if you do not already have a profile id.",
-    handler: (input) => {
-      const profile = getProfile(input.profile_id);
-      if (!profile) {
+      "Get everything known about one brew profile: whether it is on the machine, the id select_profile would take, and its prose documentation when this server has any. Accepts a documented id, a machine profile id, or the profile's name. Call list_profiles first if you do not already have one.",
+    handler: async (input) => {
+      const { catalog, entry } = await findCatalogEntry(input.profile_id);
+      if (!entry) {
         return {
           isError: true,
-          text: `No documented profile with id '${input.profile_id}'. Available ids: ${listProfileNames().join(", ")}.`,
+          text: `No profile matching '${input.profile_id}'. Available ids: ${catalog.entries.map((candidate) => candidate.id).join(", ")}.`,
         };
       }
-      const structured = toProfileOutput({ id: input.profile_id, ...profile });
-      return {
-        structured,
-        text: [
-          `# ${profile.name}`,
+      const lines = [`# ${entry.name}`, ""];
+      if (entry.onMachine === false) {
+        lines.push(
+          "**Not currently on the machine.** This server documents it, but the machine did not report it.",
           "",
-          `**Type:** ${profile.type}`,
-          `**Best for:** ${profile.roastLevel.join(", ")} roasts`,
-          `**Target ratio:** ${profile.targetRatio}`,
-          `**Target time:** ${profile.targetTime}`,
+        );
+      }
+      if (entry.machineProfileId !== null) {
+        lines.push(`**Machine profile id:** ${entry.machineProfileId}`, "");
+      }
+      if (entry.documented) {
+        lines.push(
+          `**Type:** ${entry.type}`,
+          `**Best for:** ${entry.roastLevels.join(", ")} roasts`,
+          `**Target ratio:** ${entry.targetRatio}`,
+          `**Target time:** ${entry.targetTime}`,
           "",
           "## Description",
           "",
-          profile.description,
-        ].join("\n"),
+          entry.description ?? "",
+        );
+      } else {
+        lines.push(
+          "This profile was created on the machine, so this server has no documentation for it. Read its behaviour from a shot pulled with it — get_shot_data reports the phases the profile actually ran.",
+        );
+      }
+      return { structured: entry, text: lines.join("\n") };
+    },
+    inputSchema: z.object({
+      profile_id: z
+        .string()
+        .min(1)
+        .describe(
+          'Id, machine profile id, or name of a profile as listed by list_profiles, e.g. "zer0".',
+        ),
+    }),
+    name: "get_profile_info",
+    outputSchema: ProfileOutput,
+    title: "Get brew profile details",
+  }),
+
+  defineTool({
+    annotations: READS_MACHINE,
+    description:
+      "Read the machine's configuration: boiler and steam setpoints, temperature offset, scale and predictive-stop settings, and whatever else this firmware exposes. Useful as dial-in context — a brew temperature that never matches the profile usually shows up here as an offset rather than in the shot data. The fields are whatever the machine sends, so treat unfamiliar names as firmware-specific.",
+    handler: async () => {
+      const settings = await getClient().getSettings();
+      return {
+        text: ["Gaggiuino Settings:", ...formatSettings(settings)].join("\n"),
+      };
+    },
+    inputSchema: NoArgs,
+    name: "get_machine_settings",
+    title: "Get machine settings",
+  }),
+
+  defineTool({
+    annotations: WRITES_MACHINE,
+    description:
+      "Switch the machine to a different brew profile. This changes the machine, so confirm the profile with the user before calling it — do not select one on your own initiative from dial-in advice. Takes the id from list_profiles (either the documented id or the machineProfileId). The profile must already be on the machine; this cannot create one. Refuses unless this server is configured with an auth token, since an unauthenticated server exposed over a tunnel would let anyone reach it.",
+    handler: async (input) => {
+      // The gate is the token, not the origin allowlist: origin validation
+      // stops a browser on another site from calling us, but it does not
+      // authenticate anybody. An open /mcp is fine for tools that only read a
+      // shot history; it is not fine for one that touches the machine.
+      if (loadSecurityConfig().token === undefined) {
+        return {
+          isError: true,
+          text: "Profile selection is disabled because this server has no MCP_AUTH_TOKEN set, so its /mcp endpoint is unauthenticated. Every other tool here only reads. Ask the user to set MCP_AUTH_TOKEN (see the README's 'Securing the endpoint' section) and restart the server, or to change the profile on the machine itself.",
+        };
+      }
+
+      const { catalog, entry } = await findCatalogEntry(input.profile_id);
+      if (!entry) {
+        return {
+          isError: true,
+          text: `No profile matching '${input.profile_id}'. Available ids: ${catalog.entries.map((candidate) => candidate.id).join(", ")}.`,
+        };
+      }
+      if (entry.machineProfileId === null) {
+        return {
+          isError: true,
+          text:
+            catalog.source === "machine"
+              ? `'${entry.name}' is documented on this server but is not loaded on the machine, so it cannot be selected. Ask the user to add it on the machine first. Call list_profiles to see what is currently loaded.`
+              : `The machine could not be reached, so this server does not know the id '${entry.name}' has on it and cannot select it. ${catalog.note}`,
+        };
+      }
+
+      await getClient().selectProfile(entry.machineProfileId);
+      return {
+        text: `Selected profile '${entry.name}' (machine profile id ${entry.machineProfileId}). Call get_status to confirm the machine is reporting it, and give it a moment to come back up to temperature before the next shot.`,
       };
     },
     inputSchema: z.object({
@@ -377,12 +643,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         .string()
         .min(1)
         .describe(
-          'Id of a documented profile as listed by list_profiles, e.g. "zer0".',
+          'Id of the profile to select, as listed by list_profiles — either its documented id ("zer0") or its machineProfileId ("15").',
         ),
     }),
-    name: "get_profile_info",
-    outputSchema: ProfileOutput,
-    title: "Get brew profile details",
+    name: "select_profile",
+    title: "Select brew profile",
   }),
 
   defineTool({
@@ -458,6 +723,38 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
     name: "get_shot_raw_json",
     title: "Get raw shot JSON",
+  }),
+
+  defineTool({
+    annotations: READS_MACHINE,
+    description:
+      "Raw data for the shot recorded before the given one, for the shot graph UI's comparison overlay. The server finds the real previous id rather than assuming ids are contiguous. Not intended for the model — call list_recent_shots to reason about a run of shots.",
+    handler: async (input) => {
+      const [previous] = await walkShotsBack({
+        before: input.shot_id,
+        limit: 1,
+      });
+      if (!previous) {
+        return {
+          isError: true,
+          text: `There is no shot older than #${input.shot_id} left on the machine. Gaggiuino keeps a limited history, so the shots before this one may have already been deleted.`,
+        };
+      }
+      return { text: JSON.stringify(previous) };
+    },
+    inputSchema: z.object({
+      shot_id: ShotIdSchema.describe(
+        "Id of the shot to look back from. The response is the newest shot older than this one.",
+      ),
+    }),
+    meta: {
+      ui: {
+        resourceUri: "ui://shot-graph/app.html",
+        visibility: ["app"],
+      },
+    },
+    name: "get_previous_shot_json",
+    title: "Get previous shot JSON",
   }),
 ];
 

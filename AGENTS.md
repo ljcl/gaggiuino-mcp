@@ -42,16 +42,22 @@ via symlinks in `.claude/skills/`. Externally-sourced skills are tracked in `ski
 
 ## MCP Tools
 
-| Tool                   | Purpose                                        |
-| ---------------------- | ---------------------------------------------- |
-| `get_status`           | Machine status (temp, pressure, weight)        |
-| `get_latest_shot_id`   | Most recent shot ID                            |
-| `get_shot_data`        | Structured shot summary (default for analysis) |
-| `get_shot_raw_data`    | Complete time-series datapoints                |
-| `view_shot_graph`      | Interactive chart (MCP App with UI resource)   |
-| `list_profiles`        | Available brew profiles                        |
-| `get_profile_info`     | Detailed profile documentation                 |
-| `get_dial_in_guidance` | Expert dial-in system prompt                   |
+| Tool                    | Purpose                                             |
+| ----------------------- | --------------------------------------------------- |
+| `get_status`            | Machine status (temp, pressure, weight)             |
+| `get_latest_shot_id`    | Most recent shot: id **and** its outcome metrics    |
+| `list_recent_shots`     | Bounded walk back through history, summaries only   |
+| `get_shot_data`         | Structured shot summary (default for analysis)      |
+| `get_shot_raw_data`     | Complete time-series datapoints                     |
+| `view_shot_graph`       | Interactive chart (MCP App with UI resource)        |
+| `list_profiles`         | Machine's profiles, merged with bundled docs        |
+| `get_profile_info`      | Everything known about one profile                  |
+| `get_machine_settings`  | Boiler/steam/scale config as the firmware sends it  |
+| `select_profile`        | **Write.** Switch profile; needs `MCP_AUTH_TOKEN`   |
+| `get_dial_in_guidance`  | Expert dial-in system prompt                        |
+
+App-only (`visibility: ["app"]`, not advertised to the model): `get_shot_raw_json`
+and `get_previous_shot_json`.
 
 ### The tool contract
 
@@ -70,15 +76,28 @@ annotations, and the handler. Nothing about a tool is declared twice.
   handler's `structured` payload is `.parse()`d before it becomes
   `structuredContent`, so a handler that drifts from its schema fails loudly
   instead of shipping something the host will reject. `get_status`,
-  `get_latest_shot_id`, `get_shot_data`, `list_profiles`, and `get_profile_info`
-  carry output schemas; the raw/UI/prose tools are text-only by design.
-  `get_shot_raw_json` in particular must keep returning a JSON **text** block —
-  the shot-graph app parses it with `readToolJson` (`packages/ui/src/host/toolResult.ts`).
+  `get_latest_shot_id`, `list_recent_shots`, `get_shot_data`, `list_profiles`,
+  and `get_profile_info` carry output schemas; the raw/UI/prose tools are
+  text-only by design. `get_shot_raw_json` and `get_previous_shot_json` in
+  particular must keep returning a JSON **text** block — the shot-graph app
+  parses both with `readToolJson` (`packages/ui/src/host/toolResult.ts`).
+  `get_machine_settings` is text-only *deliberately*: which knobs a firmware
+  build exposes is its own decision, and a schema modelling the known ones would
+  drop the field a user asking about a new setting is asking about.
 - **Annotations are honest, not decorative.** Every tool is
-  `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`. The
-  only axis that varies is `openWorldHint`: true for the tools that reach the
-  machine, false for the three that read bundled YAML. A protocol-level test
-  asserts this for every tool, so a new tool without annotations fails CI.
+  `destructiveHint: false` and `idempotentHint: true`, and every tool but one is
+  `readOnlyHint: true`. `select_profile` is the exception and carries
+  `readOnlyHint: false`, because that flag is what a host keys an approval
+  prompt on — claiming otherwise to dodge the prompt is the dishonest annotation
+  the tests exist to catch. `openWorldHint` is true for every tool that reaches
+  the machine and false for `get_dial_in_guidance`, now the only one that reads
+  bundled YAML and nothing else — `list_profiles` and `get_profile_info` flipped
+  to open-world when they started reading the machine's own inventory.
+  `server.test.ts` names the write tools
+  in a set rather than deriving them from the annotations under test, so a new
+  write tool is a deliberate edit and a read tool that quietly loses
+  `readOnlyHint` fails; `http.test.ts` re-asserts the write hint over the real
+  transport, since `annotations` is exactly what a transport is free to drop.
 - **Expected failures are results, not exceptions.** `errors.ts` defines the
   three upstream failure classes (`UpstreamUnreachableError`,
   `UpstreamHttpError`, `MalformedUpstreamError`) and `describeUpstreamError`
@@ -94,6 +113,84 @@ annotations, and the handler. Nothing about a tool is declared twice.
 `resetClient(config?)` in `client.ts` is a labelled test seam: it drops the
 cached client and applies the config to the next one, which is how tests
 exercise the retry path without waiting out the real backoff.
+
+### The upstream is one ESP32 on Wi-Fi
+
+Three rules in `client.ts` follow from that, and each replaced something that
+looked reasonable in isolation.
+
+- **Immutable things are cached; live readings are not.** `cache.ts` is a
+  bounded TTL+LRU store with an injected clock. Completed shots get ten
+  minutes — the machine writes a shot record once and never revises it — and
+  `/api/shots/latest` gets five seconds, enough to fold the burst one question
+  makes without pinning a stale id. `/api/system/status` is deliberately
+  uncached: every value it reports is instantaneous and its own description
+  promises the caller a fresh reading. Rendering one graph used to fetch the
+  same shot twice (tool summary, then the app's `get_shot_raw_json`), which a
+  comparison overlay turned into four round trips for two shots that had
+  already finished.
+- **A cache hit must never call `recordUpstream("ok")`.** `/health` answers "is
+  the machine up *now*", and remembering a shot it sent ten minutes ago is not
+  evidence that it is. Getting this backwards makes the endpoint claim a
+  machine is up long after it was switched off, which is the one question it
+  exists to answer.
+- **5xx is transient, 4xx is not.** Every HTTP status used to short-circuit the
+  retry loop on the reasoning that the machine had given a definitive answer —
+  true of a 404, false of the 503 a microcontroller webserver returns while it
+  is busy writing a shot to flash. `isRetriableStatus` covers 5xx, 408, and 429,
+  and when retries run out on an HTTP error the `UpstreamHttpError` is thrown
+  rather than an `UpstreamUnreachableError`: a machine that answered 503 three
+  times is reachable and faulty, which is different advice to give the user.
+
+There is also an **overall deadline** (`overallTimeoutMs`, 20s) on top of the
+per-attempt timeout, because three attempts at 10s plus 1.5s and 3s of backoff
+is ~34s — past the point most hosts abandon a tool call, so the model got a
+timeout with no message instead of "the machine may be powered off". A retry
+whose backoff will not fit in the remaining budget is not made at all: skipping
+the wait and retrying immediately is just hammering a machine that has already
+failed.
+
+`perform()` is the retry loop and takes a `BodyReader`, which is what lets
+`selectProfile` POST without `.json()` running over an ack whose format is a
+firmware detail — parsing it would turn a successful selection into a failure
+and then retry it.
+
+### Shot ids have gaps
+
+`history.ts` owns the walk back through history, and it exists because `id - 1`
+is a guess. Gaggiuino keeps a bounded history, a deleted shot leaves a hole, and
+after shot #1 the arithmetic asks for shot #0. Both the app's "compare previous"
+button and `list_recent_shots` go through `walkShotsBack`, which absorbs 404s as
+gaps, stops at id 1, and — because every probe is a request to the machine —
+spends at most `MAX_GAP_PROBES` misses before giving up. Running off the end of
+retained history is the normal case and looks exactly like a run of 404s.
+
+Anything that is *not* a 404 propagates. A partial list that quietly dropped the
+shots a broken machine could not serve would be indistinguishable from a
+complete one.
+
+### The machine owns what exists; the YAML owns what it means
+
+`profileCatalog.ts` joins `/api/profiles/all` to `data/profiles.yaml` on the
+profile's name. Before it, `list_profiles` served curated documentation as if it
+were the machine's inventory: a profile the user built never appeared, one they
+deleted still did, and dial-in advice could recommend switching to something
+that was not there.
+
+Three cases, and the widened `ProfileOutput` schema exists for the second:
+
+- **On the machine, documented** — everything filled in.
+- **On the machine, undocumented** — real and selectable, every documentation
+  field `null`. A schema that still required `description`/`type`/`targetRatio`
+  would force the merge to drop exactly the profiles the user cares most about.
+- **Documented, not on the machine** — listed last with `onMachine: false`, so
+  nothing recommends loading it without saying so first.
+
+When the machine cannot be reached the catalog degrades to the documentation and
+sets `source: "documentation"`, with `note` carrying the *upstream's own*
+diagnostic rather than a generic "unavailable". `onMachine` is then `null`, not
+`false` — this server did not check, and saying it did would be the same class of
+lie the split exists to fix.
 
 ### The advertised surface is a permission-grant key
 
@@ -167,7 +264,9 @@ The `view_shot_graph` tool renders an interactive Recharts chart in MCP-compatib
 - Bundled as single HTML file via `vite-plugin-singlefile` (~1MB)
 - Served as MCP resource at `ui://shot-graph/app.html`
 - Calls `get_shot_raw_json` (app-only visibility) to fetch data after render
-- Supports shot comparison overlay
+- Supports shot comparison overlay; "Compare previous" calls
+  `get_previous_shot_json`, which resolves the real previous id server-side
+  rather than subtracting one from the current one
 
 ### The series registry
 
@@ -735,7 +834,7 @@ curl -X POST http://localhost:8000/mcp \
 | `GAGGIUINO_URL`       | `http://gaggiuino.local` | Gaggiuino machine URL                             |
 | `PORT`                | `8000`                   | Server port                                       |
 | `HOST`                | `0.0.0.0`                | Bind address                                      |
-| `MCP_AUTH_TOKEN`      | _(unset)_                | Bearer secret for `/mcp`; unset serves it open    |
+| `MCP_AUTH_TOKEN`      | _(unset)_                | Bearer secret for `/mcp`; unset serves it open and disables `select_profile` |
 | `MCP_ALLOWED_ORIGINS` | _(empty)_                | Browser origins allowed on `/mcp`; `*` allows any |
 | `MCP_ALLOWED_HOSTS`   | _(empty)_                | `Host` values to accept; empty disables the check |
 | `LOG_LEVEL`           | `info`                   | `debug`/`info`/`warn`/`error`/`silent`            |

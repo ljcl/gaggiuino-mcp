@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getAllProfilesText, getProfile, listProfileNames } from "./profiles";
+import { getAllProfilesText, getProfile, listProfileEntries } from "./profiles";
 
 describe("getProfile", () => {
   it("returns profile by ID", () => {
@@ -14,12 +14,13 @@ describe("getProfile", () => {
   });
 });
 
-describe("listProfileNames", () => {
-  it("returns array of profile IDs", () => {
-    const names = listProfileNames();
-    expect(Array.isArray(names)).toBe(true);
-    expect(names).toContain("zer0");
-    expect(names).toContain("adaptive");
+describe("listProfileEntries", () => {
+  it("carries the id each profile is keyed by", () => {
+    const entries = listProfileEntries();
+    expect(entries.map((entry) => entry.id)).toEqual(
+      expect.arrayContaining(["zer0", "adaptive"]),
+    );
+    expect(entries.find((entry) => entry.id === "zer0")?.name).toBe("Zer0");
   });
 });
 

@@ -251,10 +251,14 @@ function formatWeightLine(metrics: OutcomeMetrics): string {
   return `  Final Weight: ${final.toFixed(1)}g`;
 }
 
-export function formatShotSummary(summary: ShotSummary): string {
-  const { outcomeMetrics: metrics, phases } = summary;
-
-  const lines = [
+/**
+ * The headline block, without the phase breakdown.
+ *
+ * Shared so `get_latest_shot_id` can fold a shot's outcome into its answer
+ * without the phase-by-phase detail that makes `get_shot_data` a separate tool.
+ */
+export function formatOutcomeMetrics(metrics: OutcomeMetrics): string {
+  return [
     `Shot #${metrics.shotId} Summary`,
     `Profile: ${metrics.profileName}`,
     "",
@@ -265,9 +269,30 @@ export function formatShotSummary(summary: ShotSummary): string {
     `  Peak Pressure: ${metrics.peakPressureBar.toFixed(1)} bar`,
     `  Water Pumped: ${metrics.waterPumpedMl.toFixed(1)}ml`,
     `  Temperature: ${metrics.tempStability}`,
-    "",
-    "=== Phase Breakdown ===",
-  ];
+  ].join("\n");
+}
+
+/** One shot on one line, for listings where a full summary would be noise. */
+export function formatShotLine(metrics: OutcomeMetrics): string {
+  const weight =
+    metrics.targetWeightG !== null
+      ? `${metrics.finalWeightG.toFixed(1)}g of ${metrics.targetWeightG}g`
+      : `${metrics.finalWeightG.toFixed(1)}g`;
+  return [
+    `#${metrics.shotId}`,
+    metrics.profileName,
+    `${metrics.totalDurationSec.toFixed(1)}s`,
+    weight,
+    `peak ${metrics.peakPressureBar.toFixed(1)} bar`,
+    `first drip ${metrics.timeToFirstDripSec === null ? "N/A" : `${metrics.timeToFirstDripSec.toFixed(1)}s`}`,
+    `temp ${metrics.tempStability}`,
+  ].join(" | ");
+}
+
+export function formatShotSummary(summary: ShotSummary): string {
+  const { outcomeMetrics: metrics, phases } = summary;
+
+  const lines = [formatOutcomeMetrics(metrics), "", "=== Phase Breakdown ==="];
 
   for (const phase of phases) {
     lines.push(`\nPhase ${phase.phaseNumber} (${phase.type}):`);
