@@ -382,9 +382,18 @@ describe("tools/list over the real transport", () => {
       expect(tool.annotations, `${tool.name} annotations`).toMatchObject({
         destructiveHint: false,
         idempotentHint: true,
-        readOnlyHint: true,
+        readOnlyHint: tool.name !== "select_profile",
       });
     }
+  });
+
+  it("does not lose the write hint in transit", async () => {
+    // `annotations` is exactly the field an SDK or transport version is free
+    // to drop, and a write tool arriving without readOnlyHint: false reads as
+    // just another read — no prompt before the machine changes.
+    const tools = await listTools();
+    const write = tools.find((tool) => tool.name === "select_profile");
+    expect(write?.annotations?.readOnlyHint).toBe(false);
   });
 
   it("serves the MCP App wiring intact", async () => {

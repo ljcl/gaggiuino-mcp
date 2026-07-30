@@ -252,20 +252,52 @@ export function createClient(config: ClientConfig) {
   const cache = createCache<unknown>({ maxEntries: cacheMaxEntries, now });
 
   interface RequestOptions {
+    method?: "GET" | "POST";
     /** Serve this path from cache for this long. Omit to always fetch. */
     ttlMs?: number;
+  }
+
+  /**
+   * How a successful response becomes a value.
+   *
+   * Split out because not every endpoint answers with JSON. `profile-select`
+   * replies with a short ack whose format is a firmware detail, and calling
+   * `.json()` on it would turn a successful selection into a parse failure and
+   * then — since a syntax error is not one of the definitive failures — retry
+   * a request that had already worked.
+   */
+  type BodyReader<T> = (response: Response, path: string) => Promise<T>;
+
+  function jsonReader<T>(
+    schema: z.ZodType<T>,
     /**
      * Whether a one-element array should be treated as the object inside it.
      * True for every endpoint that returns a single record, and false for the
      * ones whose array *is* the answer.
      */
-    unwrap?: boolean;
+    unwrap: boolean,
+  ): BodyReader<T> {
+    return async (response, path) => {
+      const body = await response.json();
+      const parsed = schema.safeParse(unwrap ? unwrapArray(body) : body);
+      if (!parsed.success) {
+        throw new MalformedUpstreamError(path, describeIssues(parsed.error));
+      }
+      return parsed.data;
+    };
   }
 
-  async function request<T>(
+  /** For endpoints whose whole answer is the status code. */
+  const statusReader: BodyReader<void> = async (response) => {
+    // Drained rather than ignored so the connection is released; the ESP32
+    // serves one request at a time and a dangling body costs the next caller.
+    await response.text().catch(() => "");
+  };
+
+  async function perform<T>(
     path: string,
-    schema: z.ZodType<T>,
-    { ttlMs, unwrap = true }: RequestOptions = {},
+    read: BodyReader<T>,
+    { method = "GET", ttlMs }: RequestOptions = {},
   ): Promise<T> {
     if (ttlMs !== undefined) {
       const hit = cache.get(path);
@@ -299,6 +331,7 @@ export function createClient(config: ClientConfig) {
 
       try {
         const response = await fetch(`${normalizedBaseUrl}${path}`, {
+          method,
           signal: controller.signal,
         });
 
@@ -313,13 +346,9 @@ export function createClient(config: ClientConfig) {
           );
         }
 
-        const body = await response.json();
-        const parsed = schema.safeParse(unwrap ? unwrapArray(body) : body);
-        if (!parsed.success) {
-          throw new MalformedUpstreamError(path, describeIssues(parsed.error));
-        }
-        if (ttlMs !== undefined) cache.set(path, parsed.data, ttlMs);
-        return parsed.data;
+        const value = await read(response, path);
+        if (ttlMs !== undefined) cache.set(path, value, ttlMs);
+        return value;
       } catch (error) {
         // A body we cannot parse is a definitive answer: the machine is
         // running firmware this server does not understand, and asking it
@@ -355,6 +384,15 @@ export function createClient(config: ClientConfig) {
     throw new UpstreamUnreachableError(Math.max(attempts, 1), reason);
   }
 
+  function request<T>(
+    path: string,
+    schema: z.ZodType<T>,
+    options: RequestOptions & { unwrap?: boolean } = {},
+  ): Promise<T> {
+    const { unwrap = true, ...rest } = options;
+    return perform(path, jsonReader(schema, unwrap), rest);
+  }
+
   return {
     async getLatestShotId(): Promise<string> {
       const data = await request("/api/shots/latest", LatestShotSchema, {
@@ -384,6 +422,23 @@ export function createClient(config: ClientConfig) {
 
     async getStatus(): Promise<MachineStatus> {
       return request("/api/system/status", MachineStatusSchema);
+    },
+
+    /**
+     * The one call in this client that changes the machine.
+     *
+     * Retrying it is safe for the same reason the tool advertises
+     * `idempotentHint: true`: selecting profile 15 twice leaves the machine in
+     * the state selecting it once does. That is a property of this endpoint,
+     * not of POST in general — a future write that is not idempotent must not
+     * inherit this loop without saying so.
+     */
+    async selectProfile(machineProfileId: string): Promise<void> {
+      await perform(
+        `/api/profile-select/${encodeURIComponent(machineProfileId)}`,
+        statusReader,
+        { method: "POST" },
+      );
     },
   };
 }

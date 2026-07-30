@@ -1,5 +1,5 @@
 import { HttpResponse, http } from "msw";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   mockLatestShotResponse,
   mockMachineStatus,
@@ -555,6 +555,140 @@ describe("tool dispatch", () => {
       const result = await handleToolCall("get_machine_settings", {});
       expect(result.isError).toBe(true);
       expect(result.text).toContain("Could not reach the Gaggiuino machine");
+    });
+  });
+
+  describe("select_profile", () => {
+    // `vi.stubEnv` outlives the test that set it, and this suite shares a
+    // process with the auth tests — leaving MCP_AUTH_TOKEN set would silently
+    // change what they are testing.
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    /** What the machine holds, plus a record of what it was asked to select. */
+    function machineHolding(profiles: Array<Record<string, unknown>>) {
+      const selected: string[] = [];
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.json(profiles),
+        ),
+        http.post(
+          "http://gaggiuino.local/api/profile-select/:id",
+          ({ params }) => {
+            selected.push(String(params.id));
+            return HttpResponse.text("OK");
+          },
+        ),
+      );
+      return selected;
+    }
+
+    it("refuses when the server has no auth token", async () => {
+      // The gate is the whole reason this tool waited on #19: an open /mcp
+      // over a tunnel would let anyone drive the machine.
+      vi.stubEnv("MCP_AUTH_TOKEN", "");
+      machineHolding([{ id: "15", name: "Zer0" }]);
+
+      const result = await handleToolCall("select_profile", {
+        profile_id: "zer0",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("MCP_AUTH_TOKEN");
+    });
+
+    describe("with the endpoint authenticated", () => {
+      beforeEach(() => {
+        vi.stubEnv("MCP_AUTH_TOKEN", "test-secret");
+      });
+
+      it("selects by documented id, posting the machine's own id", async () => {
+        const selected = machineHolding([{ id: "15", name: "Zer0" }]);
+
+        const result = await handleToolCall("select_profile", {
+          profile_id: "zer0",
+        });
+        expect(result.isError).toBeFalsy();
+        expect(selected).toEqual(["15"]);
+        expect(result.text).toContain("Zer0");
+      });
+
+      it("selects by the machine's own profile id", async () => {
+        const selected = machineHolding([{ id: "15", name: "Zer0" }]);
+
+        await handleToolCall("select_profile", { profile_id: "15" });
+        expect(selected).toEqual(["15"]);
+      });
+
+      it("accepts an ack that is not JSON", async () => {
+        // The reply format is a firmware detail. Parsing it would turn a
+        // successful selection into a failure, and then retry it.
+        const selected = machineHolding([{ id: "15", name: "Zer0" }]);
+        mockServer.use(
+          http.post("http://gaggiuino.local/api/profile-select/15", () => {
+            selected.push("15");
+            return new HttpResponse("done", { status: 200 });
+          }),
+        );
+
+        const result = await handleToolCall("select_profile", {
+          profile_id: "15",
+        });
+        expect(result.isError).toBeFalsy();
+        expect(selected).toEqual(["15"]);
+      });
+
+      it("will not select a documented profile the machine does not hold", async () => {
+        machineHolding([{ id: "15", name: "Zer0" }]);
+
+        const result = await handleToolCall("select_profile", {
+          profile_id: "adaptive",
+        });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("not loaded on the machine");
+      });
+
+      it("refuses rather than guessing when the machine is unreachable", async () => {
+        mockServer.use(
+          http.get("http://gaggiuino.local/api/profiles/all", () =>
+            HttpResponse.error(),
+          ),
+        );
+
+        const result = await handleToolCall("select_profile", {
+          profile_id: "zer0",
+        });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("could not be reached");
+      });
+
+      it("names the id it could not find", async () => {
+        machineHolding([{ id: "15", name: "Zer0" }]);
+
+        const result = await handleToolCall("select_profile", {
+          profile_id: "not-a-profile",
+        });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("Available ids:");
+      });
+
+      it("blames the id, not the firmware, on a 404 from the machine", async () => {
+        mockServer.use(
+          http.get("http://gaggiuino.local/api/profiles/all", () =>
+            HttpResponse.json([{ id: "99", name: "Zer0" }]),
+          ),
+          http.post("http://gaggiuino.local/api/profile-select/99", () =>
+            HttpResponse.json({ error: "no such profile" }, { status: 404 }),
+          ),
+        );
+
+        const result = await handleToolCall("select_profile", {
+          profile_id: "99",
+        });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("no profile with id '99'");
+        expect(result.text).not.toContain("firmware version");
+      });
     });
   });
 

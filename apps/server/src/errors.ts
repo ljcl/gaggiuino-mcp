@@ -49,6 +49,18 @@ function shotIdFromPath(path: string): string | undefined {
 }
 
 /**
+ * Pull the profile id back out of a `/api/profile-select/<id>` path.
+ *
+ * Without this a bad profile id came back as "the machine has no endpoint at
+ * /api/profile-select/99", which reads as a firmware problem and sends the user
+ * looking in entirely the wrong place.
+ */
+function profileIdFromPath(path: string): string | undefined {
+  const match = path.match(/^\/api\/profile-select\/([^/]+)$/);
+  return match?.[1] === undefined ? undefined : decodeURIComponent(match[1]);
+}
+
+/**
  * Render an upstream failure as text a model can act on, or return `null` when
  * the error is not one of ours (in which case the caller should not pretend to
  * understand it).
@@ -65,6 +77,10 @@ export function describeUpstreamError(
     const shotId = shotIdFromPath(error.path);
     if (error.status === 404 && shotId !== undefined) {
       return `No shot with id '${shotId}' exists on the machine. Gaggiuino keeps only a limited shot history, so older ids expire. Call get_latest_shot_id to get the id of the most recent shot, then retry.`;
+    }
+    const selectedProfileId = profileIdFromPath(error.path);
+    if (error.status === 404 && selectedProfileId !== undefined) {
+      return `The machine has no profile with id '${selectedProfileId}', so nothing was changed. Call list_profiles to see the ids it actually holds — the id select_profile needs is the machineProfileId field, not the documentation id.`;
     }
     if (error.status === 404) {
       return `The Gaggiuino machine has no endpoint at ${error.path} (HTTP 404). This usually means the machine is running a firmware version that does not expose it.`;

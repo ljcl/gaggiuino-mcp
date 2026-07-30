@@ -15,6 +15,7 @@ import { getClient } from "./client";
 import { MalformedUpstreamError, UpstreamHttpError } from "./errors";
 import { MAX_RECENT_SHOTS, walkShotsBack } from "./history";
 import { loadPrompts } from "./loader";
+import { loadSecurityConfig } from "./mcpAuth";
 import {
   type CatalogEntry,
   findCatalogEntry,
@@ -40,6 +41,26 @@ const READS_LOCAL_DATA: ToolAnnotations = {
   idempotentHint: true,
   openWorldHint: false,
   readOnlyHint: true,
+};
+
+/**
+ * The one tool that changes the machine.
+ *
+ * `readOnlyHint: false` is what tells a host to treat this differently from
+ * everything else here — it is the signal an approval prompt is keyed on, and
+ * claiming otherwise to avoid the prompt would be the dishonest annotation this
+ * repo's tests exist to catch.
+ *
+ * `destructiveHint: false` and `idempotentHint: true` are equally literal:
+ * selecting a profile replaces a selection rather than destroying anything, and
+ * selecting the same one twice leaves the machine exactly where selecting it
+ * once did. Nothing about the shot history changes.
+ */
+const WRITES_MACHINE: ToolAnnotations = {
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
+  readOnlyHint: false,
 };
 
 /**
@@ -574,6 +595,56 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: NoArgs,
     name: "get_machine_settings",
     title: "Get machine settings",
+  }),
+
+  defineTool({
+    annotations: WRITES_MACHINE,
+    description:
+      "Switch the machine to a different brew profile. This changes the machine, so confirm the profile with the user before calling it — do not select one on your own initiative from dial-in advice. Takes the id from list_profiles (either the documented id or the machineProfileId). The profile must already be on the machine; this cannot create one. Refuses unless this server is configured with an auth token, since an unauthenticated server exposed over a tunnel would let anyone reach it.",
+    handler: async (input) => {
+      // The gate is the token, not the origin allowlist: origin validation
+      // stops a browser on another site from calling us, but it does not
+      // authenticate anybody. An open /mcp is fine for tools that only read a
+      // shot history; it is not fine for one that touches the machine.
+      if (loadSecurityConfig().token === undefined) {
+        return {
+          isError: true,
+          text: "Profile selection is disabled because this server has no MCP_AUTH_TOKEN set, so its /mcp endpoint is unauthenticated. Every other tool here only reads. Ask the user to set MCP_AUTH_TOKEN (see the README's 'Securing the endpoint' section) and restart the server, or to change the profile on the machine itself.",
+        };
+      }
+
+      const { catalog, entry } = await findCatalogEntry(input.profile_id);
+      if (!entry) {
+        return {
+          isError: true,
+          text: `No profile matching '${input.profile_id}'. Available ids: ${catalog.entries.map((candidate) => candidate.id).join(", ")}.`,
+        };
+      }
+      if (entry.machineProfileId === null) {
+        return {
+          isError: true,
+          text:
+            catalog.source === "machine"
+              ? `'${entry.name}' is documented on this server but is not loaded on the machine, so it cannot be selected. Ask the user to add it on the machine first. Call list_profiles to see what is currently loaded.`
+              : `The machine could not be reached, so this server does not know the id '${entry.name}' has on it and cannot select it. ${catalog.note}`,
+        };
+      }
+
+      await getClient().selectProfile(entry.machineProfileId);
+      return {
+        text: `Selected profile '${entry.name}' (machine profile id ${entry.machineProfileId}). Call get_status to confirm the machine is reporting it, and give it a moment to come back up to temperature before the next shot.`,
+      };
+    },
+    inputSchema: z.object({
+      profile_id: z
+        .string()
+        .min(1)
+        .describe(
+          'Id of the profile to select, as listed by list_profiles — either its documented id ("zer0") or its machineProfileId ("15").',
+        ),
+    }),
+    name: "select_profile",
+    title: "Select brew profile",
   }),
 
   defineTool({

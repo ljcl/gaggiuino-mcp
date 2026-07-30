@@ -927,6 +927,30 @@
     "annotations": {
       "destructiveHint": false,
       "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    },
+    "description": "Switch the machine to a different brew profile. This changes the machine, so confirm the profile with the user before calling it — do not select one on your own initiative from dial-in advice. Takes the id from list_profiles (either the documented id or the machineProfileId). The profile must already be on the machine; this cannot create one. Refuses unless this server is configured with an auth token, since an unauthenticated server exposed over a tunnel would let anyone reach it.",
+    "inputSchema": {
+      "properties": {
+        "profile_id": {
+          "description": "Id of the profile to select, as listed by list_profiles — either its documented id (\"zer0\") or its machineProfileId (\"15\").",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "profile_id"
+      ],
+      "type": "object"
+    },
+    "name": "select_profile",
+    "title": "Select brew profile"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
       "openWorldHint": false,
       "readOnlyHint": true
     },
