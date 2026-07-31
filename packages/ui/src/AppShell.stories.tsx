@@ -1,6 +1,7 @@
 import { type Meta, type StoryObj } from "@storybook/react";
 import { fn } from "storybook/test";
 import { AppShell } from "./AppShell";
+import { ErrorState } from "./ErrorState";
 import { DownloadIcon, ExpandIcon } from "./icons";
 import { Skeleton } from "./Skeleton";
 import { ToolbarButton } from "./ToolbarButton";
@@ -113,6 +114,40 @@ export const Loading: Story = {
     children: <Skeleton />,
     mode: "desktop",
   },
+};
+
+/**
+ * The failure composition `main.tsx` actually mounts: the shell, holding an
+ * `ErrorState` carrying the server's own diagnostic. Stories covered the happy
+ * path and the loading state but never this one, so the arrangement a user is
+ * most likely to be looking at when something has gone wrong went unrendered.
+ */
+export const WithError: Story = {
+  args: {
+    children: (
+      <ErrorState
+        message="Could not reach the Gaggiuino machine at http://gaggiuino.local. The machine may be powered off, asleep, or unreachable on the network. Ask the user to check that it is turned on and connected."
+        onRetry={fn()}
+        title="Couldn't load this shot"
+      />
+    ),
+    mode: "desktop",
+  },
+};
+
+/** The same failure on the card-sized layout, where it has least room. */
+export const MobileWithError: Story = {
+  args: {
+    children: (
+      <ErrorState
+        message="No shot with id '1706547890' exists on the machine. Gaggiuino keeps only a limited shot history, so older ids expire."
+        onRetry={fn()}
+        title="Couldn't load this shot"
+      />
+    ),
+    mode: "mobile",
+  },
+  globals: { viewport: { value: "claudeIosCard" } },
 };
 
 export const DarkTheme: Story = {
