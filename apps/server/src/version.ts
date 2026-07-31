@@ -15,7 +15,7 @@
  * annotation ever stops firing, that test fails instead of the handshake
  * quietly freezing at whatever version last shipped.
  */
-export const SERVER_VERSION = "1.5.0"; // x-release-please-version
+export const SERVER_VERSION = "1.6.0"; // x-release-please-version
 
 /** The server name advertised in the handshake, and the MCP registry's key for it. */
 export const SERVER_NAME = "gaggiuino-mcp";
