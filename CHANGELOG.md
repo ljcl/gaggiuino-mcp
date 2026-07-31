@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/ljcl/gaggiuino-mcp/compare/v1.5.0...v1.6.0) (2026-07-31)
+
+
+### Features
+
+* **server:** package the dial-in workflows as prompts ([#87](https://github.com/ljcl/gaggiuino-mcp/issues/87)) ([0aa6e83](https://github.com/ljcl/gaggiuino-mcp/commit/0aa6e83816510b0ce6c0384ecde3ab7a171ae409))
+
 ## [1.5.0](https://github.com/ljcl/gaggiuino-mcp/compare/v1.4.0...v1.5.0) (2026-07-30)
 
 
