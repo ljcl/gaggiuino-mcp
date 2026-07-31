@@ -8,9 +8,11 @@ import { type Meta, type StoryObj } from "@storybook/react";
 import { useState } from "react";
 import { expect, fn, userEvent, within } from "storybook/test";
 import {
+  emptyShot,
   londiniumShot32,
   londiniumShot33,
   quickShot,
+  singleSampleShot,
 } from "./__fixtures__/chart-data";
 import {
   COMPARISON_SERIES,
@@ -182,6 +184,48 @@ export const MinimalData: Story = {
     data: toChartData(quickShot),
     primaryMeta: extractMeta(quickShot),
     annotations: extractAnnotations(quickShot),
+  },
+};
+
+/**
+ * A shot the machine recorded but sent no datapoints for — a scale that never
+ * reported, or a record truncated in flash. The header still names the shot and
+ * the axes still draw; what must not happen is a blank card or a throw, which
+ * is all a host would show for a shot that genuinely exists.
+ */
+export const NoDatapoints: Story = {
+  args: {
+    data: toChartData(emptyShot),
+    primaryMeta: extractMeta(emptyShot),
+    annotations: extractAnnotations(emptyShot),
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    // The header reports honest zeroes rather than rendering a blank card.
+    await expect(await canvas.findByText("0.0g in 0.0s")).toBeInTheDocument();
+    // The narration describes an empty shot, not an imagined plot.
+    await expect(await canvas.findByText(/over 0 seconds/)).toBeInTheDocument();
+    // No annotation invented to fill the gap.
+    await expect(
+      canvasElement.querySelectorAll(".recharts-reference-dot"),
+    ).toHaveLength(0);
+  },
+};
+
+/**
+ * One datapoint: recharts has a line to draw with no second point to draw it
+ * to. The chart is still the honest rendering of a shot that stopped after a
+ * single sample.
+ */
+export const SingleDatapoint: Story = {
+  args: {
+    data: toChartData(singleSampleShot),
+    primaryMeta: extractMeta(singleSampleShot),
+    annotations: extractAnnotations(singleSampleShot),
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await canvas.findByText(/0.1s/)).toBeInTheDocument();
   },
 };
 

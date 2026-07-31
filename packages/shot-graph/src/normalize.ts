@@ -117,7 +117,10 @@ export function extractAnnotations(shot: ShotData): Annotation[] {
   // Peak pressure: index of max pressure value
   if (pressure?.length && timeInShot) {
     let maxVal = -1;
-    let maxIdx = 0;
+    // -1, not 0: a series of nothing but holes has no maximum, and seeding the
+    // index at 0 annotated its first timestamp with the sentinel — a "-0.1 bar"
+    // dot on a chart that reported no pressure at all.
+    let maxIdx = -1;
     for (let i = 0; i < pressure.length; i++) {
       const p = pressure[i];
       if (p !== undefined && p > maxVal) {
@@ -125,7 +128,7 @@ export function extractAnnotations(shot: ShotData): Annotation[] {
         maxIdx = i;
       }
     }
-    const maxTime = timeInShot[maxIdx];
+    const maxTime = maxIdx >= 0 ? timeInShot[maxIdx] : undefined;
     if (maxTime !== undefined) {
       const normalizedPressure = norm(maxVal);
       annotations.push({

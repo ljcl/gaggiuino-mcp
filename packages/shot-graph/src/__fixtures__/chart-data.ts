@@ -305,3 +305,44 @@ export const quickShot: ShotData = {
     phases: [{ type: "PRESSURE", stopConditions: { time: 15000 } }],
   },
 };
+
+/**
+ * A shot the machine recorded but sent no datapoints for. Real: a scale that
+ * never reported, or a record truncated before the samples were written. The
+ * chart still has to render — the shot exists, and a blank card is a worse
+ * answer than an empty one.
+ */
+export const emptyShot: ShotData = {
+  id: "1706600004",
+  duration: 0,
+  datapoints: {},
+  profile: {
+    name: "Empty",
+    phases: [{ type: "PRESSURE" }],
+  },
+};
+
+/**
+ * A shot that stopped after a single sample: one point, no span, nothing for
+ * recharts to draw a line between.
+ */
+export const singleSampleShot: ShotData = {
+  id: "1706600005",
+  duration: 1,
+  datapoints: {
+    timeInShot: [0],
+    pressure: [20],
+    targetPressure: [90],
+    pumpFlow: [50],
+    targetPumpFlow: [0],
+    weightFlow: [0],
+    shotWeight: [0],
+    temperature: [930],
+    waterPumped: [0],
+  },
+  profile: {
+    name: "Single sample",
+    waterTemperature: 93,
+    phases: [{ type: "PRESSURE" }],
+  },
+};

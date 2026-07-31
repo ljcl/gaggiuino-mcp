@@ -496,18 +496,40 @@ Plain `bun run test` no longer computes coverage — it is opt-in via `bun run t
 (`turbo run test:coverage`), which writes each package's `coverage/coverage-summary.json`.
 
 `apps/server` is the only package with a coverage threshold, defined in `apps/server/vitest.config.ts`
-(`coverage.thresholds`, `autoUpdate: true`). Each `bun run test:coverage` run can rewrite those
-threshold numbers upward as coverage improves — that is the ratchet working, not drift. If a run
-dirties `vitest.config.ts`, commit the new numbers; never hand-edit them.
+(`coverage.thresholds`). Each `bun run test:coverage` run can rewrite those threshold numbers
+upward as coverage improves — that is the ratchet working, not drift. If a run dirties
+`vitest.config.ts`, commit the new numbers; never hand-edit them.
 
-**One exception, and it will bite you.** Only commit ratcheted numbers measured on a **clean
-checkout**. `loader.ts`'s `*.local.yaml` override-merge branches execute only when those files
-exist on disk, and they are gitignored — so a dev machine with a local override reports roughly
-two points higher than CI can ever reach. Committing those numbers turns `autoUpdate` into a
-foot-gun: the thresholds rise above what a clean checkout achieves and every subsequent CI run
-fails on `main`. This happened once already (the first CI run on this repo). If you have any
-`apps/server/src/data/*.local.yaml`, either move it aside before running `test:coverage`, or take
-the numbers from CI rather than locally.
+### The ratchet is a script, not `autoUpdate`
+
+`scripts/coverage-ratchet.ts` raises the thresholds, and the root `test:coverage` script is what
+calls it — after turbo has run the suites. Vitest's own `coverage.thresholds.autoUpdate` used to
+do this and is deliberately off, for two reasons that both showed up as failing builds.
+
+- **It wrote the measured percentage rounded to nearest, so a threshold could land above what the
+  run that wrote it had just measured.** That is how PR #87 got
+  `Coverage for lines (98.09%) does not meet global threshold (98.1%)` from a config written sixty
+  seconds earlier: 98.1 was 98.09 rounded up, and no state of the tree could ever reach it. The
+  error blames the code ("you reduced coverage") when the fix is to discard a generated file, and
+  `autoUpdate` only ever raises, so nothing brings it back down. The script **floors** to a tenth
+  of a point instead, which makes `threshold ≤ measured` an invariant of every write.
+- **It ran wherever coverage ran, CI included.** The script is invoked only from the root npm
+  script; CI calls `turbo run test:coverage` directly, so a CI run checks the committed thresholds
+  and can never mutate them.
+
+Running `bun run test:coverage` twice on an unchanged tree writes at most once — the second run
+floors to the number already committed. If you ever do hit a threshold you did not set,
+`git checkout apps/server/vitest.config.ts` and re-run.
+
+Coverage no longer depends on whether `apps/server/src/data/*.local.yaml` exists. `loader.ts`'s
+override-merge branches used to execute *only* when one of those gitignored files was present, so a
+dev machine measured ~2 points above what CI could reach and a ratcheted commit failed every
+subsequent run on `main` — which happened, on the first CI run this repo ever did. The merge is now
+`mergeProfileOverrides` / `mergePromptOverrides`, pure functions taking the overrides rather than
+reading them, and `readLocalOverrides` is exported so a test can point it at a temp directory. Both
+sides of every branch are covered by `loader.test.ts` regardless of what is on disk. Keep it that
+way: a test that writes a real `*.local.yaml` into `src/data/` would clobber a contributor's own
+equipment configuration and put the disk back in the coverage number.
 
 `packages/ui`, `packages/design-system`, and `packages/shot-graph` are **intentionally
 unthresholded**. Their coverage is the story render path measured by `bun run
