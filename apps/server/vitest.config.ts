@@ -8,17 +8,17 @@ export default defineConfig({
     coverage: {
       enabled: false,
       reporter: ["text", "json-summary"],
-      // Measured on a CLEAN checkout (what CI sees). Do not commit numbers
-      // ratcheted on a machine that has `*.local.yaml` overrides present:
-      // loader.ts's override-merge branches only execute when those files
-      // exist, so a dev machine reports ~2 points higher than CI can ever
-      // reach, and CI then fails on main. See AGENTS.md "Test coverage".
+      // Raised by `scripts/coverage-ratchet.ts` (run by the root
+      // `test:coverage`), never by hand and no longer by vitest's own
+      // `autoUpdate`. Values are floored to a tenth of a point so an edit
+      // that moves one line out of the covered set cannot fail a re-run
+      // against a threshold the previous run wrote sixty seconds earlier.
+      // See AGENTS.md "Test coverage".
       thresholds: {
-        autoUpdate: true,
-        branches: 89.37,
+        branches: 92.3,
         functions: 100,
-        lines: 98.09,
-        statements: 97.99,
+        lines: 99.4,
+        statements: 99.2,
       },
       include: ["src/**/*.ts"],
       exclude: ["src/**/*.test.ts", "src/test-setup.ts", "src/index.ts"],

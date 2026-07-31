@@ -11,7 +11,7 @@
     "build": "turbo run build",
     "build:affected": "turbo run build --affected",
     "test": "turbo run test",
-    "test:coverage": "turbo run test:coverage",
+    "test:coverage": "turbo run test:coverage && bun scripts/coverage-ratchet.ts",
     "coverage:summary": "bun scripts/coverage-summary.ts",
     "size": "bun scripts/bundle-size.ts",
     "test:stories": "vitest run --config vitest.stories.config.ts --project storybook",
