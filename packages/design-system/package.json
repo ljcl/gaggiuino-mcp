@@ -10,6 +10,7 @@
     "./host-themes": "./src/host-themes.ts"
   },
   "scripts": {
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
@@ -19,6 +20,7 @@
     "@types/react": "19.2.18",
     "react": "19.2.8",
     "storybook": "10.5.5",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
   }
 }

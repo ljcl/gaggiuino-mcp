@@ -496,8 +496,9 @@ that never send a theme. CSS cannot share one block between a selector and a med
 query, so those two blocks are hand-duplicated — `assertDarkRulesAgree()` fails the
 Token Reference story if they drift, naming the offending token.
 
-Two gates run as Storybook `play` functions in `bun run test:stories` (design-system
-has no unit-test runner by design — see Test coverage below):
+Two gates run as Storybook `play` functions in `bun run test:stories`, because what they
+assert is what the *browser* resolves a token to — design-system's own `vitest run` covers
+the palette maths and nothing that needs a DOM (see Test coverage below):
 
 - **Token Reference** asserts the dark blocks agree, that every dark override exists
   in `:root`, and that the table renders a row per token.
@@ -515,9 +516,11 @@ every real host renders light.
 
 `--chart-*` carries an accessibility contract that a plain colour edit can silently
 break, so it is measured rather than asserted in a comment. `packages/design-system/src/color.ts`
-provides the maths (WCAG contrast, Machado 2009 CVD simulation, CIEDE2000), and the
-**Shot Graph/Chart accessibility** story (`Light` and `Dark`) enforces two rules against
-what the *browser* resolves — so a host overriding `--chart-*` is measured too:
+provides the maths (WCAG contrast, Machado 2009 CVD simulation, CIEDE2000) — itself asserted
+against published reference values by `color.test.ts`, since a threshold check cannot tell a
+correct number from a plausible wrong one — and the **Shot Graph/Chart accessibility** story
+(`Light` and `Dark`) enforces two rules against what the *browser* resolves, so a host
+overriding `--chart-*` is measured too:
 
 1. Every stroke clears **3:1** against `--color-background-primary` (WCAG 1.4.11).
 2. Every pair of strokes from *different* metrics is separable, either by colour under
@@ -618,14 +621,49 @@ Where an assertion lives depends on what it needs, not on which package it is in
   test runner — it is the same vitest the story tests and `apps/server` already use, just without
   a browser it has no reason to boot.
 
-  `packages/design-system/src/color.ts` is the exception that proves the rule: it is pure, but
-  design-system has no test runner, and the thing worth asserting is what a *browser* resolves
-  `var(--chart-*)` to. It is therefore exercised from the Chart accessibility story rather than
-  from a unit test of its own.
+  `packages/design-system` is in that list too, since #81. It used to be recorded here as the
+  exception — pure, but tested only through the Chart accessibility story because "the thing
+  worth asserting is what a *browser* resolves `var(--chart-*)` to." That reasoning was
+  incomplete rather than wrong: there are **two** things worth asserting about `color.ts`, and
+  only one of them needs a browser. Whether the palette clears its thresholds depends on what
+  the browser resolves, and the story still owns it. Whether the *ruler* is accurate does not
+  depend on a browser at all, and the story structurally cannot answer it — it only ever asks
+  "is this past the threshold?", so it cannot tell a correct 20 from a buggy 20.
 
-Neither package has a `test:coverage` script, so neither produces a `coverage/` directory and
-the unthresholded rule above still holds. What does *not* belong anywhere is a jsdom harness for
-components: if it renders, it belongs in a story.
+  `color.test.ts` therefore lives next to the code it measures, and design-system has a
+  `test` script. Putting those assertions in `packages/shot-graph` instead — the other option
+  on #81, and a smaller diff since it already has a vitest project and already imports
+  `@gaggiuino/design-system/color` — would have picked the package by what was convenient
+  rather than by what the assertion needs, which is the one thing this section says not to do.
+
+None of them has a `test:coverage` script, so none produces a `coverage/` directory and the
+unthresholded rule above still holds — adding a `test` script to design-system did not change
+that. What does *not* belong anywhere is a jsdom harness for components: if it renders, it
+belongs in a story.
+
+### The ruler is asserted, not just the readings
+
+`color.test.ts` checks the maths the chart palette gate depends on, because a gate that
+compares numbers against a threshold cannot notice that the numbers are wrong. Two of its
+groups are worth not weakening:
+
+- **`deltaE2000Lab` is asserted against the Sharma, Wu & Dalal (2005) reference set.** That set
+  is published as *Lab* pairs and reaches values no sRGB colour can produce, which is why
+  `deltaE2000` was split into an sRGB entry point and the Lab formula underneath — the
+  reference data cannot reach the branches any other way. Those branches are the point: dropping
+  the mean-hue wraparound, flipping the `rT` sign, or dropping the `G` factor each leave the
+  formula returning plausible numbers, and each is caught by a different subset of the pairs.
+- **`simulateCvd` is pinned to where the three sRGB primaries land**, not only to grey
+  invariance. A *transposed row* — the failure #81 names — permutes coefficients whose sum is
+  unchanged, so greys still map to themselves and the swatch table still looks fine. Six
+  expected triples pin all eighteen coefficients in their correct positions. The projection
+  test (simulating an already-simulated colour is a no-op) is the principled statement of the
+  same property, but it is a ΔE00 tolerance rather than an equality, because gamut clamping
+  makes it inexact — it misses a transposed *blue* row that the primary pin catches.
+
+Every assertion above was verified to fail for the right reason by mutating the implementation
+before landing. If you change the palette maths and a reference value fails, the reference value
+is not the thing to edit.
 
 ### `.env.example` is checked against the code that reads it
 
@@ -661,9 +699,9 @@ removed, an otherwise-clean tree with a dirty `.env.example` reports
 `@gaggiuino/server#test affected: false`; with it, `true`. The cost is that every task's cache
 key now moves when `.env.example` does, which is a file that changes about twice a year.
 
-`packages/design-system` has no `test` script but does have `typecheck`, and its `tsconfig.json`
-includes `stories` as well as `src` — the parser in `tokens.ts` and the stories that consume it are
-both type-checked in CI.
+`packages/design-system`'s `tsconfig.json` includes `stories` as well as `src` — the parser in
+`tokens.ts` and the stories that consume it are both type-checked in CI. Since #81 it also has a
+`test` script (`color.test.ts`), but still no `test:coverage`.
 
 `bun run coverage:summary` (`scripts/coverage-summary.ts`) globs every `apps/*/coverage/coverage-summary.json`
 and `packages/*/coverage/coverage-summary.json`, plus `coverage-stories/coverage-summary.json` when

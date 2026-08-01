@@ -135,8 +135,11 @@ export function simulateCvd(color: Rgb, type: CvdType): Rgb {
   return fromLinear([apply(row0), apply(row1), apply(row2)]);
 }
 
+/** A CIELAB color: lightness plus the two opponent axes. */
+export type Lab = readonly [number, number, number];
+
 /** sRGB → CIELAB (D65). */
-function toLab(c: Rgb): [number, number, number] {
+export function toLab(c: Rgb): [number, number, number] {
   const [r, g, b] = toLinear(c);
   const x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047;
   const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
@@ -151,8 +154,23 @@ function toLab(c: Rgb): [number, number, number] {
  * difference, and two chart series want to be well clear of that.
  */
 export function deltaE2000(c1: Rgb, c2: Rgb): number {
-  const [l1, a1, b1] = toLab(c1);
-  const [l2, a2, b2] = toLab(c2);
+  return deltaE2000Lab(toLab(c1), toLab(c2));
+}
+
+/**
+ * The CIEDE2000 formula itself, over CIELAB.
+ *
+ * Split out from the sRGB entry point above so it can be asserted against the
+ * Sharma, Wu & Dalal (2005) reference set, which is published as Lab pairs and
+ * reaches values no sRGB color can produce. That set exists because this
+ * formula is notoriously easy to get subtly wrong — the mean-hue branch below
+ * and the `rT` rotation term are the two places it usually happens, and both
+ * fail by *inflating* small differences, which would leave the palette gate
+ * green while it silently stopped measuring anything.
+ */
+export function deltaE2000Lab(lab1: Lab, lab2: Lab): number {
+  const [l1, a1, b1] = lab1;
+  const [l2, a2, b2] = lab2;
   const rad = (d: number) => (d * Math.PI) / 180;
   const deg = (r: number) => (r * 180) / Math.PI;
 
