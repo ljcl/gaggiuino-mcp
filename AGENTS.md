@@ -558,6 +558,40 @@ Neither package has a `test:coverage` script, so neither produces a `coverage/` 
 the unthresholded rule above still holds. What does *not* belong anywhere is a jsdom harness for
 components: if it renders, it belongs in a story.
 
+### `.env.example` is checked against the code that reads it
+
+`envExample.test.ts` asserts that every variable the server reads is documented in the
+repo-root `.env.example`, and that the template's own values still parse to the defaults the
+code declares. It exists because PR #75 added four variables, updated README, AGENTS.md,
+SECURITY.md, `server.json`, `turbo.json`, and `docker-compose.yml` — and missed the one file
+the deployment path tells users to copy. Nothing failed; it took a backlog sweep to notice
+(#77). A variable missing from that template is one most users never learn exists, and in that
+case it was the auth token standing between a tunnelled `/mcp` and the public internet.
+
+Two things about it are deliberate:
+
+- **The variable list is scanned out of `src/*.ts`, never written down.** The test greps for
+  `env.NAME`, which covers both `process.env.NAME` and the injected
+  `Record<string, string | undefined>` that `loadServerConfig` and `loadSecurityConfig` take.
+  A hand-maintained list would be the same thing that drifted, moved one file over.
+  `turbo.json`'s `globalPassThroughEnv` looks like a tempting source and is not one — it also
+  carries the two `PLAYWRIGHT_*` build variables, so using it would need an exclusion list,
+  which is a hand-maintained list again. The check runs in **both** directions: a documented
+  variable nothing reads fails too, so a removed knob cannot linger in the template.
+- **It lives in `apps/server` rather than in a root script**, against the pull of `.env.example`
+  being a root file, because the assertions worth making are `loadSecurityConfig` /
+  `loadServerConfig` / `parseLogLevel` actually returning an open `/mcp`, empty allowlists, and
+  the declared defaults. A root script could only re-state those values, which is the same
+  duplication the first rule exists to avoid.
+
+That placement is what makes **`.env.example` in `globalDependencies` load-bearing rather than
+tidiness**. Package task inputs cannot name a root file, so without it a PR touching only
+`.env.example` — precisely the #77 shape — leaves `@gaggiuino/server#test` out of
+`turbo run test --affected` and the gate never runs. Verified by measuring it: with the entry
+removed, an otherwise-clean tree with a dirty `.env.example` reports
+`@gaggiuino/server#test affected: false`; with it, `true`. The cost is that every task's cache
+key now moves when `.env.example` does, which is a file that changes about twice a year.
+
 `packages/design-system` has no `test` script but does have `typecheck`, and its `tsconfig.json`
 includes `stories` as well as `src` — the parser in `tokens.ts` and the stories that consume it are
 both type-checked in CI.
@@ -923,6 +957,10 @@ curl -X POST http://localhost:8000/mcp \
 | `MCP_ALLOWED_ORIGINS` | _(empty)_                | Browser origins allowed on `/mcp`; `*` allows any |
 | `MCP_ALLOWED_HOSTS`   | _(empty)_                | `Host` values to accept; empty disables the check |
 | `LOG_LEVEL`           | `info`                   | `debug`/`info`/`warn`/`error`/`silent`            |
+
+Adding a variable here means adding it to `.env.example` too — that is the file users copy,
+and `envExample.test.ts` fails the build if the two disagree in either direction. See
+AGENTS.md ".env.example is checked against the code that reads it".
 
 ## The HTTP surface
 
