@@ -52,7 +52,7 @@ jobs:
         # unauthenticated `docker manifest inspect` against a private package
         # answers `unauthorized` forever — so the poll used to time out after
         # 20 minutes blaming docker.yml for a run that had actually succeeded.
-        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
