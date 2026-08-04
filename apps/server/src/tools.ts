@@ -23,6 +23,11 @@ import {
   loadProfileCatalog,
   type ProfileCatalog,
 } from "./profileCatalog";
+import {
+  formatProfileDefinition,
+  loadProfileDefinition,
+  ProfileDefinitionOutput,
+} from "./profileDefinition";
 
 /**
  * Every tool in this server reads: nothing here mutates the machine or any
@@ -183,6 +188,25 @@ const ProfileOutput = z.object({
     .string()
     .nullable()
     .describe('Control strategy the profile uses, e.g. "flow" or "pressure"'),
+});
+
+/**
+ * What `get_profile_info` adds over a list row: the machine's own definition,
+ * fetched per profile.
+ *
+ * Deliberately an extension rather than a widened `ProfileOutput`.
+ * `list_profiles` shares that schema, so widening it in place would re-key
+ * **two** host permission grants instead of one — and it would imply one
+ * upstream request per profile in a list, against a device that serves one
+ * request at a time.
+ */
+const ProfileDetailOutput = ProfileOutput.extend({
+  definition: ProfileDefinitionOutput.nullable().describe(
+    "The profile as the machine itself stores it: brew temperature, phases with their targets and stop conditions, recipe, and what ends the shot. This is the machine's own wire format — milliseconds, real degrees Celsius — so it can be edited and handed straight to upload_profile. Null when the profile is not on the machine, or when the machine did not serve one; definitionNote says which.",
+  ),
+  definitionNote: z
+    .string()
+    .describe("Where the definition came from, or why there is none"),
 });
 
 const ProfileListOutput = z.object({
@@ -662,7 +686,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   defineTool({
     annotations: READS_MACHINE,
     description:
-      "Get everything known about one brew profile: whether it is on the machine, the id select_profile would take, and its prose documentation when this server has any. Accepts a documented id, a machine profile id, or the profile's name. Call list_profiles first if you do not already have one.",
+      "Get everything known about one brew profile: the machine's own definition of it — brew temperature, the phases it runs with their targets and stop conditions, and the recipe it was written around — plus this server's prose documentation when it has any, whether the profile is on the machine, and the id select_profile takes. This is the right tool for 'what does this profile actually do', including a profile the user built themselves. The definition comes back in the machine's own wire format, so it can be edited and handed to upload_profile. Accepts a documented id, a machine profile id, or the profile's name. Call list_profiles first if you do not already have one. Firmware that predates the machine's per-profile export answers with the documentation alone and says so.",
     handler: async (input) => {
       const { catalog, entry } = await findCatalogEntry(input.profile_id);
       if (!entry) {
@@ -671,6 +695,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           text: `No profile matching '${input.profile_id}'. Available ids: ${catalog.entries.map((candidate) => candidate.id).join(", ")}.`,
         };
       }
+      const definition = await loadProfileDefinition(entry, catalog);
       const lines = [`# ${entry.name}`, ""];
       if (entry.onMachine === false) {
         lines.push(
@@ -694,10 +719,18 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         );
       } else {
         lines.push(
-          "This profile was created on the machine, so this server has no documentation for it. Read its behaviour from a shot pulled with it — get_shot_data reports the phases the profile actually ran.",
+          "This profile was created on the machine, so this server has no curated documentation for it — what the machine itself stores is below. For how it actually behaved in the cup, call get_shot_data on a shot pulled with it.",
         );
       }
-      return { structured: entry, text: lines.join("\n") };
+      lines.push("", ...formatProfileDefinition(definition));
+      return {
+        structured: {
+          ...entry,
+          definition: definition.definition,
+          definitionNote: definition.note,
+        },
+        text: lines.join("\n"),
+      };
     },
     inputSchema: z.object({
       profile_id: z
@@ -708,7 +741,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         ),
     }),
     name: "get_profile_info",
-    outputSchema: ProfileOutput,
+    outputSchema: ProfileDetailOutput,
     title: "Get brew profile details",
   }),
 

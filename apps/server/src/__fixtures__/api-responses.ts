@@ -31,6 +31,79 @@ export const mockMachineStatusFromHardware = {
 };
 
 /**
+ * `GET /api/profile/15` exactly as `docs/upstream/rest-api.md` L54-69 documents
+ * it, byte-for-byte.
+ *
+ * This is the **only** fixture the upload round-trip test may use: it is what
+ * the reference says the machine serves, so anything the strict upload schema
+ * rejects here is a real incompatibility rather than a tolerance case.
+ * `mockProfileDefinitionFull` below is for tolerance and rendering.
+ */
+export const mockProfileDefinition = {
+  globalStopConditions: { time: 40000, weight: 36 },
+  name: "18g Double",
+  phases: [
+    {
+      name: "Preinfusion",
+      restriction: 0,
+      skip: false,
+      stopConditions: { pressureAbove: 4, time: 10000 },
+      target: { curve: "LINEAR", end: 3, time: 5000 },
+      type: "PRESSURE",
+    },
+  ],
+  recipe: { coffeeIn: 18, coffeeOut: 36, ratio: 2 },
+  waterTemperature: 93,
+};
+
+/**
+ * A superset carrying the fields `ProfileDto`/`TransitionDto`/`PhaseDto`/
+ * `GlobalStopConditionsDto` (websocket.md L188-211) define but the REST example
+ * elides, plus a stop condition this server has never heard of.
+ *
+ * Exercises tolerance and rendering: a skipped phase, a per-phase temperature
+ * override, a non-zero restriction, upstream's own `switchToManuaFlowCtrl`
+ * misspelling, and the unknown-key passthrough. Must **never** be fed to the
+ * strict upload schema — `someFutureCondition` would fail it, and that failure
+ * would be a false alarm pushing someone to loosen the one schema that has to
+ * stay strict.
+ */
+export const mockProfileDefinitionFull = {
+  globalStopConditions: {
+    switchToManuaFlowCtrl: true,
+    switchToManualPressureCtrl: false,
+    time: 40000,
+    waterPumped: 120,
+    weight: 36,
+  },
+  name: "Lever Sim",
+  phases: [
+    {
+      name: "Preinfusion",
+      restriction: 0,
+      skip: false,
+      stopConditions: { pressureAbove: 4, time: 10000 },
+      target: { curve: "LINEAR", end: 3, start: 0, time: 5000 },
+      type: "PRESSURE",
+    },
+    {
+      name: "Decline",
+      restriction: 6,
+      skip: true,
+      stopConditions: { someFutureCondition: 7, time: 25000, weight: 30 },
+      target: { curve: "EASE_OUT", end: 2, time: 20000 },
+      type: "FLOW",
+      waterTemperature: 91,
+    },
+  ],
+  recipe: { coffeeIn: 18, coffeeOut: 36, ratio: 2 },
+  waterTemperature: 93,
+};
+
+/** A firmware that sends almost nothing — the null side of every fallback. */
+export const mockSparseProfileDefinition = { name: "Bare" };
+
+/**
  * `GET /api/settings` as the reference documents it — the `system` section
  * copied byte-for-byte from `docs/upstream/rest-api.md` L179-196, nested inside
  * the aggregate shape at L112-122.

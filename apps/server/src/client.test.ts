@@ -3,11 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   mockMachineStatus,
   mockMachineStatusFromHardware,
+  mockProfileDefinition,
+  mockProfileDefinitionFull,
   mockShotData,
 } from "./__fixtures__/api-responses";
 import {
   createClient,
   getUpstreamHealth,
+  MACHINE_CONFIG_TTL_MS,
   resetClient,
   SHOT_TTL_MS,
 } from "./client";
@@ -325,6 +328,87 @@ describe("client", () => {
       // than slept and then abandoned.
       expect(Date.now() - started).toBeLessThan(1_000);
       expect(attempts).toBe(1);
+    });
+  });
+
+  describe("getProfileDefinition", () => {
+    it("reads the machine's export without rescaling anything", async () => {
+      // A profile is not the shot time-series: nothing here is scaled by 10,
+      // and every `time` is milliseconds. Getting this wrong writes a
+      // five-millisecond ramp to the user's machine.
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profile/15", () =>
+          HttpResponse.json(mockProfileDefinition),
+        ),
+      );
+      const client = createClient({ baseUrl: "http://gaggiuino.local" });
+      const definition = await client.getProfileDefinition("15");
+
+      expect(definition.waterTemperature).toBe(93);
+      expect(definition.phases?.[0]?.target?.time).toBe(5000);
+      expect(definition.globalStopConditions?.time).toBe(40000);
+    });
+
+    it("preserves a phase field this server has never heard of", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profile/15", () =>
+          HttpResponse.json(mockProfileDefinitionFull),
+        ),
+      );
+      const client = createClient({ baseUrl: "http://gaggiuino.local" });
+      const definition = await client.getProfileDefinition("15");
+
+      expect(definition.phases?.[1]?.stopConditions?.someFutureCondition).toBe(
+        7,
+      );
+    });
+
+    it("url-encodes an id the machine minted with a space in it", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profile/my%20profile", () =>
+          HttpResponse.json(mockProfileDefinition),
+        ),
+      );
+      const client = createClient({ baseUrl: "http://gaggiuino.local" });
+      await expect(
+        client.getProfileDefinition("my profile"),
+      ).resolves.toMatchObject({ name: "18g Double" });
+    });
+
+    it("rejects a body that is not a profile object", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profile/15", () =>
+          HttpResponse.json("not a profile"),
+        ),
+      );
+      const client = createClient({ baseUrl: "http://gaggiuino.local" });
+
+      await expect(client.getProfileDefinition("15")).rejects.toThrow(
+        MalformedUpstreamError,
+      );
+    });
+
+    it("serves a second read from cache, then re-reads past the ttl", async () => {
+      let requests = 0;
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profile/15", () => {
+          requests += 1;
+          return HttpResponse.json(mockProfileDefinition);
+        }),
+      );
+      let clock = 0;
+      const client = createClient({
+        baseUrl: "http://gaggiuino.local",
+        now: () => clock,
+      });
+
+      await client.getProfileDefinition("15");
+      await client.getProfileDefinition("15");
+      expect(requests).toBe(1);
+
+      clock += MACHINE_CONFIG_TTL_MS + 1;
+      await client.getProfileDefinition("15");
+      expect(requests).toBe(2);
     });
   });
 

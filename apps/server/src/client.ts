@@ -216,6 +216,71 @@ const MachineProfilesSchema = z.union([
 ]);
 
 /**
+ * One profile as the machine's own export serves it (rest-api.md L46-74).
+ *
+ * A **sibling** of `ShotProfileSchema` below, not an extension of it. That one
+ * describes the copy of the profile a shot record embeds, which is a different
+ * payload from a different endpoint; merging them would mean every firmware
+ * quirk in one became a constraint on the other.
+ *
+ * Units are `profileShape.ts`'s contract and are the opposite of the shot
+ * time-series: nothing here is scaled by 10, every `time` is milliseconds, and
+ * `waterTemperature` is real degrees Celsius. Nothing is required — the only
+ * crash-critical property is that the body is an object at all, which
+ * `looseObject` already enforces.
+ */
+const ProfileTransitionSchema = z.looseObject({
+  curve: z.string().optional(),
+  end: z.number().optional(),
+  start: z.number().optional(),
+  time: z.number().optional(),
+  volume: z.number().optional(),
+});
+
+const ProfileDefinitionPhaseSchema = z.looseObject({
+  name: z.string().optional(),
+  restriction: z.number().optional(),
+  skip: z.boolean().optional(),
+  // Every documented phase stop condition is numeric (PhaseStopConditionsDto,
+  // websocket.md L192-196) — unlike the global ones, two of which are boolean.
+  stopConditions: z.record(z.string(), z.number()).optional(),
+  target: ProfileTransitionSchema.optional(),
+  type: z.string().optional(),
+  waterTemperature: z.number().optional(),
+});
+
+const MachineProfileDefinitionSchema = z.looseObject({
+  globalStopConditions: z
+    .looseObject({
+      // Upstream's own misspelling (websocket.md L204) is ground truth. Both
+      // spellings are accepted so a corrected firmware still reads, and neither
+      // is rewritten — see `profileDefinition.ts` on why the export is echoed
+      // rather than normalized.
+      switchToManuaFlowCtrl: z.boolean().optional(),
+      switchToManualFlowCtrl: z.boolean().optional(),
+      switchToManualPressureCtrl: z.boolean().optional(),
+      time: z.number().optional(),
+      waterPumped: z.number().optional(),
+      weight: z.number().optional(),
+    })
+    .optional(),
+  name: z.string().optional(),
+  phases: z.array(ProfileDefinitionPhaseSchema).optional(),
+  recipe: z
+    .looseObject({
+      coffeeIn: z.number().optional(),
+      coffeeOut: z.number().optional(),
+      ratio: z.number().optional(),
+    })
+    .optional(),
+  waterTemperature: z.number().optional(),
+});
+
+export type MachineProfileDefinition = z.output<
+  typeof MachineProfileDefinitionSchema
+>;
+
+/**
  * Settings are passed through untouched: which knobs exist is a firmware
  * decision, and pinning them here would drop fields a newer build added rather
  * than showing them to the user.
@@ -532,6 +597,27 @@ export function createClient(config: ClientConfig) {
         ttlMs: MACHINE_CONFIG_TTL_MS,
         unwrap: false,
       });
+    },
+
+    /**
+     * One profile as the machine's own export serves it.
+     *
+     * Named for what it returns rather than `getProfile`, because `profiles.ts`
+     * already exports a `getProfile` that reads bundled documentation — and the
+     * whole point of this endpoint is that the two are different things.
+     *
+     * Cached with the rest of the machine's configuration: a profile is edited
+     * on the machine, so 30s is long enough to fold the burst one question
+     * makes and short enough not to serve a phase the user just changed.
+     */
+    async getProfileDefinition(
+      machineProfileId: string,
+    ): Promise<MachineProfileDefinition> {
+      return request(
+        `/api/profile/${encodeURIComponent(machineProfileId)}`,
+        MachineProfileDefinitionSchema,
+        { ttlMs: MACHINE_CONFIG_TTL_MS },
+      );
     },
 
     /**

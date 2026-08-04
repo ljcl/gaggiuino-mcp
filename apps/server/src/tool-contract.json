@@ -764,7 +764,7 @@
       "openWorldHint": true,
       "readOnlyHint": true
     },
-    "description": "Get everything known about one brew profile: whether it is on the machine, the id select_profile would take, and its prose documentation when this server has any. Accepts a documented id, a machine profile id, or the profile's name. Call list_profiles first if you do not already have one.",
+    "description": "Get everything known about one brew profile: the machine's own definition of it — brew temperature, the phases it runs with their targets and stop conditions, and the recipe it was written around — plus this server's prose documentation when it has any, whether the profile is on the machine, and the id select_profile takes. This is the right tool for 'what does this profile actually do', including a profile the user built themselves. The definition comes back in the machine's own wire format, so it can be edited and handed to upload_profile. Accepts a documented id, a machine profile id, or the profile's name. Call list_profiles first if you do not already have one. Firmware that predates the machine's per-profile export answers with the documentation alone and says so.",
     "inputSchema": {
       "properties": {
         "profile_id": {
@@ -792,6 +792,157 @@
             }
           ],
           "description": "Basket and dose notes for this profile, when documented"
+        },
+        "definition": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "properties": {
+                "globalStopConditions": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": {},
+                      "properties": {
+                        "switchToManuaFlowCtrl": {
+                          "type": "boolean"
+                        },
+                        "switchToManualPressureCtrl": {
+                          "type": "boolean"
+                        },
+                        "time": {
+                          "type": "number"
+                        },
+                        "waterPumped": {
+                          "type": "number"
+                        },
+                        "weight": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "What ends the shot regardless of which phase is running: time, weight, waterPumped, switchToManualPressureCtrl, switchToManuaFlowCtrl. `time` is MILLISECONDS, `weight` grams. Null when the profile carries none. Upstream misspells the flow-control flag as switchToManuaFlowCtrl; it is passed through unchanged so a profile can be uploaded back."
+                },
+                "name": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Profile name as stored on the machine"
+                },
+                "phases": {
+                  "description": "Phases in the order the machine runs them. Each has a `type` (\"FLOW\", \"PRESSURE\", \"MANUAL\"), a `target` ramp whose `end` is bar for a PRESSURE phase and ml/s for a FLOW phase, `time` in MILLISECONDS, and a `curve` from \"EASE_IN_OUT\", \"EASE_IN\", \"EASE_OUT\", \"LINEAR\", \"INSTANT\". `stopConditions` are drawn from time, pressureAbove, pressureBelow, flowAbove, flowBelow, weight, waterPumpedInPhase, and their `time` is milliseconds too. This is the machine's own wire format, so it can be edited and passed straight back to upload_profile.",
+                  "items": {
+                    "additionalProperties": {},
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "restriction": {
+                        "type": "number"
+                      },
+                      "skip": {
+                        "type": "boolean"
+                      },
+                      "stopConditions": {
+                        "additionalProperties": {
+                          "type": "number"
+                        },
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "type": "object"
+                      },
+                      "target": {
+                        "additionalProperties": {},
+                        "properties": {
+                          "curve": {
+                            "type": "string"
+                          },
+                          "end": {
+                            "type": "number"
+                          },
+                          "start": {
+                            "type": "number"
+                          },
+                          "time": {
+                            "type": "number"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "type": {
+                        "type": "string"
+                      },
+                      "waterTemperature": {
+                        "type": "number"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "recipe": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": {},
+                      "properties": {
+                        "coffeeIn": {
+                          "type": "number"
+                        },
+                        "coffeeOut": {
+                          "type": "number"
+                        },
+                        "ratio": {
+                          "type": "number"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "The dose and yield the profile was written around, in grams; null when it carries none"
+                },
+                "waterTemperature": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Brew temperature the profile asks for, in real degrees Celsius — NOT the scaled-by-10 form the shot time-series uses. 93 means 93°C."
+                }
+              },
+              "required": [
+                "globalStopConditions",
+                "name",
+                "phases",
+                "recipe",
+                "waterTemperature"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The profile as the machine itself stores it: brew temperature, phases with their targets and stop conditions, recipe, and what ends the shot. This is the machine's own wire format — milliseconds, real degrees Celsius — so it can be edited and handed straight to upload_profile. Null when the profile is not on the machine, or when the machine did not serve one; definitionNote says which."
+        },
+        "definitionNote": {
+          "description": "Where the definition came from, or why there is none",
+          "type": "string"
         },
         "description": {
           "anyOf": [
@@ -902,7 +1053,9 @@
         "roastLevels",
         "targetRatio",
         "targetTime",
-        "type"
+        "type",
+        "definition",
+        "definitionNote"
       ],
       "type": "object"
     },

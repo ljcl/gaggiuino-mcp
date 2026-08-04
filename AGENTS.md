@@ -51,7 +51,7 @@ via symlinks in `.claude/skills/`. Externally-sourced skills are tracked in `ski
 | `get_shot_raw_data`     | Complete time-series datapoints                     |
 | `view_shot_graph`       | Interactive chart (MCP App with UI resource)        |
 | `list_profiles`         | Machine's profiles, merged with bundled docs        |
-| `get_profile_info`      | Everything known about one profile                  |
+| `get_profile_info`      | One profile: the machine's own definition plus docs |
 | `get_machine_settings`  | Boiler/steam/scale config as the firmware sends it  |
 | `get_maintenance_status`| Descale/backflush service log the machine keeps itself |
 | `select_profile`        | **Write.** Switch profile; needs `MCP_AUTH_TOKEN`   |
@@ -200,6 +200,45 @@ sets `source: "documentation"`, with `note` carrying the *upstream's own*
 diagnostic rather than a generic "unavailable". `onMachine` is then `null`, not
 `false` — this server did not check, and saying it did would be the same class of
 lie the split exists to fix.
+
+### The machine is also the authority on what a profile *does*
+
+`GET /api/profile/{id}` serves a profile's full definition — phases, targets,
+stop conditions, recipe — and `get_profile_info` reads it into `definition`
+(`profileDefinition.ts`). That is what turned "on the machine, undocumented"
+from a row of nulls into a real answer: a profile the user built themselves now
+describes itself.
+
+Four things about it are load-bearing.
+
+- **The definition is echoed, not translated.** Same key names, same units,
+  milliseconds and all, and upstream's `switchToManuaFlowCtrl` misspelling
+  preserved. The reference says the `POST /api/profile` body is *"Same shape as
+  the `GET /api/profile/*` response"*, so **this field is `upload_profile`'s
+  input** — "take the profile that works, soften the preinfusion, upload it" is
+  the actual workflow, and this is the only place a model can get a profile that
+  works. A normalized dialect (`timeSec`, `waterTemperatureC`) reads better and
+  means a model copies `rampSec: 5` back into `time` and uploads a
+  five-millisecond ramp, which the machine accepts — the reference fills
+  malformed fields with zero-value defaults rather than rejecting them. All the
+  humanising happens in `formatProfileDefinition`, in the prose.
+- **The output schema is loose for the same reason the client boundary is.** A
+  strict `z.object` emits `additionalProperties: false`, so a phase field a
+  future firmware adds would be dropped from `definition` — and a model that
+  edited and re-uploaded that definition would silently delete it from the
+  user's machine. Same failure `get_machine_settings` is text-only to avoid.
+- **`list_profiles` deliberately does not fetch definitions.** N profiles would
+  be N sequential round trips to a device that serves one request at a time.
+  `tools.test.ts` asserts zero requests to `/api/profile/:id` from that tool.
+- **A 404 there is ambiguous** between firmware that predates the endpoint and a
+  profile deleted since the list was read — the machine does not distinguish
+  them. So it is handled in `profileDefinition.ts`, naming both causes, rather
+  than falling through to `describeUpstreamError`'s bare-404 text, which asserts
+  the firmware explanation as fact. `errors.ts` gains no per-endpoint branch.
+
+`definition` lives on `ProfileDetailOutput`, an extension of `ProfileOutput`
+rather than a widening of it: `list_profiles` shares that schema, and widening
+in place would re-key two host permission grants instead of one.
 
 ### The advertised surface is a permission-grant key
 

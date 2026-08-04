@@ -4,6 +4,7 @@ import {
   mockLatestShotResponse,
   mockMachineSettingsFromDocs,
   mockMachineStatus,
+  mockProfileDefinition,
   mockShotData,
   mockShotWithTimeStop,
 } from "./__fixtures__/api-responses";
@@ -371,6 +372,27 @@ describe("tool dispatch", () => {
       expect(result.text).toContain("Adaptive");
     });
 
+    it("never fetches a per-profile definition", async () => {
+      // The N+1 guard. `get_profile_info` reads /api/profile/{id}; doing the
+      // same from a list would be one sequential round trip per profile to a
+      // device that serves one request at a time.
+      let asked = 0;
+      machineProfiles([
+        { id: "15", name: "Zer0" },
+        { id: "16", name: "Londinium" },
+        { id: "17", name: "Blooming" },
+      ]);
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profile/:id", () => {
+          asked += 1;
+          return HttpResponse.json({ name: "should not be reached" });
+        }),
+      );
+
+      await handleToolCall("list_profiles", {});
+      expect(asked).toBe(0);
+    });
+
     it("returns every profile in full as structured content", async () => {
       machineProfiles([{ id: "15", name: "Zer0" }]);
       const result = await handleToolCall("list_profiles", {});
@@ -536,6 +558,93 @@ describe("tool dispatch", () => {
       expect(result.text).toContain("Available ids:");
       expect(result.structuredContent).toBeUndefined();
     });
+
+    describe("the machine's own definition", () => {
+      function serveDefinition(id: string, body: object | null, status = 200) {
+        mockServer.use(
+          http.get(`http://gaggiuino.local/api/profile/${id}`, () =>
+            status === 200
+              ? HttpResponse.json(body)
+              : new HttpResponse(null, { status }),
+          ),
+        );
+      }
+
+      it("reads the machine's definition alongside the documentation", async () => {
+        serveDefinition("15", mockProfileDefinition);
+        const result = await handleToolCall("get_profile_info", {
+          profile_id: "zer0",
+        });
+
+        expect(result.text).toContain("## Machine definition");
+        expect(result.text).toContain("Preinfusion");
+        expect(result.structuredContent).toMatchObject({
+          definition: { waterTemperature: 93 },
+        });
+      });
+
+      it("answers what an undocumented profile actually does", async () => {
+        // The headline case. Before this the user's own profile came back as a
+        // row of nulls and a suggestion to go pull a shot with it.
+        mockServer.use(
+          http.get("http://gaggiuino.local/api/profiles/all", () =>
+            HttpResponse.json([{ id: "42", name: "Sunday Filter Experiment" }]),
+          ),
+        );
+        serveDefinition("42", mockProfileDefinition);
+        const result = await handleToolCall("get_profile_info", {
+          profile_id: "42",
+        });
+
+        expect(result.structuredContent).toMatchObject({
+          definition: { waterTemperature: 93 },
+          documented: false,
+        });
+        expect(result.text).toContain("Preinfusion");
+      });
+
+      it("degrades to the documentation when the firmware has no export", async () => {
+        serveDefinition("15", null, 404);
+        const result = await handleToolCall("get_profile_info", {
+          profile_id: "zer0",
+        });
+
+        expect(result.isError).toBeFalsy();
+        // Everything the tool did before still works.
+        expect(result.text).toContain("Zer0");
+        expect(result.text).toContain("Description");
+        expect(result.text).toContain("predates");
+        expect(result.text).toContain("removed since");
+        expect(result.structuredContent).toMatchObject({ definition: null });
+      });
+
+      it("degrades rather than failing when the machine faults", async () => {
+        serveDefinition("15", null, 503);
+        const result = await handleToolCall("get_profile_info", {
+          profile_id: "zer0",
+        });
+
+        expect(result.isError).toBeFalsy();
+        expect(result.text).toContain("HTTP 503");
+        expect(result.structuredContent).toMatchObject({ definition: null });
+      });
+
+      it("does not ask the machine for a profile it does not hold", async () => {
+        let asked = 0;
+        mockServer.use(
+          http.get("http://gaggiuino.local/api/profile/:id", () => {
+            asked += 1;
+            return HttpResponse.json(mockProfileDefinition);
+          }),
+        );
+        const result = await handleToolCall("get_profile_info", {
+          profile_id: "adaptive",
+        });
+
+        expect(asked).toBe(0);
+        expect(result.text).toContain("is not on the machine");
+      });
+    });
   });
 
   describe("get_machine_settings", () => {
@@ -581,7 +690,7 @@ describe("tool dispatch", () => {
     });
 
     describe("credential redaction", () => {
-      function serveSettings(body: unknown) {
+      function serveSettings(body: object) {
         // `/api/settings` is cached for MACHINE_CONFIG_TTL_MS, so a test that
         // serves two different payloads has to drop the client between them or
         // the second read is answered from the first.
@@ -668,7 +777,7 @@ describe("tool dispatch", () => {
   });
 
   describe("get_maintenance_status", () => {
-    function serveMaintenance(body: unknown, status = 200) {
+    function serveMaintenance(body: object | null, status = 200) {
       resetClient({ initialDelayMs: 1 });
       mockServer.use(
         http.get("http://gaggiuino.local/api/maintenance", () =>
