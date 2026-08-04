@@ -13,6 +13,7 @@ import {
 import {
   definitionFailureNote,
   formatProfileDefinition,
+  loadProfileDefinition,
   ProfileDefinitionOutput,
   shapeDefinition,
 } from "./profileDefinition";
@@ -147,6 +148,62 @@ describe("definitionFailureNote", () => {
   });
 });
 
+describe("loadProfileDefinition", () => {
+  const catalog = {
+    entries: [],
+    note: "The machine could not be reached: it may be powered off.",
+    source: "documentation" as const,
+  };
+  const entry = {
+    basketNotes: null,
+    description: null,
+    documented: false,
+    id: "zer0",
+    machineProfileId: "15",
+    name: "Zer0",
+    onMachine: true as boolean | null,
+    recommendedDose: null,
+    roastLevels: [],
+    targetRatio: null,
+    targetTime: null,
+    type: null,
+  };
+
+  // Each of these must reach the machine zero times. Asking it for a profile it
+  // has already said it does not hold is a round trip to a device that serves
+  // one request at a time, spent to learn something already known.
+  it("carries the catalog's own reason when the machine was never reached", async () => {
+    const result = await loadProfileDefinition(
+      { ...entry, onMachine: null },
+      catalog,
+    );
+
+    expect(result.definition).toBeNull();
+    expect(result.note).toContain("could not be reached");
+    expect(result.note).toContain("may be powered off");
+  });
+
+  it("says so when the profile is documented but not loaded", async () => {
+    const result = await loadProfileDefinition(
+      { ...entry, machineProfileId: null, onMachine: false },
+      catalog,
+    );
+
+    expect(result.definition).toBeNull();
+    expect(result.note).toContain("is not on the machine");
+  });
+
+  it("says so when the machine listed a profile with no id", async () => {
+    const result = await loadProfileDefinition(
+      { ...entry, machineProfileId: null },
+      catalog,
+    );
+
+    expect(result.definition).toBeNull();
+    expect(result.note).toContain("gave no id");
+  });
+});
+
 describe("formatProfileDefinition", () => {
   function render(definition: unknown, note = "Read from the machine.") {
     return formatProfileDefinition({
@@ -211,5 +268,100 @@ describe("formatProfileDefinition", () => {
   it("says so when the machine reported a profile with no phases", () => {
     const text = render(shapeDefinition(wire(mockSparseProfileDefinition)));
     expect(text).toContain("no phases for this profile");
+  });
+
+  it("phrases every stop condition the machine documents", () => {
+    const text = render(
+      shapeDefinition(
+        wire({
+          name: "Everything",
+          phases: [
+            {
+              stopConditions: {
+                flowAbove: 3,
+                flowBelow: 1,
+                pressureAbove: 4,
+                pressureBelow: 2,
+                time: 10000,
+                waterPumpedInPhase: 40,
+                weight: 30,
+              },
+              type: "FLOW",
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(text).toContain("flow above 3 ml/s");
+    expect(text).toContain("flow below 1 ml/s");
+    expect(text).toContain("pressure above 4 bar");
+    expect(text).toContain("pressure below 2 bar");
+    expect(text).toContain("10.0s elapsed");
+    expect(text).toContain("40 ml pumped in this phase");
+    expect(text).toContain("30 g in the cup");
+  });
+
+  it("renders a phase whose type it does not recognise, without inventing a unit", () => {
+    const text = render(
+      shapeDefinition(
+        wire({
+          name: "Odd",
+          phases: [{ target: { end: 5 }, type: "SOMETHING_NEW" }],
+        }),
+      ),
+    );
+
+    expect(text).toContain("SOMETHING_NEW");
+    expect(text).toContain("to 5");
+    expect(text).not.toContain("to 5 bar");
+    expect(text).not.toContain("to 5 ml/s");
+  });
+
+  it("names an unnamed phase and omits what the machine did not send", () => {
+    const text = render(
+      shapeDefinition(wire({ name: "Sparse", phases: [{}] })),
+    );
+
+    expect(text).toContain("1. **Unnamed**");
+    expect(text).not.toContain("Ends at:");
+    expect(text).not.toContain("ramp");
+  });
+
+  it("reports a pressure hand-off as well as a flow one", () => {
+    const text = render(
+      shapeDefinition(
+        wire({
+          globalStopConditions: { switchToManualPressureCtrl: true },
+          name: "Manual finish",
+        }),
+      ),
+    );
+    expect(text).toContain("Hands pressure control back to you");
+  });
+
+  it("renders a partial recipe without leaving gaps in the sentence", () => {
+    const text = render(
+      shapeDefinition(wire({ name: "Half", recipe: { coffeeIn: 18 } })),
+    );
+
+    expect(text).toContain("**Recipe:** 18 g in");
+    expect(text).not.toContain("→");
+  });
+
+  it("omits the stop line entirely when the machine sent an empty block", () => {
+    const text = render(
+      shapeDefinition(wire({ globalStopConditions: {}, name: "None" })),
+    );
+    expect(text).not.toContain("**Stops when:**");
+  });
+
+  it("prints a zero restriction as no restriction at all", () => {
+    const text = render(
+      shapeDefinition(
+        wire({ name: "Plain", phases: [{ restriction: 0, type: "MANUAL" }] }),
+      ),
+    );
+    expect(text).not.toContain("Restriction:");
   });
 });

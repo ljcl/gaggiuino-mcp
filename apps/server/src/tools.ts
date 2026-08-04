@@ -839,7 +839,7 @@ function writeToolDisabled(action: string): ErrorReply | undefined {
  * `MalformedUpstreamError` is deliberately absent: `createdProfileReader`
  * cannot raise one.
  */
-function describeUploadFailure(
+export function describeUploadFailure(
   error: unknown,
   profileName: string,
 ): ErrorReply | undefined {

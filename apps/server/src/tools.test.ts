@@ -11,6 +11,7 @@ import {
 import { resetClient } from "./client";
 import { handleToolCall } from "./server";
 import { mockServer } from "./test-setup";
+import { describeUploadFailure } from "./tools";
 
 describe("tool dispatch", () => {
   beforeEach(() => {
@@ -1013,6 +1014,15 @@ describe("tool dispatch", () => {
 
       expect(result.isError).toBe(true);
       expect(result.text).toContain("Nothing was saved");
+    });
+
+    it("leaves a failure it does not recognise to the dispatcher", () => {
+      // Same contract describeUpstreamError has: anything that is not an
+      // upstream failure is a bug in this server, and must not be dressed up as
+      // advice about a profile that may or may not have been saved.
+      expect(
+        describeUploadFailure(new Error("boom"), "18g Double"),
+      ).toBeUndefined();
     });
 
     it("treats an unreadable success body as a success, not a failure", async () => {
