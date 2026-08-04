@@ -375,14 +375,20 @@ describe("tools/list over the real transport", () => {
     return message.result.tools;
   }
 
+  /** Duplicated from `server.test.ts` on purpose — this file asserts the same
+   *  facts over the real transport, and sharing the sets would let one edit
+   *  satisfy both assertions. */
+  const WRITE_TOOLS = new Set(["select_profile", "upload_profile"]);
+  const NON_IDEMPOTENT_TOOLS = new Set(["upload_profile"]);
+
   it("serves every tool with its annotations intact", async () => {
     const tools = await listTools();
     expect(tools.length).toBeGreaterThan(0);
     for (const tool of tools) {
       expect(tool.annotations, `${tool.name} annotations`).toMatchObject({
         destructiveHint: false,
-        idempotentHint: true,
-        readOnlyHint: tool.name !== "select_profile",
+        idempotentHint: !NON_IDEMPOTENT_TOOLS.has(tool.name),
+        readOnlyHint: !WRITE_TOOLS.has(tool.name),
       });
     }
   });
@@ -394,6 +400,14 @@ describe("tools/list over the real transport", () => {
     const tools = await listTools();
     const write = tools.find((tool) => tool.name === "select_profile");
     expect(write?.annotations?.readOnlyHint).toBe(false);
+  });
+
+  it("does not lose the non-idempotent hint in transit", async () => {
+    // The same exposure, one flag over: a host that sees idempotentHint true
+    // feels free to retry, and a retried upload creates a second profile.
+    const tools = await listTools();
+    const upload = tools.find((tool) => tool.name === "upload_profile");
+    expect(upload?.annotations?.idempotentHint).toBe(false);
   });
 
   it("serves the MCP App wiring intact", async () => {

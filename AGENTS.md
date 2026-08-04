@@ -55,6 +55,7 @@ via symlinks in `.claude/skills/`. Externally-sourced skills are tracked in `ski
 | `get_machine_settings`  | Boiler/steam/scale config as the firmware sends it  |
 | `get_maintenance_status`| Descale/backflush service log the machine keeps itself |
 | `select_profile`        | **Write.** Switch profile; needs `MCP_AUTH_TOKEN`   |
+| `upload_profile`        | **Write, not idempotent.** Save a new profile; needs `MCP_AUTH_TOKEN` |
 | `get_dial_in_guidance`  | Expert dial-in system prompt                        |
 
 App-only (`visibility: ["app"]`, not advertised to the model): `get_shot_raw_json`
@@ -78,7 +79,8 @@ annotations, and the handler. Nothing about a tool is declared twice.
   `structuredContent`, so a handler that drifts from its schema fails loudly
   instead of shipping something the host will reject. `get_status`,
   `get_latest_shot_id`, `list_recent_shots`, `get_shot_data`, `list_profiles`,
-  `get_profile_info`, and `get_maintenance_status` carry output schemas; the
+  `get_profile_info`, `get_maintenance_status`, and `upload_profile` carry
+  output schemas; the
   raw/UI/prose tools are text-only by design. `get_shot_raw_json` and
   `get_previous_shot_json` in particular must keep returning a JSON **text**
   block — the shot-graph app parses both with `readToolJson`
@@ -94,19 +96,26 @@ annotations, and the handler. Nothing about a tool is declared twice.
   with no schema change. Enumerate the services and it becomes the settings
   case, and the schema starts dropping things.
 - **Annotations are honest, not decorative.** Every tool is
-  `destructiveHint: false` and `idempotentHint: true`, and every tool but one is
-  `readOnlyHint: true`. `select_profile` is the exception and carries
+  `destructiveHint: false`, and every tool but two is `readOnlyHint: true`.
+  `select_profile` and `upload_profile` are the exceptions and carry
   `readOnlyHint: false`, because that flag is what a host keys an approval
   prompt on — claiming otherwise to dodge the prompt is the dishonest annotation
-  the tests exist to catch. `openWorldHint` is true for every tool that reaches
+  the tests exist to catch. `upload_profile` is also the only tool with
+  `idempotentHint: false`: `POST /api/profile` mints a fresh id on every call, so
+  a retried upload leaves a duplicate profile behind, and `idempotentHint` is
+  what a host would key an automatic retry on. `destructiveHint: false` still
+  holds for it — a create is additive, and REST offers no update or overwrite
+  verb at all. `openWorldHint` is true for every tool that reaches
   the machine and false for `get_dial_in_guidance`, now the only one that reads
   bundled YAML and nothing else — `list_profiles` and `get_profile_info` flipped
   to open-world when they started reading the machine's own inventory.
   `server.test.ts` names the write tools
   in a set rather than deriving them from the annotations under test, so a new
   write tool is a deliberate edit and a read tool that quietly loses
-  `readOnlyHint` fails; `http.test.ts` re-asserts the write hint over the real
-  transport, since `annotations` is exactly what a transport is free to drop.
+  `readOnlyHint` fails; `NON_IDEMPOTENT_TOOLS` sits beside it for the same
+  reason. `http.test.ts` re-asserts both hints over the real transport, since
+  `annotations` is exactly what a transport is free to drop — and it keeps its
+  own copy of the two sets on purpose, so one edit cannot satisfy both files.
 - **Expected failures are results, not exceptions.** `errors.ts` defines the
   three upstream failure classes (`UpstreamUnreachableError`,
   `UpstreamHttpError`, `MalformedUpstreamError`) and `describeUpstreamError`
@@ -1001,7 +1010,7 @@ curl -X POST http://localhost:8000/mcp \
 | `GAGGIUINO_URL`       | `http://gaggiuino.local` | Gaggiuino machine URL                             |
 | `PORT`                | `8000`                   | Server port                                       |
 | `HOST`                | `0.0.0.0`                | Bind address                                      |
-| `MCP_AUTH_TOKEN`      | _(unset)_                | Bearer secret for `/mcp`; unset serves it open and disables `select_profile` |
+| `MCP_AUTH_TOKEN`      | _(unset)_                | Bearer secret for `/mcp`; unset serves it open and disables `select_profile` and `upload_profile` |
 | `MCP_ALLOWED_ORIGINS` | _(empty)_                | Browser origins allowed on `/mcp`; `*` allows any |
 | `MCP_ALLOWED_HOSTS`   | _(empty)_                | `Host` values to accept; empty disables the check |
 | `LOG_LEVEL`           | `info`                   | `debug`/`info`/`warn`/`error`/`silent`            |

@@ -331,6 +331,165 @@ describe("client", () => {
     });
   });
 
+  describe("createProfile", () => {
+    it("sends the profile as a JSON body with the documented content type", async () => {
+      let body: unknown;
+      let contentType: string | null = null;
+      mockServer.use(
+        http.post("http://gaggiuino.local/api/profile", async ({ request }) => {
+          contentType = request.headers.get("content-type");
+          body = await request.json();
+          return HttpResponse.json({ id: 4, name: "18g Double" });
+        }),
+      );
+      const client = createClient({ baseUrl: "http://gaggiuino.local" });
+      const created = await client.createProfile(mockProfileDefinition);
+
+      expect(body).toEqual(mockProfileDefinition);
+      expect(contentType).toBe("application/json");
+      expect(created.id).toBe("4");
+    });
+
+    it("does not retry a 503, unlike every other call here", async () => {
+      // The whole reason this endpoint has its own attempt budget. 503 is
+      // retriable under isRetriableStatus — an ESP32 busy writing to flash —
+      // which on a create is precisely when the write may already have landed.
+      let attempts = 0;
+      mockServer.use(
+        http.post("http://gaggiuino.local/api/profile", () => {
+          attempts += 1;
+          return new HttpResponse(null, { status: 503 });
+        }),
+      );
+      const client = createClient({
+        baseUrl: "http://gaggiuino.local",
+        initialDelayMs: 1,
+      });
+
+      await expect(client.createProfile({})).rejects.toThrow(UpstreamHttpError);
+      expect(attempts).toBe(1);
+    });
+
+    it("does not retry a network failure either", async () => {
+      let attempts = 0;
+      mockServer.use(
+        http.post("http://gaggiuino.local/api/profile", () => {
+          attempts += 1;
+          return HttpResponse.error();
+        }),
+      );
+      const client = createClient({
+        baseUrl: "http://gaggiuino.local",
+        initialDelayMs: 1,
+      });
+
+      await expect(client.createProfile({})).rejects.toThrow(
+        UpstreamUnreachableError,
+      );
+      expect(attempts).toBe(1);
+    });
+
+    it("keeps its attempt budget to itself", async () => {
+      // maxAttempts is per-request, not a property of the client — a read on
+      // the same client must still retry.
+      let creates = 0;
+      let reads = 0;
+      mockServer.use(
+        http.post("http://gaggiuino.local/api/profile", () => {
+          creates += 1;
+          return new HttpResponse(null, { status: 503 });
+        }),
+        http.get("http://gaggiuino.local/api/system/status", () => {
+          reads += 1;
+          return reads === 1
+            ? new HttpResponse(null, { status: 503 })
+            : HttpResponse.json([mockMachineStatus]);
+        }),
+      );
+      const client = createClient({
+        baseUrl: "http://gaggiuino.local",
+        initialDelayMs: 1,
+      });
+
+      await expect(client.createProfile({})).rejects.toThrow();
+      await client.getStatus();
+
+      expect(creates).toBe(1);
+      expect(reads).toBe(2);
+    });
+
+    it("carries the machine's own rejection text on the error", async () => {
+      mockServer.use(
+        http.post(
+          "http://gaggiuino.local/api/profile",
+          () => new HttpResponse("phases[0].target missing", { status: 422 }),
+        ),
+      );
+      const client = createClient({ baseUrl: "http://gaggiuino.local" });
+
+      await expect(client.createProfile({})).rejects.toMatchObject({
+        detail: "phases[0].target missing",
+        status: 422,
+      });
+    });
+
+    it("truncates a machine that answers with a whole error page", async () => {
+      mockServer.use(
+        http.post(
+          "http://gaggiuino.local/api/profile",
+          () => new HttpResponse("x".repeat(5000), { status: 500 }),
+        ),
+      );
+      const client = createClient({ baseUrl: "http://gaggiuino.local" });
+
+      await expect(client.createProfile({})).rejects.toMatchObject({
+        detail: `${"x".repeat(200)}…`,
+      });
+    });
+
+    it("leaves the detail unset when the machine sends an empty body", async () => {
+      mockServer.use(
+        http.post(
+          "http://gaggiuino.local/api/profile",
+          () => new HttpResponse(null, { status: 500 }),
+        ),
+      );
+      const client = createClient({ baseUrl: "http://gaggiuino.local" });
+
+      await expect(client.createProfile({})).rejects.toMatchObject({
+        detail: undefined,
+      });
+    });
+
+    it("resolves rather than throwing when a saved profile's ack is not JSON", async () => {
+      // A SyntaxError here is not a MalformedUpstreamError, so it would fall
+      // through to "the machine may be powered off" — said about a machine
+      // that has just saved the profile.
+      mockServer.use(
+        http.post(
+          "http://gaggiuino.local/api/profile",
+          () => new HttpResponse("saved", { status: 200 }),
+        ),
+      );
+      const client = createClient({ baseUrl: "http://gaggiuino.local" });
+
+      await expect(client.createProfile({})).resolves.toEqual({});
+    });
+
+    it("unwraps a created profile the firmware wrapped in an array", async () => {
+      mockServer.use(
+        http.post("http://gaggiuino.local/api/profile", () =>
+          HttpResponse.json([{ id: 7, name: "Wrapped" }]),
+        ),
+      );
+      const client = createClient({ baseUrl: "http://gaggiuino.local" });
+
+      await expect(client.createProfile({})).resolves.toMatchObject({
+        id: "7",
+      });
+    });
+  });
+
   describe("getProfileDefinition", () => {
     it("reads the machine's export without rescaling anything", async () => {
       // A profile is not the shot time-series: nothing here is scaled by 10,

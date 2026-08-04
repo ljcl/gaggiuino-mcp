@@ -357,6 +357,24 @@ export const ShotDataSchema = z.looseObject({
 
 export type ShotData = z.output<typeof ShotDataSchema>;
 
+/**
+ * What the machine answers a successful upload with (rest-api.md L87-93:
+ * `{"id": 4, "name": "18g Double"}` — a bare object, not the `{"success": true}`
+ * shape the "Common Response Formats" block shows; that generic block is
+ * contradicted by three endpoint-specific examples, so it is not a contract).
+ *
+ * Loose to the point of accepting nothing at all, and that is the point: by the
+ * time this body arrives the profile is already on the machine, so a schema that
+ * could fail here would report a write that landed as a write that did not —
+ * the one answer that makes a user upload the same profile twice.
+ */
+const CreatedProfileSchema = z.looseObject({
+  id: IdSchema.optional(),
+  name: z.string().optional(),
+});
+
+export type CreatedProfile = z.output<typeof CreatedProfileSchema>;
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -412,6 +430,32 @@ function unwrapArray(data: unknown): unknown {
   return data;
 }
 
+const MAX_ERROR_DETAIL = 200;
+
+/**
+ * The machine's own words about why it refused, bounded and best-effort.
+ *
+ * Everything about this is deliberately defensive: it runs on the failure path,
+ * the body may be an error page rather than a sentence, and a body that will not
+ * read must never turn an HTTP error into a *different* error. Draining it is a
+ * bonus rather than an accident — `statusReader` already records that the ESP32
+ * serves one request at a time and a dangling body costs the next caller, and
+ * the error path did not drain before.
+ */
+async function readErrorDetail(
+  response: Response,
+): Promise<string | undefined> {
+  try {
+    const text = (await response.text()).trim();
+    if (text === "") return undefined;
+    return text.length > MAX_ERROR_DETAIL
+      ? `${text.slice(0, MAX_ERROR_DETAIL)}…`
+      : text;
+  } catch {
+    return undefined;
+  }
+}
+
 function describeIssues(error: z.ZodError): string {
   return error.issues
     .slice(0, 3)
@@ -436,11 +480,34 @@ export function createClient(config: ClientConfig) {
   const normalizedBaseUrl = baseUrl.replace(/\/$/, "");
   const cache = createCache<unknown>({ maxEntries: cacheMaxEntries, now });
 
-  interface RequestOptions {
-    method?: "GET" | "POST";
-    /** Serve this path from cache for this long. Omit to always fetch. */
-    ttlMs?: number;
-  }
+  /**
+   * `body` is a pre-serialized string, never a stream: `perform` may re-send it,
+   * and a stream body is consumed by the first attempt.
+   *
+   * Two arms, so the *type* rather than a comment rules out caching a write.
+   * `perform` keys the cache on `path` alone with no method prefix, which is
+   * safe only for as long as nothing POSTs to a path something else GETs.
+   *
+   * `maxAttempts` defaults to the client's `maxRetries`, which — despite the
+   * name — already counts attempts rather than retries: `maxRetries: 3` produces
+   * three requests, not four. Do not add one.
+   */
+  type RequestOptions =
+    /** A read, or a write whose whole payload is in the URL like profile-select. */
+    | {
+        body?: never;
+        maxAttempts?: number;
+        method?: "GET" | "POST";
+        /** Serve this path from cache for this long. Omit to always fetch. */
+        ttlMs?: number;
+      }
+    /** A write with a JSON body. Never cached — there is no representation to cache. */
+    | {
+        body: string;
+        maxAttempts?: number;
+        method: "POST";
+        ttlMs?: never;
+      };
 
   /**
    * How a successful response becomes a value.
@@ -479,10 +546,38 @@ export function createClient(config: ClientConfig) {
     await response.text();
   };
 
+  /**
+   * For a write whose answer is worth reading but must never fail the call.
+   *
+   * `statusReader`'s reasoning one step further. `jsonReader` is wrong here in
+   * two ways: `response.json()` on a non-JSON ack throws a `SyntaxError`, which
+   * is not a `MalformedUpstreamError` and so falls through to the unreachable
+   * branch — "the machine may be powered off", said about a machine that has
+   * just saved a profile — and a schema mismatch would fail a call that already
+   * changed the machine. So the body is best-effort: the new id when the machine
+   * sends one, an empty record when it does not, and the caller says which.
+   */
+  const createdProfileReader: BodyReader<CreatedProfile> = async (response) => {
+    const text = await response.text();
+    try {
+      const parsed = CreatedProfileSchema.safeParse(
+        unwrapArray(JSON.parse(text)),
+      );
+      return parsed.success ? parsed.data : {};
+    } catch {
+      return {};
+    }
+  };
+
   async function perform<T>(
     path: string,
     read: BodyReader<T>,
-    { method = "GET", ttlMs }: RequestOptions = {},
+    {
+      body,
+      maxAttempts = maxRetries,
+      method = "GET",
+      ttlMs,
+    }: RequestOptions = {},
   ): Promise<T> {
     if (ttlMs !== undefined) {
       const hit = cache.get(path);
@@ -503,7 +598,7 @@ export function createClient(config: ClientConfig) {
     let lastHttpError: UpstreamHttpError | undefined;
     let attempts = 0;
 
-    for (let attempt = 0; attempt < maxRetries; attempt += 1) {
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       const remaining = deadlineAt - now();
       if (remaining <= 0) break;
 
@@ -516,6 +611,12 @@ export function createClient(config: ClientConfig) {
 
       try {
         const response = await fetch(`${normalizedBaseUrl}${path}`, {
+          // rest-api.md Notes item 5: all requests and responses are JSON. The
+          // client sets no headers otherwise, which was fine only because
+          // nothing had ever sent a body.
+          ...(body === undefined
+            ? {}
+            : { body, headers: { "Content-Type": "application/json" } }),
           method,
           signal: controller.signal,
         });
@@ -528,6 +629,7 @@ export function createClient(config: ClientConfig) {
             response.status,
             response.statusText,
             path,
+            await readErrorDetail(response),
           );
         }
 
@@ -547,7 +649,7 @@ export function createClient(config: ClientConfig) {
           lastError = error as Error;
         }
 
-        if (attempt >= maxRetries - 1) break;
+        if (attempt >= maxAttempts - 1) break;
         // A retry with its backoff skipped is just hammering a machine that
         // has already failed, so no budget for the wait means no budget for
         // the attempt either.
@@ -665,6 +767,31 @@ export function createClient(config: ClientConfig) {
         statusReader,
         { method: "POST" },
       );
+    },
+
+    /**
+     * The one call here that is not safe to repeat.
+     *
+     * `selectProfile`'s docblock pre-registered this case: *"a future write that
+     * is not idempotent must not inherit this loop without saying so."* The
+     * machine's own documentation settles it — rest-api.md L82, on
+     * `POST /api/profile`: *"A fresh id is always assigned, regardless of any id
+     * in the body."* There is no dedupe to lean on.
+     *
+     * So `maxAttempts: 1` opts this request out of the retry loop entirely. Not
+     * just out of the 5xx retry `isRetriableStatus` would otherwise grant a 503
+     * — which on this endpoint means an ESP32 busy writing to flash, i.e.
+     * precisely the case where the write may already have landed — but out of
+     * the network-failure retry too. A duplicate profile the user has to find
+     * and delete on a touchscreen is a worse outcome than one failed call the
+     * caller can check and repeat deliberately.
+     */
+    async createProfile(profile: unknown): Promise<CreatedProfile> {
+      return perform("/api/profile", createdProfileReader, {
+        body: JSON.stringify(profile),
+        maxAttempts: 1,
+        method: "POST",
+      });
     },
   };
 }

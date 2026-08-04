@@ -20,7 +20,8 @@ A Remote [MCP](https://modelcontextprotocol.io) server for integrating a [Gaggiu
 - `get_machine_settings` - Boiler, steam, and scale configuration as the machine reports it
 - `get_maintenance_status` - Descale and backflush history the machine tracks itself, with shots since each
 - `get_dial_in_guidance` - Expert guidance for analyzing espresso shots
-- `select_profile` - Switch the active profile (the only tool that changes the machine; requires `MCP_AUTH_TOKEN`)
+- `select_profile` - Switch the active profile (changes the machine; requires `MCP_AUTH_TOKEN`)
+- `upload_profile` - Save a new brew profile to the machine (changes the machine; requires `MCP_AUTH_TOKEN`). Creates only — it never updates, and the machine assigns a fresh id every time, so uploading twice leaves two profiles
 
 **MCP Prompts** - workflow templates your host surfaces as slash commands or menu items:
 
@@ -98,7 +99,7 @@ docker compose pull && docker compose up -d
 | `GAGGIUINO_URL` | `http://gaggiuino.local` | URL of your Gaggiuino machine |
 | `PORT` | `8000` | Port for the MCP server |
 | `HOST` | `0.0.0.0` | Host to bind to |
-| `MCP_AUTH_TOKEN` | _(unset)_ | Shared secret required as `Authorization: Bearer <token>` on `/mcp`. Unset serves the endpoint unauthenticated and disables `select_profile`. |
+| `MCP_AUTH_TOKEN` | _(unset)_ | Shared secret required as `Authorization: Bearer <token>` on `/mcp`. Unset serves the endpoint unauthenticated and disables the two tools that change the machine, `select_profile` and `upload_profile`. |
 | `MCP_ALLOWED_ORIGINS` | _(empty)_ | Comma-separated browser origins allowed to call `/mcp`. `*` allows any (unsafe). |
 | `MCP_ALLOWED_HOSTS` | _(empty)_ | Comma-separated `Host` header values to accept. Empty disables the check. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, or `silent`. Logs are one JSON object per line on stderr. |
@@ -148,10 +149,10 @@ openssl rand -hex 32
 `/health` is deliberately left unauthenticated so the container's healthcheck and
 your reverse proxy can probe it.
 
-`select_profile` — the one tool that changes the machine — refuses to run at all
-while no token is set, and says so. Everything else here only reads, which is why
-an open server is a defensible default for a LAN and a machine-control tool on one
-is not.
+`select_profile` and `upload_profile` — the two tools that change the machine —
+refuse to run at all while no token is set, and say so. Everything else here only
+reads, which is why an open server is a defensible default for a LAN and a
+machine-control tool on one is not.
 
 Requests carrying an `Origin` header are rejected unless the origin is listed in
 `MCP_ALLOWED_ORIGINS`. This is what stops any web page you happen to visit from

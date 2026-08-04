@@ -49,6 +49,18 @@ export class UpstreamHttpError extends Error {
     readonly status: number,
     readonly statusText: string,
     readonly path: string,
+    /**
+     * The machine's own explanation, when it sent one.
+     *
+     * `POST /api/profile` answers a rejected profile with a plain-text reason
+     * (`docs/upstream/rest-api.md` L96: 422 for bad or incomplete JSON, 500 if
+     * it could not be persisted), and that reason is the only thing telling a
+     * caller which field to fix. Never interpreted here — `describeUpstreamError`
+     * deliberately ignores it, because its generic text is embedded verbatim
+     * into `list_profiles` output and asserted on. The one tool that can act on
+     * it reads it directly.
+     */
+    readonly detail?: string,
   ) {
     super(`HTTP ${status}: ${statusText}`);
     this.name = "UpstreamHttpError";

@@ -213,7 +213,15 @@ describe("ListTools", () => {
    * added to this list deliberately; a read tool that quietly loses
    * `readOnlyHint` fails instead of redefining what the test asserts.
    */
-  const WRITE_TOOLS = new Set(["select_profile"]);
+  const WRITE_TOOLS = new Set(["select_profile", "upload_profile"]);
+
+  /**
+   * Writes that are not safe to repeat, named the same way and for the same
+   * reason. `POST /api/profile` mints a fresh id on every call, so a retried
+   * upload leaves a duplicate profile behind — and `idempotentHint` is the flag
+   * a host keys an automatic retry on.
+   */
+  const NON_IDEMPOTENT_TOOLS = new Set(["upload_profile"]);
 
   it("gives every tool a title and honest annotations", async () => {
     const { tools } = await client.listTools();
@@ -226,14 +234,16 @@ describe("ListTools", () => {
         !WRITE_TOOLS.has(tool.name),
       );
       // True for every tool here, read or write: selecting a profile replaces
-      // a selection rather than destroying anything, and doing it twice lands
-      // in the same place as doing it once.
+      // a selection rather than destroying anything, and uploading one is
+      // additive — the machine offers no REST verb that overwrites or deletes.
       expect(
         tool.annotations?.destructiveHint,
         `${tool.name} destructive`,
       ).toBe(false);
+      // Not true for every tool any more: `upload_profile` mints a new profile
+      // per call, so claiming idempotence would invite a host to retry it.
       expect(tool.annotations?.idempotentHint, `${tool.name} idempotent`).toBe(
-        true,
+        !NON_IDEMPOTENT_TOOLS.has(tool.name),
       );
       expect(
         typeof tool.annotations?.openWorldHint,
@@ -249,6 +259,16 @@ describe("ListTools", () => {
     expect(tool.annotations?.readOnlyHint).toBe(false);
     expect(tool.annotations?.openWorldHint).toBe(true);
     expect(tool.description).toContain("confirm the profile with the user");
+  });
+
+  it("advertises the profile upload as a write that must not be repeated", async () => {
+    // The pair matters more than either flag alone: readOnlyHint is what gets
+    // the user asked, idempotentHint: false is what stops a host retrying a
+    // call that may already have created a profile.
+    const tool = await toolNamed("upload_profile");
+    expect(tool.annotations?.readOnlyHint).toBe(false);
+    expect(tool.annotations?.idempotentHint).toBe(false);
+    expect(tool.description).toContain("get an explicit yes");
   });
 
   it("marks machine reads open-world and bundled-data reads closed-world", async () => {
@@ -288,6 +308,7 @@ describe("ListTools", () => {
       "list_profiles",
       "get_profile_info",
       "get_maintenance_status",
+      "upload_profile",
     ]);
     for (const tool of tools) {
       if (tool.outputSchema) expect(tool.outputSchema.type).toBe("object");
