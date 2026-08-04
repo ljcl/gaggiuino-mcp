@@ -667,6 +667,85 @@ describe("tool dispatch", () => {
     });
   });
 
+  describe("get_maintenance_status", () => {
+    function serveMaintenance(body: unknown, status = 200) {
+      resetClient({ initialDelayMs: 1 });
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/maintenance", () =>
+          status === 200
+            ? HttpResponse.json(body)
+            : new HttpResponse(null, { status }),
+        ),
+      );
+    }
+
+    it("summarizes the machine's own service log", async () => {
+      serveMaintenance({
+        lastBackflushTimestamp: 1753000000,
+        lastDescaleTimestamp: 1753900000,
+        shotsSinceBackflush: 10,
+        shotsSinceDescale: 42,
+      });
+      const result = await handleToolCall("get_maintenance_status", {});
+
+      expect(result.isError).toBeFalsy();
+      expect(result.text).toContain("## Descale");
+      expect(result.text).toContain("Shots since: 42");
+      // Order is the machine's own key order, not this server's preference.
+      expect(result.structuredContent).toMatchObject({
+        services: [
+          { service: "backflush", shotsSince: 10 },
+          { service: "descale", shotsSince: 42 },
+        ],
+      });
+    });
+
+    it("unwraps a record the firmware wrapped in an array", async () => {
+      serveMaintenance([{ lastDescaleTimestamp: 1753900000 }]);
+      const result = await handleToolCall("get_maintenance_status", {});
+      expect(result.text).toContain("## Descale");
+    });
+
+    it("reads a 404 as firmware without a service log, not as a broken machine", async () => {
+      serveMaintenance(null, 404);
+      const result = await handleToolCall("get_maintenance_status", {});
+
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("does not track service history");
+      // The generic 404 text reads as a bug report; this one is an answer.
+      expect(result.text).not.toContain("no endpoint at");
+    });
+
+    it("still reports a 503 as a machine fault", async () => {
+      serveMaintenance(null, 503);
+      const result = await handleToolCall("get_maintenance_status", {});
+
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("HTTP 503");
+    });
+
+    it("still reports an unreachable machine as unreachable", async () => {
+      resetClient({ initialDelayMs: 1 });
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/maintenance", () =>
+          HttpResponse.error(),
+        ),
+      );
+      const result = await handleToolCall("get_maintenance_status", {});
+
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("Could not reach the Gaggiuino machine");
+    });
+
+    it("rejects a body that is not a record", async () => {
+      serveMaintenance([]);
+      const result = await handleToolCall("get_maintenance_status", {});
+
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("/api/maintenance");
+    });
+  });
+
   describe("select_profile", () => {
     // `vi.stubEnv` outlives the test that set it, and this suite shares a
     // process with the auth tests — leaving MCP_AUTH_TOKEN set would silently

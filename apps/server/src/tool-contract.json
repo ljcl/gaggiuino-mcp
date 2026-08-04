@@ -928,6 +928,83 @@
       "destructiveHint": false,
       "idempotentHint": true,
       "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Read the service history the machine tracks for itself: when it last recorded a descale and a backflush, and how many shots it has pulled since each. Reach for it when the shot data points at the machine rather than the coffee — scale build-up shows up as flow that will not match the profile's targets and a brew temperature that will not hold, at a grind setting that used to work. The machine records a descale at 50% of the descale cycle and a backflush once pressure holds above 10 bar in flush mode for more than two seconds, so a service done by hand is not in these numbers, and the shot counters only count shots that ran 5 seconds or longer. Older firmware does not track any of this and says so.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "get_maintenance_status",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "services": {
+          "description": "One entry per service this firmware tracks, in the order the machine reported them. Empty means the machine's service log is empty, which is different from the firmware having no service log at all — that comes back as an error result.",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "lastAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "When the machine last recorded this service, as an ISO-8601 UTC instant. Null when it has never recorded one — the machine reports 0 for that, which is not 1 January 1970 — or when the epoch it reported is too early to be a real date, which means its clock was not set at the time."
+              },
+              "lastEpochSec": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The same instant in the machine's own epoch seconds, or null when it has never recorded this service."
+              },
+              "service": {
+                "description": "Which service this is, in the machine's own naming: \"descale\" or \"backflush\" on current firmware.",
+                "type": "string"
+              },
+              "shotsSince": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Shots recorded since that service. Only shots that ran long enough for the machine to record them — 5 seconds — are counted, so flushes and aborted pulls are not in this number. Null when this firmware reports no counter for the service."
+              }
+            },
+            "required": [
+              "lastAt",
+              "lastEpochSec",
+              "service",
+              "shotsSince"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "services"
+      ],
+      "type": "object"
+    },
+    "title": "Get machine service history"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
       "readOnlyHint": false
     },
     "description": "Switch the machine to a different brew profile. This changes the machine, so confirm the profile with the user before calling it — do not select one on your own initiative from dial-in advice. Takes the id from list_profiles (either the documented id or the machineProfileId). The profile must already be on the machine; this cannot create one. Refuses unless this server is configured with an auth token, since an unauthenticated server exposed over a tunnel would let anyone reach it.",

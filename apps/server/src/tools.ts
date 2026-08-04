@@ -11,10 +11,11 @@ import {
   SCALE_BY_10,
   ShotSummarySchema,
 } from "./analysis";
-import { getClient } from "./client";
+import { getClient, type MachineMaintenance } from "./client";
 import { MalformedUpstreamError, UpstreamHttpError } from "./errors";
 import { MISSING_GUIDANCE_TEXT, renderDialInGuidance } from "./guidance";
 import { MAX_RECENT_SHOTS, walkShotsBack } from "./history";
+import { extractServiceHistory, formatMaintenance } from "./maintenance";
 import { loadSecurityConfig } from "./mcpAuth";
 import {
   type CatalogEntry,
@@ -199,6 +200,50 @@ const ProfileListOutput = z.object({
     .enum(["documentation", "machine"])
     .describe(
       "'machine' when the machine answered, 'documentation' when this server fell back to its bundled docs",
+    ),
+});
+
+/**
+ * One service the machine keeps a log for.
+ *
+ * The *list* of services is not modelled — see `maintenance.ts` — so this
+ * describes the shape of a record and `services` carries however many the
+ * firmware sent. That is the difference from `get_machine_settings`, which is
+ * text-only precisely because a schema there would have to enumerate
+ * firmware-chosen fields and would drop the new one. A firmware that starts
+ * tracking a water-filter change appears here with no change to this schema.
+ */
+const ServiceHistoryOutput = z.object({
+  lastAt: z
+    .string()
+    .nullable()
+    .describe(
+      "When the machine last recorded this service, as an ISO-8601 UTC instant. Null when it has never recorded one — the machine reports 0 for that, which is not 1 January 1970 — or when the epoch it reported is too early to be a real date, which means its clock was not set at the time.",
+    ),
+  lastEpochSec: z
+    .number()
+    .nullable()
+    .describe(
+      "The same instant in the machine's own epoch seconds, or null when it has never recorded this service.",
+    ),
+  service: z
+    .string()
+    .describe(
+      'Which service this is, in the machine\'s own naming: "descale" or "backflush" on current firmware.',
+    ),
+  shotsSince: z
+    .number()
+    .nullable()
+    .describe(
+      "Shots recorded since that service. Only shots that ran long enough for the machine to record them — 5 seconds — are counted, so flushes and aborted pulls are not in this number. Null when this firmware reports no counter for the service.",
+    ),
+});
+
+const MaintenanceOutput = z.object({
+  services: z
+    .array(ServiceHistoryOutput)
+    .describe(
+      "One entry per service this firmware tracks, in the order the machine reported them. Empty means the machine's service log is empty, which is different from the firmware having no service log at all — that comes back as an error result.",
     ),
 });
 
@@ -689,6 +734,41 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: NoArgs,
     name: "get_machine_settings",
     title: "Get machine settings",
+  }),
+
+  defineTool({
+    annotations: READS_MACHINE,
+    description:
+      "Read the service history the machine tracks for itself: when it last recorded a descale and a backflush, and how many shots it has pulled since each. Reach for it when the shot data points at the machine rather than the coffee — scale build-up shows up as flow that will not match the profile's targets and a brew temperature that will not hold, at a grind setting that used to work. The machine records a descale at 50% of the descale cycle and a backflush once pressure holds above 10 bar in flush mode for more than two seconds, so a service done by hand is not in these numbers, and the shot counters only count shots that ran 5 seconds or longer. Older firmware does not track any of this and says so.",
+    handler: async () => {
+      let raw: MachineMaintenance;
+      try {
+        raw = await getClient().getMaintenance();
+      } catch (error) {
+        // Older firmware has no service log at all. That is a definitive answer
+        // to "when did I last descale", not a machine fault — and the generic
+        // 404 text in errors.ts ("has no endpoint at /api/maintenance … running
+        // a firmware version that does not expose it") reads as a bug report
+        // rather than as an answer. Handled here, at the one call site that
+        // knows what that path means, so errors.ts gains no per-endpoint branch.
+        if (error instanceof UpstreamHttpError && error.status === 404) {
+          return {
+            isError: true,
+            text: "This machine's firmware does not track service history — it has no /api/maintenance endpoint. Nothing is wrong with the machine; the Service Log is a newer firmware feature. Ask the user when they last descaled and backflushed, or suggest updating the firmware.",
+          };
+        }
+        throw error;
+      }
+      const reading = extractServiceHistory(raw);
+      return {
+        structured: { services: reading.services },
+        text: formatMaintenance(reading, Date.now()),
+      };
+    },
+    inputSchema: NoArgs,
+    name: "get_maintenance_status",
+    outputSchema: MaintenanceOutput,
+    title: "Get machine service history",
   }),
 
   defineTool({

@@ -262,6 +262,7 @@ describe("ListTools", () => {
     // would be a lie even though it can fall back to bundled documentation.
     expect(openWorld.get("list_profiles")).toBe(true);
     expect(openWorld.get("get_machine_settings")).toBe(true);
+    expect(openWorld.get("get_maintenance_status")).toBe(true);
     expect(openWorld.get("get_dial_in_guidance")).toBe(false);
   });
 
@@ -286,6 +287,7 @@ describe("ListTools", () => {
       "get_shot_data",
       "list_profiles",
       "get_profile_info",
+      "get_maintenance_status",
     ]);
     for (const tool of tools) {
       if (tool.outputSchema) expect(tool.outputSchema.type).toBe("object");

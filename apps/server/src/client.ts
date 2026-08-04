@@ -235,6 +235,21 @@ const MachineSettingsSchema = z.looseObject({});
 
 export type MachineSettings = z.output<typeof MachineSettingsSchema>;
 
+/**
+ * The machine's service log (rest-api.md §5, L467-484).
+ *
+ * Nothing is required, for the same reason the settings schema requires
+ * nothing: which services a build tracks is a firmware decision, and pinning
+ * `lastDescaleTimestamp` here would turn a firmware that only logged
+ * backflushes into a `MalformedUpstreamError`. What the object still buys is
+ * the usual boundary guarantee — an error page, a truncated body, or a bare
+ * array fails here with `/api/maintenance` named rather than several modules
+ * later. `maintenance.ts` is where the keys are interpreted.
+ */
+const MachineMaintenanceSchema = z.looseObject({});
+
+export type MachineMaintenance = z.output<typeof MachineMaintenanceSchema>;
+
 const NumberSeries = z.array(z.number());
 
 const ShotDatapointsSchema = z.looseObject({
@@ -516,6 +531,18 @@ export function createClient(config: ClientConfig) {
       return request("/api/profiles/all", MachineProfilesSchema, {
         ttlMs: MACHINE_CONFIG_TTL_MS,
         unwrap: false,
+      });
+    },
+
+    /**
+     * The counters only move when a shot is recorded, minutes apart, so the
+     * 30-second "fold one question's burst" window is the right cache — long
+     * enough to answer a follow-up for free, short enough not to keep serving a
+     * stale count after a descale recorded mid-conversation.
+     */
+    async getMaintenance(): Promise<MachineMaintenance> {
+      return request("/api/maintenance", MachineMaintenanceSchema, {
+        ttlMs: MACHINE_CONFIG_TTL_MS,
       });
     },
 

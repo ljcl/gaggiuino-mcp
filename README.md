@@ -18,6 +18,7 @@ A Remote [MCP](https://modelcontextprotocol.io) server for integrating a [Gaggiu
 - `list_profiles` - Profiles on the machine, merged with this server's documentation
 - `get_profile_info` - Everything known about one profile
 - `get_machine_settings` - Boiler, steam, and scale configuration as the machine reports it
+- `get_maintenance_status` - Descale and backflush history the machine tracks itself, with shots since each
 - `get_dial_in_guidance` - Expert guidance for analyzing espresso shots
 - `select_profile` - Switch the active profile (the only tool that changes the machine; requires `MCP_AUTH_TOKEN`)
 

@@ -53,6 +53,7 @@ via symlinks in `.claude/skills/`. Externally-sourced skills are tracked in `ski
 | `list_profiles`         | Machine's profiles, merged with bundled docs        |
 | `get_profile_info`      | Everything known about one profile                  |
 | `get_machine_settings`  | Boiler/steam/scale config as the firmware sends it  |
+| `get_maintenance_status`| Descale/backflush service log the machine keeps itself |
 | `select_profile`        | **Write.** Switch profile; needs `MCP_AUTH_TOKEN`   |
 | `get_dial_in_guidance`  | Expert dial-in system prompt                        |
 
@@ -77,13 +78,21 @@ annotations, and the handler. Nothing about a tool is declared twice.
   `structuredContent`, so a handler that drifts from its schema fails loudly
   instead of shipping something the host will reject. `get_status`,
   `get_latest_shot_id`, `list_recent_shots`, `get_shot_data`, `list_profiles`,
-  and `get_profile_info` carry output schemas; the raw/UI/prose tools are
-  text-only by design. `get_shot_raw_json` and `get_previous_shot_json` in
-  particular must keep returning a JSON **text** block — the shot-graph app
-  parses both with `readToolJson` (`packages/ui/src/host/toolResult.ts`).
+  `get_profile_info`, and `get_maintenance_status` carry output schemas; the
+  raw/UI/prose tools are text-only by design. `get_shot_raw_json` and
+  `get_previous_shot_json` in particular must keep returning a JSON **text**
+  block — the shot-graph app parses both with `readToolJson`
+  (`packages/ui/src/host/toolResult.ts`).
   `get_machine_settings` is text-only *deliberately*: which knobs a firmware
   build exposes is its own decision, and a schema modelling the known ones would
   drop the field a user asking about a new setting is asking about.
+  `get_maintenance_status` looks like the same case and is not, which is the
+  distinction worth keeping: `maintenance.ts` derives the *list* of services
+  from whatever `last<Service>Timestamp` keys arrived, so the schema describes
+  the shape of one service record rather than enumerating the two that exist
+  today. A firmware that starts logging water-filter changes is carried through
+  with no schema change. Enumerate the services and it becomes the settings
+  case, and the schema starts dropping things.
 - **Annotations are honest, not decorative.** Every tool is
   `destructiveHint: false` and `idempotentHint: true`, and every tool but one is
   `readOnlyHint: true`. `select_profile` is the exception and carries
