@@ -117,7 +117,12 @@ docker compose pull && docker compose up -d
     "url": "http://gaggiuino.local",
     "state": "unreachable",
     "lastCheckedAt": "2026-07-27T21:11:15.274Z",
-    "lastError": "Unable to connect. Is the computer able to access the url?"
+    "lastError": "Unable to connect. Is the computer able to access the url?",
+    "versions": {
+      "coreVersion": "a06f97fd",
+      "frontVersion": "a06f97fd",
+      "staticVersion": "a06f97fd"
+    }
   }
 }
 ```
@@ -126,7 +131,11 @@ It answers `200` whenever the process is alive, **including while the machine is
 unreachable** — your espresso machine is off most of the day, and the container
 healthcheck reads the status code. `machine.state` is `ok`, `unreachable`, or
 `unknown`, observed from the requests the server already makes rather than from
-a probe, so `/health` puts no extra load on the machine.
+a probe, so `/health` puts no extra load on the machine. `machine.versions` is
+observed the same way — remembered the first time anything reads the machine's
+settings (`get_machine_settings`), never fetched by `/health` itself — so `null`
+there means "this server has not read the settings yet", not "the machine
+reports no version".
 
 Logs are one JSON object per line, so you can pick out what you need:
 

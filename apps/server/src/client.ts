@@ -301,6 +301,21 @@ const MachineSettingsSchema = z.looseObject({});
 export type MachineSettings = z.output<typeof MachineSettingsSchema>;
 
 /**
+ * The `versions` block inside the settings aggregate (rest-api.md L109, L120).
+ *
+ * Read from the aggregate this client already fetches, which is why
+ * `GET /api/settings/versions` (L427-444) stays on the not-called list: it would
+ * be a second round trip for data already in hand.
+ */
+const MachineVersionsSchema = z.looseObject({
+  coreVersion: z.string().optional(),
+  frontVersion: z.string().optional(),
+  staticVersion: z.string().optional(),
+});
+
+export type MachineVersions = z.output<typeof MachineVersionsSchema>;
+
+/**
  * The machine's service log (rest-api.md §5, L467-484).
  *
  * Nothing is required, for the same reason the settings schema requires
@@ -401,6 +416,31 @@ export interface UpstreamHealth {
 }
 
 let upstreamHealth: UpstreamHealth = { state: "unknown" };
+
+/**
+ * Which firmware answered, observed the same way liveness is.
+ *
+ * "Which firmware is this" is the first question when an API-shape bug report
+ * arrives, and the answer is already inside the settings payload — so it is
+ * remembered when something reads the settings and never fetched on its own.
+ * `/health` is a container HEALTHCHECK; it must make no upstream request.
+ *
+ * Note that the "a cache hit must never `recordUpstream("ok")`" rule does *not*
+ * extend here. A version string is a fact about the machine, not a claim that it
+ * is answering now; `machine.state` and `lastCheckedAt` stay the only
+ * reachability signals.
+ */
+let upstreamVersions: MachineVersions | undefined;
+
+/** Never throws: a malformed `versions` block must not fail a settings read. */
+function recordVersions(block: unknown): void {
+  const parsed = MachineVersionsSchema.safeParse(block);
+  if (parsed.success) upstreamVersions = parsed.data;
+}
+
+export function getUpstreamVersions(): MachineVersions | undefined {
+  return upstreamVersions;
+}
 
 function recordUpstream(state: UpstreamState, error?: string): void {
   upstreamHealth = {
@@ -735,9 +775,11 @@ export function createClient(config: ClientConfig) {
     },
 
     async getSettings(): Promise<MachineSettings> {
-      return request("/api/settings", MachineSettingsSchema, {
+      const settings = await request("/api/settings", MachineSettingsSchema, {
         ttlMs: MACHINE_CONFIG_TTL_MS,
       });
+      recordVersions(settings.versions);
+      return settings;
     },
 
     async getStatus(): Promise<MachineStatus> {
@@ -820,6 +862,8 @@ export function resetClient(config: Partial<ClientConfig> = {}) {
   clientOverrides = config;
   // Observed upstream health is process-wide too, so it resets with the client
   // — otherwise one test's failed fetch would leak into the next one's
-  // assertion about a freshly started server.
+  // assertion about a freshly started server. Versions are observed the same
+  // way and reset for the same reason.
   upstreamHealth = { state: "unknown" };
+  upstreamVersions = undefined;
 }

@@ -1133,13 +1133,25 @@ machine is unreachable**. That is load-bearing: the container HEALTHCHECK reads
 the status code, and the espresso machine is switched off most of the day.
 Upstream state is a field, never the status code.
 
-`machine.state` is observed from the requests the server already makes
-(`recordUpstream` in `client.ts`), not from a probe — the upstream is an ESP32
+`machine.state` and `machine.versions` are observed from the requests the server
+already makes (`recordUpstream` / `recordVersions` in `client.ts`), not from a
+probe — the upstream is an ESP32
 on Wi-Fi and a timer-driven ping would load the one device the caching work in
-#30 is trying to spare. So an unused server honestly reports `unknown`. Any HTTP
-response counts as reachable, including a 404: it proves the network path works.
-`resetClient` clears the observed state along with the client, so one test's
-failed fetch cannot leak into the next.
+#30 is trying to spare. So an unused server honestly reports `unknown` and
+`versions: null`. Any HTTP response counts as reachable, including a 404: it
+proves the network path works. `resetClient` clears both observed values along
+with the client, so one test's failed fetch cannot leak into the next.
+
+The versions come out of the `/api/settings` aggregate the server already
+fetches, which is why `GET /api/settings/versions` stays on `client.ts`'s
+not-called list. `buildHealth` is **synchronous**, and `health.test.ts` asserts
+it: fetching inside it would put the client's 20s overall timeout inside a probe
+whose Docker `HEALTHCHECK --timeout=10s` fires first, so three consecutive
+failures would restart a container whose only problem is that the espresso
+machine is switched off — 2,880 requests a day to read a field that changes when
+the user flashes firmware. The "a cache hit must never `recordUpstream("ok")`"
+rule does not extend to versions: a version string is a fact about the machine,
+not a claim that it is answering now.
 
 `config.ts` validates `PORT` and `GAGGIUINO_URL` before the port is bound and
 names the offending variable. `PORT` previously went through a bare `Number()`
