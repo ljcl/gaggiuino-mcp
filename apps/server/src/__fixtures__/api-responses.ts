@@ -30,6 +30,46 @@ export const mockMachineStatusFromHardware = {
   steamSwitchState: false,
 };
 
+/**
+ * `GET /api/settings` as the reference documents it — the `system` section
+ * copied byte-for-byte from `docs/upstream/rest-api.md` L179-196, nested inside
+ * the aggregate shape at L112-122.
+ *
+ * The two tokens and the MQTT password are the point of the fixture, not
+ * incidental detail: this is what `get_machine_settings` used to print straight
+ * into model context. Keep it faithful to the reference for the same reason
+ * `mockMachineStatusFromHardware` is kept faithful to hardware — a fixture
+ * invented by hand passes CI and still leaks against real firmware.
+ */
+export const mockMachineSettingsFromDocs = {
+  boiler: { steamSetPoint: 145, offsetTemp: 5, hpwr: 1200 },
+  system: {
+    pumpFlowAtZero: 0.5,
+    timezoneOffsetMinutes: -300,
+    sprofilerToken: "abc123xyz",
+    visualizerToken: "def456uvw",
+    servicesState: true,
+    wifiEnabled: true,
+    releaseChannel: 0,
+    mqttEnabled: false,
+    mqttHost: "",
+    mqttPort: 1883,
+    mqttUsername: "",
+    mqttPassword: "",
+    mqttTopicPrefix: "gaggiuino",
+  },
+  scales: {
+    forcePredictive: "false",
+    hwScalesEnabled: "true",
+    hwScalesF1: 1000,
+  },
+  versions: {
+    coreVersion: "a06f97fd",
+    frontVersion: "a06f97fd",
+    staticVersion: "a06f97fd",
+  },
+};
+
 export const mockLatestShotResponse = {
   lastShotId: "1706547890",
 };

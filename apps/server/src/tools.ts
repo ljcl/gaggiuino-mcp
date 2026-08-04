@@ -340,25 +340,108 @@ function formatCatalog(catalog: ProfileCatalog): string {
   ].join("\n");
 }
 
+const HIDDEN_VALUE = "[hidden]";
+const UNSET_VALUE = "(not set)";
+
+const HIDDEN_VALUE_NOTE =
+  "Values shown as [hidden] are withheld by this MCP server, not missing from the machine. The machine's settings carry upload tokens and an MQTT password, so a text value is printed only when this server can tell it is not a credential: numbers, true/false, and a short list of known-safe fields. Read a hidden value on the machine's own settings screen.";
+
+/**
+ * Names never printed, whatever else says otherwise — the second, independent
+ * layer under the value-type rule below, so a careless future addition to
+ * `PRINTABLE_TEXT_SETTINGS` still cannot leak.
+ */
+const SECRET_KEY_PATTERN =
+  /token|password|passwd|secret|api[_-]?key|credential|bearer|private[_-]?key/i;
+
+/** The only free-form text settings printed verbatim. Everything else is hidden. */
+const PRINTABLE_TEXT_SETTINGS = new Set([
+  "btscalespinnedmac",
+  "coreversion",
+  "frontversion",
+  "mqtthost",
+  "mqtttopicprefix",
+  "staticversion",
+]);
+
+/**
+ * Whether a settings value can be printed, decided by its **type** rather than
+ * by its name.
+ *
+ * `/api/settings` is an aggregate, and the `system` section inside it carries
+ * `sprofilerToken`, `visualizerToken`, `mqttUsername`, and `mqttPassword`
+ * (`docs/upstream/rest-api.md` L182-183, L193-194). This function used to be
+ * `String(value)`, so every one of them went straight into model context.
+ *
+ * A denylist of those four names is the obvious fix and the wrong one: it
+ * misses `newUploadToken`, `visualizerAuth`, `mqttPsk` — anything a later
+ * firmware names differently — and it fails *silently*, which is how the
+ * original defect survived. Defaulting on type inverts that. Numbers, booleans,
+ * and this firmware's string-encoded numbers and booleans are never credentials
+ * and print unconditionally; a free-form string is hidden unless it is on a
+ * short allowlist, because in this particular payload four of the documented
+ * free-form strings are secrets.
+ *
+ * An empty string prints `(not set)` rather than `[hidden]`, so "no MQTT
+ * password is configured" stays distinguishable from "one exists and is
+ * withheld".
+ *
+ * Residual hole, recorded rather than hidden: a credential whose key matches no
+ * pattern *and* whose value is entirely numeric would print. Closing that would
+ * mean hiding `mqttPort` and every setpoint, and real tokens are alphanumeric —
+ * the reference's own examples (`abc123xyz`, `def456uvw`) are.
+ */
+function renderSettingValue(
+  key: string,
+  value: unknown,
+  forceHidden: boolean,
+): string {
+  // Numbers, booleans, null and undefined in one branch: JSON has no other
+  // scalar, so nothing reaches the string rules below by accident.
+  if (typeof value !== "string") return String(value);
+  if (value === "") return UNSET_VALUE;
+  if (forceHidden || SECRET_KEY_PATTERN.test(key)) return HIDDEN_VALUE;
+  const trimmed = value.trim();
+  if (/^(true|false)$/i.test(trimmed)) return value;
+  if (Number.isFinite(Number(trimmed))) return value;
+  if (PRINTABLE_TEXT_SETTINGS.has(key.toLowerCase())) return value;
+  return HIDDEN_VALUE;
+}
+
 /**
  * Settings are printed rather than modelled. Which knobs a build exposes is a
  * firmware decision, and a hand-written schema would silently drop the one a
  * newer build added — which is the field a user asking about settings is most
  * likely to be asking about.
+ *
+ * Every key still prints, with its nesting, whatever happens to its value. That
+ * is what makes this redaction rather than dropping: the user learns the setting
+ * exists and is told why the value is absent.
+ *
+ * `forceHidden` propagates into a whole subtree so a future
+ * `credentials: { visualizer: "…" }` is covered by its *section* name without
+ * anyone having to notice the leaf.
  */
 function formatSettings(
   settings: Record<string, unknown>,
   indent = "  ",
+  forceHidden = false,
 ): string[] {
   const lines: string[] = [];
   for (const [key, value] of Object.entries(settings)) {
     if (value !== null && typeof value === "object") {
       lines.push(
         `${indent}${key}:`,
-        ...formatSettings(value as Record<string, unknown>, `${indent}  `),
+        ...formatSettings(
+          value as Record<string, unknown>,
+          `${indent}  `,
+          forceHidden || SECRET_KEY_PATTERN.test(key),
+        ),
       );
     } else {
-      lines.push(`${indent}${key}: ${String(value)}`);
+      lines.push(
+        `${indent}${key}: ${renderSettingValue(key, value, forceHidden)}`,
+      );
     }
   }
   return lines;
@@ -590,8 +673,17 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "Read the machine's configuration: boiler and steam setpoints, temperature offset, scale and predictive-stop settings, and whatever else this firmware exposes. Useful as dial-in context — a brew temperature that never matches the profile usually shows up here as an offset rather than in the shot data. The fields are whatever the machine sends, so treat unfamiliar names as firmware-specific.",
     handler: async () => {
       const settings = await getClient().getSettings();
+      const lines = formatSettings(settings);
+      // The footer is emitted only when something was actually withheld, so a
+      // machine with no credentials configured gets no paragraph explaining a
+      // redaction that did not happen.
+      const hidAnything = lines.some((line) => line.endsWith(HIDDEN_VALUE));
       return {
-        text: ["Gaggiuino Settings:", ...formatSettings(settings)].join("\n"),
+        text: [
+          "Gaggiuino Settings:",
+          ...lines,
+          ...(hidAnything ? ["", HIDDEN_VALUE_NOTE] : []),
+        ].join("\n"),
       };
     },
     inputSchema: NoArgs,

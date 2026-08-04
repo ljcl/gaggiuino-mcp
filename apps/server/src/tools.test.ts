@@ -2,6 +2,7 @@ import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   mockLatestShotResponse,
+  mockMachineSettingsFromDocs,
   mockMachineStatus,
   mockShotData,
   mockShotWithTimeStop,
@@ -577,6 +578,92 @@ describe("tool dispatch", () => {
       const result = await handleToolCall("get_machine_settings", {});
       expect(result.isError).toBe(true);
       expect(result.text).toContain("Could not reach the Gaggiuino machine");
+    });
+
+    describe("credential redaction", () => {
+      function serveSettings(body: unknown) {
+        // `/api/settings` is cached for MACHINE_CONFIG_TTL_MS, so a test that
+        // serves two different payloads has to drop the client between them or
+        // the second read is answered from the first.
+        resetClient({ initialDelayMs: 1 });
+        mockServer.use(
+          http.get("http://gaggiuino.local/api/settings", () =>
+            HttpResponse.json([body]),
+          ),
+        );
+      }
+
+      it("never prints the machine's upload tokens", async () => {
+        serveSettings(mockMachineSettingsFromDocs);
+        const result = await handleToolCall("get_machine_settings", {});
+
+        expect(result.text).not.toContain("abc123xyz");
+        expect(result.text).not.toContain("def456uvw");
+        // The keys surviving is what makes this redaction and not dropping —
+        // the user still learns the setting exists.
+        expect(result.text).toContain(`sprofilerToken: ${"[hidden]"}`);
+        expect(result.text).toContain(`visualizerToken: ${"[hidden]"}`);
+      });
+
+      it("hides a credential this server has never heard of", async () => {
+        // The whole reason the rule is on value type rather than field name.
+        // Any name-denylist implementation passes every other test here and
+        // fails this one.
+        serveSettings({ system: { futureUploadKey: "sk-live-9a8b7c6d5e" } });
+        const result = await handleToolCall("get_machine_settings", {});
+
+        expect(result.text).not.toContain("sk-live-9a8b7c6d5e");
+        expect(result.text).toContain("futureUploadKey: [hidden]");
+      });
+
+      it("hides everything under a section whose own name reads as a secret", async () => {
+        serveSettings({ credentials: { visualizer: "plaintext-value" } });
+        const result = await handleToolCall("get_machine_settings", {});
+
+        expect(result.text).not.toContain("plaintext-value");
+        expect(result.text).toContain("visualizer: [hidden]");
+      });
+
+      it("still prints every setting that is not a credential", async () => {
+        serveSettings(mockMachineSettingsFromDocs);
+        const result = await handleToolCall("get_machine_settings", {});
+
+        expect(result.text).toContain("pumpFlowAtZero: 0.5");
+        expect(result.text).toContain("timezoneOffsetMinutes: -300");
+        expect(result.text).toContain("releaseChannel: 0");
+        expect(result.text).toContain("mqttPort: 1883");
+        expect(result.text).toContain("mqttEnabled: false");
+        expect(result.text).toContain("mqttTopicPrefix: gaggiuino");
+        expect(result.text).toContain("steamSetPoint: 145");
+        // This firmware's stringly-typed booleans and numbers are values, not
+        // secrets, and must survive the filter.
+        expect(result.text).toContain("forcePredictive: false");
+        expect(result.text).toContain("hwScalesEnabled: true");
+        expect(result.text).toContain("coreVersion: a06f97fd");
+      });
+
+      it("distinguishes an unset credential from a withheld one", async () => {
+        serveSettings({ system: { mqttPassword: "" } });
+        const empty = await handleToolCall("get_machine_settings", {});
+        expect(empty.text).toContain("mqttPassword: (not set)");
+
+        serveSettings({ system: { mqttPassword: "hunter2" } });
+        const set = await handleToolCall("get_machine_settings", {});
+        expect(set.text).toContain("mqttPassword: [hidden]");
+        expect(set.text).not.toContain("hunter2");
+      });
+
+      it("explains the redaction once, and only when something was hidden", async () => {
+        serveSettings(mockMachineSettingsFromDocs);
+        const hidden = await handleToolCall("get_machine_settings", {});
+        expect(hidden.text.match(/withheld by this MCP server/g)?.length).toBe(
+          1,
+        );
+
+        serveSettings({ boiler: { steamSetPoint: 145 } });
+        const clean = await handleToolCall("get_machine_settings", {});
+        expect(clean.text).not.toContain("withheld by this MCP server");
+      });
     });
   });
 
