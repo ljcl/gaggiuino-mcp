@@ -1,3 +1,67 @@
+/**
+ * The Gaggiuino machine's HTTP client.
+ *
+ * ## Protocol reference
+ *
+ * The machine's REST surface is documented by the upstream project and vendored
+ * verbatim at `docs/upstream/rest-api.md` (retrieved 2026-08-04); the WebSocket
+ * protocol is at `docs/upstream/websocket.md`. Line references below are into
+ * those files.
+ *
+ * **The reference settles existence questions, not shape questions.** It is
+ * hand-written and disagrees with itself about types — `lcdDarkMode` is the
+ * string `"false"` at L283 and the boolean `false` at L118; `forcePredictive`
+ * and `hwScalesEnabled` are strings at L330-331 and booleans at L117 — and four
+ * of the six endpoints this client calls have no response example at all. So
+ * the loose schemas below are **policy, not drift**, and nothing in the
+ * reference is evidence for narrowing one.
+ *
+ * ### What this client calls
+ *
+ * | Endpoint | Ref | Caching |
+ * | --- | --- | --- |
+ * | `GET /api/shots/latest` | §1 L15-17 | `LATEST_SHOT_TTL_MS` |
+ * | `GET /api/shots/*` | §1 L19-22 | `SHOT_TTL_MS` |
+ * | `GET /api/profiles/all` | §2 L32-34 | `MACHINE_CONFIG_TTL_MS`, `unwrap: false` |
+ * | `GET /api/profile/*` | §2 L46-74 | `MACHINE_CONFIG_TTL_MS` |
+ * | `GET /api/settings` | §4 L106-122 | `MACHINE_CONFIG_TTL_MS` |
+ * | `GET /api/system/status` | §3 L100-102 | deliberately uncached |
+ * | `GET /api/maintenance` | §5 L467-484 | `MACHINE_CONFIG_TTL_MS` |
+ * | `POST /api/profile-select/*` | §2 L36-39 | none; id in the path, no body |
+ * | `POST /api/profile` | §2 L77-96 | none; body, and **never retried** |
+ *
+ * The reference spells ids as a wildcard `*` rather than `{id}`.
+ *
+ * ### What this client deliberately does not call
+ *
+ * Recorded so "why doesn't the server expose X" starts from a decision.
+ *
+ * - `POST /api/shots` (L10-13) — the machine writes its own shot records;
+ *   nothing here has shot data to upload.
+ * - `DELETE /api/shots/*` (L24-28) — destructive, needs an SD card, and no
+ *   read-only story asks for it.
+ * - `DELETE /api/profile-select/*` (L41-44) — despite sharing a path with the
+ *   profile *selector*, this **deletes a profile**. The two differ only by HTTP
+ *   method, which is exactly why it is written down here: a model one token
+ *   away from `select` must never be able to reach it.
+ * - Every `POST /api/settings/*` (L144, L203, L252, L296, L343, L396) —
+ *   writing boiler setpoints from a chat window is a far heavier permission
+ *   story than `select_profile`, and nobody has asked for it.
+ * - `POST /api/firmware/update-all` and `GET /api/firmware/progress` (§6) —
+ *   flashing an espresso machine from a conversation.
+ * - `GET /api/health` (L518-526) — a real upstream liveness endpoint, and still
+ *   not called. `recordUpstream` already observes liveness from the requests
+ *   this server makes anyway, and a probe would put steady load on the one
+ *   ESP32 the caching here exists to spare. (Note also L528: the firmware/OTA
+ *   endpoints, `/api/health` among them, do *not* send
+ *   `Access-Control-Allow-Origin`, contradicting Notes item 1 at L532 —
+ *   irrelevant server-side, but it means the shot-graph app could never call it
+ *   from the browser.)
+ * - `GET /api/settings/versions` (L427-444) — its three fields are already
+ *   inside the `/api/settings` aggregate this client fetches, so calling it
+ *   would be a second round trip for data already in hand.
+ */
+
 import { z } from "zod";
 import { createCache } from "./cache";
 import { DEFAULT_MACHINE_URL } from "./config";
@@ -81,6 +145,20 @@ const SwitchStateSchema = z.union([z.string(), z.boolean()]);
  * ("temperature":"77.627335"), unlike the shot endpoints which send real
  * numbers. Accept either and normalize to a number, the same way IdSchema
  * and SwitchStateSchema already absorb this firmware's stringly-typed JSON.
+ *
+ * This is captured behaviour, not spec: the reference gives that endpoint one
+ * sentence and no example (rest-api.md L100-102), so it neither confirms nor
+ * contradicts it. The evidence is `mockMachineStatusFromHardware`, taken
+ * verbatim off a real machine on 2026-07-27.
+ *
+ * What the reference *does* corroborate is the habit. It prints the same field
+ * with two types in two places — `forcePredictive`/`hwScalesEnabled` as
+ * `"false"`/`"true"` under `GET /api/settings/scales` (L330-331) and as real
+ * booleans in the aggregate (L117); `lcdDarkMode` as `"false"` at L283 and
+ * `false` at L118 — and `brewDeltaState`, `dreamSteamState` (L138-139) and the
+ * LED `state`/`disco` (L383-384) are strings throughout. A document that
+ * disagrees with itself about a field's type inside one file is the strongest
+ * argument available for keeping these unions.
  */
 const NumericSchema = z
   .union([z.number(), z.string()])
@@ -122,6 +200,13 @@ export type MachineProfile = z.output<typeof MachineProfileSchema>;
  * lives under a key, so both are accepted and normalized to the array. This is
  * the same tolerance `unwrapArray` applies to single objects, in the other
  * direction.
+ *
+ * The reference does not settle it and cannot be used to narrow this union: it
+ * documents `GET /api/profiles/all` in one line with no response example
+ * (rest-api.md L32-34). What makes the tolerance safe to keep is the test at
+ * `client.test.ts`'s "rejects an empty array as a malformed response" — that is
+ * the only thing standing between a truncated body and a silently empty profile
+ * list.
  */
 const MachineProfilesSchema = z.union([
   z.array(MachineProfileSchema),
@@ -134,6 +219,17 @@ const MachineProfilesSchema = z.union([
  * Settings are passed through untouched: which knobs exist is a firmware
  * decision, and pinning them here would drop fields a newer build added rather
  * than showing them to the user.
+ *
+ * That has a consequence the audit against the reference turned up. This
+ * aggregate includes the `system` section (rest-api.md L109, L115), and that
+ * section is documented as carrying `sprofilerToken`, `visualizerToken`,
+ * `mqttUsername`, and `mqttPassword` (L182-183, L193-194). The schema still
+ * stays loose — modelling the payload here would drop the new knob a user is
+ * asking about, which is the whole point — so the credential filter lives at the
+ * *presentation* boundary instead, in `tools.ts`'s `renderSettingValue`.
+ *
+ * **Any future consumer of `getSettings()` must route through that rather than
+ * printing the object.**
  */
 const MachineSettingsSchema = z.looseObject({});
 
@@ -220,6 +316,15 @@ export function getUpstreamHealth(): UpstreamHealth {
   return { ...upstreamHealth };
 }
 
+/**
+ * A genuine disagreement the audit found, and a reason to keep tolerating both
+ * shapes: every response example in the reference is a **bare object** (e.g.
+ * rest-api.md L112-122 for `/api/settings`, L178-197 for
+ * `/api/settings/system`), while this repo's msw handlers wrap single records in
+ * a one-element array because that is what the machine was observed doing.
+ * The reference is a hand-written document, not a packet capture, so it is not
+ * evidence to drop either shape.
+ */
 function unwrapArray(data: unknown): unknown {
   if (Array.isArray(data) && data.length > 0) {
     return data[0];
@@ -431,7 +536,15 @@ export function createClient(config: ClientConfig) {
      * `idempotentHint: true`: selecting profile 15 twice leaves the machine in
      * the state selecting it once does. That is a property of this endpoint,
      * not of POST in general — a future write that is not idempotent must not
-     * inherit this loop without saying so.
+     * inherit this loop without saying so. (`createProfile` below is that
+     * write, and it says so.)
+     *
+     * The reference confirms the shape — `POST /api/profile-select/*`, id in the
+     * path, no body (rest-api.md L36-39) — which is why this call needs nothing
+     * from `perform()` that a GET does not. It also confirms that the sibling
+     * `DELETE /api/profile-select/*` (L41-44) **deletes a profile**. That is
+     * recorded here rather than in a commit message because the two differ only
+     * by HTTP method.
      */
     async selectProfile(machineProfileId: string): Promise<void> {
       await perform(
