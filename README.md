@@ -150,23 +150,59 @@ docker compose logs -f | jq -c 'select(.event == "tool.call" and .outcome != "ok
 
 ### Securing the endpoint
 
-**Set `MCP_AUTH_TOKEN` before exposing this server beyond your LAN.** Every tunnel
-option below puts `/mcp` on the public internet, and without a token anyone who
-learns the URL gets the full tool surface against a machine in your kitchen. The
-server prints a warning at startup while no token is set.
+**Turn on OAuth before exposing this server beyond your LAN.** Every tunnel
+option below puts `/mcp` on the public internet, and without authentication
+anyone who learns the URL gets the full tool surface against a machine in your
+kitchen. The server prints a warning at startup while nothing is configured.
+
+Three variables, all required together:
 
 ```bash
-# Generate one and put it in your .env
+# 1. The public origin clients will reach the server on — no path, https only.
+#    This is advertised as the OAuth `resource`, so it must match the URL you
+#    type into Claude exactly.
+MCP_PUBLIC_URL=https://your-machine.tail-scale.ts.net
+
+# 2. The key your tokens are signed with. Keep it stable across restarts, or
+#    every restart signs you out of your phone.
 openssl rand -hex 32
+
+# 3. The passphrase you will type on the consent page. Store the hash, never
+#    the passphrase — this prompts and prints the whole line to paste in.
+cd apps/server && bun run hash-passphrase >> ../../.env
 ```
 
-`/health` is deliberately left unauthenticated so the container's healthcheck and
-your reverse proxy can probe it.
+Setting only some of them fails at startup and names the missing one. That is
+deliberate: silently falling back to an open endpoint is how somebody exposes a
+tunnel believing it is protected.
+
+#### Why OAuth and not a shared token
+
+`MCP_AUTH_TOKEN` still works for clients that can set their own headers, but **a
+Claude connector cannot use it.** A connector is added at the account level so
+one entry has to work on claude.ai, Claude Desktop and iOS, and on a personal
+plan the "Add custom connector" dialog offers an OAuth Client ID and Secret and
+no request-header field. A local stdio bridge is not a way around it either — it
+cannot run on iOS. So on the deployment this project is built for, the token can
+never leave the client and the two write tools stay permanently refused.
+
+When you connect, Claude discovers the endpoint, sends you to a consent page
+served by this server, and you type the passphrase. There is nothing to
+register and no client secret to store.
+
+#### What each part protects
+
+`/health` and the `/.well-known/*` discovery documents are deliberately
+unauthenticated — the container's healthcheck presents no credential, and a
+document a client fetches *in order to* authenticate cannot itself require
+authentication.
 
 `select_profile` and `upload_profile` — the two tools that change the machine —
-refuse to run at all while no token is set, and say so. Everything else here only
-reads, which is why an open server is a defensible default for a LAN and a
-machine-control tool on one is not.
+need the `espresso:write` scope. A token without it gets a `403` that prompts
+Claude to ask you for the extra permission rather than failing silently. With
+nothing configured at all they refuse to run and say so, which is why an open
+server is a defensible default for a LAN and a machine-control tool on one is
+not.
 
 Requests carrying an `Origin` header are rejected unless the origin is listed in
 `MCP_ALLOWED_ORIGINS`. This is what stops any web page you happen to visit from
@@ -181,7 +217,16 @@ mcp-session-id`, without which a browser client can read the handshake but not
 the session it needs to continue with). Allowing an origin the browser then
 blocks would be an allowlist that allows nothing.
 
-`scripts/test-auth.sh` probes a running server for all of the above.
+`scripts/test-auth.sh` probes a running server for all of the above — the
+discovery chain, the shape of the `401`, cross-host redirects and origin
+validation. **Run it from outside your LAN.** Every failure it catches is a
+failure of the URL *as Claude reaches it*, and the one that bites most often —
+`MCP_PUBLIC_URL` disagreeing with the URL you typed into Claude — is invisible
+from localhost.
+
+```bash
+BASE_URL=https://your-machine.tail-scale.ts.net ./scripts/test-auth.sh
+```
 
 ### Customization
 
@@ -212,9 +257,26 @@ From a repo checkout, copy each `*.example-local.yaml` to `*.local.yaml` alongsi
 
 Many AI tools (like Claude Desktop) route MCP requests through their own servers, not from your local machine. This means your MCP server needs to be accessible via a public HTTPS URL.
 
-> Every option in this section publishes `/mcp` to the internet. Set
-> `MCP_AUTH_TOKEN` first — see [Securing the endpoint](#securing-the-endpoint) —
-> and give the token to your AI tool as a bearer credential.
+> Every option in this section publishes `/mcp` to the internet. Turn on OAuth
+> first — see [Securing the endpoint](#securing-the-endpoint) — and set
+> `MCP_PUBLIC_URL` to the exact origin you are about to publish.
+
+Whichever ingress you pick, three things decide whether it works:
+
+- **One origin serves everything.** `/mcp`, `/.well-known/*` and `/oauth/*` all
+  have to be reachable at `MCP_PUBLIC_URL`. That is what keeps this one
+  container.
+- **Use a stable hostname.** A quick-tunnel hostname that rotates on restart
+  changes the advertised `resource`, and the connector breaks every time.
+- **No cross-host redirects.** If the registered URL `301`/`302`/`307`/`308`s to
+  a different host, the `Authorization` header is dropped on the way. This is
+  the usual cause of "works in MCP Inspector or Claude Code but not claude.ai" —
+  apex-to-`www` canonicalisation in front of the server is the common way to hit
+  it. `scripts/test-auth.sh` checks for it.
+
+Claude caches discovery documents globally by URL for about five minutes, so a
+metadata change is not live immediately — and a broken deploy's metadata can be
+served for a few minutes after you fix it.
 
 ### Tailscale Funnel (Recommended)
 
@@ -223,17 +285,63 @@ Many AI tools (like Claude Desktop) route MCP requests through their own servers
 ```bash
 tailscale funnel --bg 8000
 # URL: https://your-machine.tail-scale.ts.net/mcp
+
+# then, in your .env
+MCP_PUBLIC_URL=https://your-machine.tail-scale.ts.net
 ```
+
+**Funnel, not Serve.** Claude reaches your connector from Anthropic's own
+infrastructure, and it refuses a hostname before sending a byte if any resolved
+address is not globally routable — explicitly including `100.64.0.0/10`, which
+is the tailnet's own range. `tailscale serve` publishes exactly those addresses.
+Funnel publishes public records pointing at Tailscale's relays instead.
+Connectors are also IPv4-only, so a hostname publishing only `AAAA` records
+cannot be reached. One check covers both:
+
+```bash
+dig +short your-machine.tail-scale.ts.net   # must return a routable IPv4 address
+```
+
+Two things people reach for here and should not:
+
+- **Do not allowlist Anthropic's egress range (`160.79.104.0/21`) as an access
+  control.** Funnel does not forward the client IP, and `/oauth/authorize` is
+  reached by *your own browser*, not by Anthropic — so an IP allowlist breaks
+  the login while protecting nothing.
+- **Do not trust the `Tailscale-User-Login` header.** `tailscaled` does strip
+  forged copies, but only on traffic it proxies. This project ships
+  `network_mode: host` with `HOST=0.0.0.0`, so the listener is directly
+  reachable and anything on the host can set that header itself. Believing it
+  would be a write-scoped authentication bypass.
 
 ### Cloudflare Tunnel
 
-Use [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) to create a persistent tunnel to your server.
+Use [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) to create a persistent tunnel to your server. Use a **named** tunnel with a
+hostname you own, not a quick tunnel — a `trycloudflare.com` hostname changes on
+every restart, and `MCP_PUBLIC_URL` has to change with it.
 
 ### ngrok
 
 ```bash
 ngrok http 8000
 ```
+
+Same caveat: a free ngrok hostname rotates. Reserve a domain, or expect to
+re-add the connector each time.
+
+### Behind your own reverse proxy
+
+Proxy all three paths — `/mcp`, `/.well-known/*` and `/oauth/*` — to the same
+upstream, and set `MCP_PUBLIC_URL` to the public origin. The proxy must not
+canonicalise across hosts (see the redirect note above), and it must pass the
+`Authorization` header through untouched.
+
+### Using an external identity provider
+
+Not yet supported — the built-in authorization server is the only mode. If you
+already run Authentik, Authelia, Keycloak, Zitadel, Kanidm or `tsidp` and would
+rather point at it, that is tracked in
+[#110](https://github.com/ljcl/gaggiuino-mcp/issues/110).
 
 ### Local Network Only
 
