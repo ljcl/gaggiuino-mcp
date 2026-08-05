@@ -51,9 +51,11 @@ via symlinks in `.claude/skills/`. Externally-sourced skills are tracked in `ski
 | `get_shot_raw_data`     | Complete time-series datapoints                     |
 | `view_shot_graph`       | Interactive chart (MCP App with UI resource)        |
 | `list_profiles`         | Machine's profiles, merged with bundled docs        |
-| `get_profile_info`      | Everything known about one profile                  |
+| `get_profile_info`      | One profile: the machine's own definition plus docs |
 | `get_machine_settings`  | Boiler/steam/scale config as the firmware sends it  |
+| `get_maintenance_status`| Descale/backflush service log the machine keeps itself |
 | `select_profile`        | **Write.** Switch profile; needs `MCP_AUTH_TOKEN`   |
+| `upload_profile`        | **Write, not idempotent.** Save a new profile; needs `MCP_AUTH_TOKEN` |
 | `get_dial_in_guidance`  | Expert dial-in system prompt                        |
 
 App-only (`visibility: ["app"]`, not advertised to the model): `get_shot_raw_json`
@@ -77,27 +79,43 @@ annotations, and the handler. Nothing about a tool is declared twice.
   `structuredContent`, so a handler that drifts from its schema fails loudly
   instead of shipping something the host will reject. `get_status`,
   `get_latest_shot_id`, `list_recent_shots`, `get_shot_data`, `list_profiles`,
-  and `get_profile_info` carry output schemas; the raw/UI/prose tools are
-  text-only by design. `get_shot_raw_json` and `get_previous_shot_json` in
-  particular must keep returning a JSON **text** block — the shot-graph app
-  parses both with `readToolJson` (`packages/ui/src/host/toolResult.ts`).
+  `get_profile_info`, `get_maintenance_status`, and `upload_profile` carry
+  output schemas; the
+  raw/UI/prose tools are text-only by design. `get_shot_raw_json` and
+  `get_previous_shot_json` in particular must keep returning a JSON **text**
+  block — the shot-graph app parses both with `readToolJson`
+  (`packages/ui/src/host/toolResult.ts`).
   `get_machine_settings` is text-only *deliberately*: which knobs a firmware
   build exposes is its own decision, and a schema modelling the known ones would
   drop the field a user asking about a new setting is asking about.
+  `get_maintenance_status` looks like the same case and is not, which is the
+  distinction worth keeping: `maintenance.ts` derives the *list* of services
+  from whatever `last<Service>Timestamp` keys arrived, so the schema describes
+  the shape of one service record rather than enumerating the two that exist
+  today. A firmware that starts logging water-filter changes is carried through
+  with no schema change. Enumerate the services and it becomes the settings
+  case, and the schema starts dropping things.
 - **Annotations are honest, not decorative.** Every tool is
-  `destructiveHint: false` and `idempotentHint: true`, and every tool but one is
-  `readOnlyHint: true`. `select_profile` is the exception and carries
+  `destructiveHint: false`, and every tool but two is `readOnlyHint: true`.
+  `select_profile` and `upload_profile` are the exceptions and carry
   `readOnlyHint: false`, because that flag is what a host keys an approval
   prompt on — claiming otherwise to dodge the prompt is the dishonest annotation
-  the tests exist to catch. `openWorldHint` is true for every tool that reaches
+  the tests exist to catch. `upload_profile` is also the only tool with
+  `idempotentHint: false`: `POST /api/profile` mints a fresh id on every call, so
+  a retried upload leaves a duplicate profile behind, and `idempotentHint` is
+  what a host would key an automatic retry on. `destructiveHint: false` still
+  holds for it — a create is additive, and REST offers no update or overwrite
+  verb at all. `openWorldHint` is true for every tool that reaches
   the machine and false for `get_dial_in_guidance`, now the only one that reads
   bundled YAML and nothing else — `list_profiles` and `get_profile_info` flipped
   to open-world when they started reading the machine's own inventory.
   `server.test.ts` names the write tools
   in a set rather than deriving them from the annotations under test, so a new
   write tool is a deliberate edit and a read tool that quietly loses
-  `readOnlyHint` fails; `http.test.ts` re-asserts the write hint over the real
-  transport, since `annotations` is exactly what a transport is free to drop.
+  `readOnlyHint` fails; `NON_IDEMPOTENT_TOOLS` sits beside it for the same
+  reason. `http.test.ts` re-asserts both hints over the real transport, since
+  `annotations` is exactly what a transport is free to drop — and it keeps its
+  own copy of the two sets on purpose, so one edit cannot satisfy both files.
 - **Expected failures are results, not exceptions.** `errors.ts` defines the
   three upstream failure classes (`UpstreamUnreachableError`,
   `UpstreamHttpError`, `MalformedUpstreamError`) and `describeUpstreamError`
@@ -155,6 +173,18 @@ failed.
 firmware detail — parsing it would turn a successful selection into a failure
 and then retry it.
 
+**A write this server performs invalidates the cache the write invalidated.**
+`createProfile` drops `/api/profiles/all` in a `finally`, not on success, and the
+failure path is the reason. The TTL cannot cover this: thirty seconds is "edited
+on the machine, so do not serve it too long", and a write *this* server made
+starts its staleness at a moment the TTL never sees. When an upload fails
+ambiguously — a 5xx, or a connection that dropped after the request left — the
+tool tells the caller to check `list_profiles` before trying again, because a
+second upload creates a second profile. Answering that check from a pre-upload
+snapshot reports a landed write as missing and walks the caller straight into the
+duplicate `maxAttempts: 1` exists to prevent. Both directions have tests, and
+both fail without the eviction.
+
 ### Shot ids have gaps
 
 `history.ts` owns the walk back through history, and it exists because `id - 1`
@@ -191,6 +221,45 @@ sets `source: "documentation"`, with `note` carrying the *upstream's own*
 diagnostic rather than a generic "unavailable". `onMachine` is then `null`, not
 `false` — this server did not check, and saying it did would be the same class of
 lie the split exists to fix.
+
+### The machine is also the authority on what a profile *does*
+
+`GET /api/profile/{id}` serves a profile's full definition — phases, targets,
+stop conditions, recipe — and `get_profile_info` reads it into `definition`
+(`profileDefinition.ts`). That is what turned "on the machine, undocumented"
+from a row of nulls into a real answer: a profile the user built themselves now
+describes itself.
+
+Four things about it are load-bearing.
+
+- **The definition is echoed, not translated.** Same key names, same units,
+  milliseconds and all, and upstream's `switchToManuaFlowCtrl` misspelling
+  preserved. The reference says the `POST /api/profile` body is *"Same shape as
+  the `GET /api/profile/*` response"*, so **this field is `upload_profile`'s
+  input** — "take the profile that works, soften the preinfusion, upload it" is
+  the actual workflow, and this is the only place a model can get a profile that
+  works. A normalized dialect (`timeSec`, `waterTemperatureC`) reads better and
+  means a model copies `rampSec: 5` back into `time` and uploads a
+  five-millisecond ramp, which the machine accepts — the reference fills
+  malformed fields with zero-value defaults rather than rejecting them. All the
+  humanising happens in `formatProfileDefinition`, in the prose.
+- **The output schema is loose for the same reason the client boundary is.** A
+  strict `z.object` emits `additionalProperties: false`, so a phase field a
+  future firmware adds would be dropped from `definition` — and a model that
+  edited and re-uploaded that definition would silently delete it from the
+  user's machine. Same failure `get_machine_settings` is text-only to avoid.
+- **`list_profiles` deliberately does not fetch definitions.** N profiles would
+  be N sequential round trips to a device that serves one request at a time.
+  `tools.test.ts` asserts zero requests to `/api/profile/:id` from that tool.
+- **A 404 there is ambiguous** between firmware that predates the endpoint and a
+  profile deleted since the list was read — the machine does not distinguish
+  them. So it is handled in `profileDefinition.ts`, naming both causes, rather
+  than falling through to `describeUpstreamError`'s bare-404 text, which asserts
+  the firmware explanation as fact. `errors.ts` gains no per-endpoint branch.
+
+`definition` lives on `ProfileDetailOutput`, an extension of `ProfileOutput`
+rather than a widening of it: `list_profiles` shares that schema, and widening
+in place would re-key two host permission grants instead of one.
 
 ### The advertised surface is a permission-grant key
 
@@ -953,7 +1022,7 @@ curl -X POST http://localhost:8000/mcp \
 | `GAGGIUINO_URL`       | `http://gaggiuino.local` | Gaggiuino machine URL                             |
 | `PORT`                | `8000`                   | Server port                                       |
 | `HOST`                | `0.0.0.0`                | Bind address                                      |
-| `MCP_AUTH_TOKEN`      | _(unset)_                | Bearer secret for `/mcp`; unset serves it open and disables `select_profile` |
+| `MCP_AUTH_TOKEN`      | _(unset)_                | Bearer secret for `/mcp`; unset serves it open and disables `select_profile` and `upload_profile` |
 | `MCP_ALLOWED_ORIGINS` | _(empty)_                | Browser origins allowed on `/mcp`; `*` allows any |
 | `MCP_ALLOWED_HOSTS`   | _(empty)_                | `Host` values to accept; empty disables the check |
 | `LOG_LEVEL`           | `info`                   | `debug`/`info`/`warn`/`error`/`silent`            |
@@ -1076,13 +1145,31 @@ machine is unreachable**. That is load-bearing: the container HEALTHCHECK reads
 the status code, and the espresso machine is switched off most of the day.
 Upstream state is a field, never the status code.
 
-`machine.state` is observed from the requests the server already makes
-(`recordUpstream` in `client.ts`), not from a probe — the upstream is an ESP32
+`machine.state` and `machine.versions` are observed from the requests the server
+already makes (`recordUpstream` / `recordVersions` in `client.ts`), not from a
+probe — the upstream is an ESP32
 on Wi-Fi and a timer-driven ping would load the one device the caching work in
-#30 is trying to spare. So an unused server honestly reports `unknown`. Any HTTP
-response counts as reachable, including a 404: it proves the network path works.
-`resetClient` clears the observed state along with the client, so one test's
-failed fetch cannot leak into the next.
+#30 is trying to spare. So an unused server honestly reports `unknown` and
+`versions: null`. Any HTTP response counts as reachable, including a 404: it
+proves the network path works. `resetClient` clears both observed values along
+with the client, so one test's failed fetch cannot leak into the next.
+
+The versions come out of the `/api/settings` aggregate the server already
+fetches, which is why `GET /api/settings/versions` stays on `client.ts`'s
+not-called list. `buildHealth` is **synchronous**, and `health.test.ts` asserts
+it: fetching inside it would put the client's 20s overall timeout inside a probe
+whose Docker `HEALTHCHECK --timeout=10s` fires first, so three consecutive
+failures would restart a container whose only problem is that the espresso
+machine is switched off — 2,880 requests a day to read a field that changes when
+the user flashes firmware. The "a cache hit must never `recordUpstream("ok")`"
+rule does not extend to versions: a version string is a fact about the machine,
+not a claim that it is answering now.
+
+`buildHealth` **projects** the three documented fields rather than spreading the
+observed object. `MachineVersions` is loose — correctly, at the client boundary —
+but `/health` is unauthenticated so the container's HEALTHCHECK can reach it, and
+a spread would publish whatever key a future firmware adds under `versions`
+without anyone deciding it should be public.
 
 `config.ts` validates `PORT` and `GAGGIUINO_URL` before the port is bound and
 names the offending variable. `PORT` previously went through a bare `Number()`

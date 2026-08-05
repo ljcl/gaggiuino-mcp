@@ -28,6 +28,93 @@ describe("buildHealth", () => {
     // /health deliberately does not generate traffic to find out.
     expect(buildHealth().machine.state).toBe("unknown");
   });
+
+  describe("firmware versions", () => {
+    it("reports null before anything has read the settings", () => {
+      // Same honesty as `state`: this server has not looked, and saying so is
+      // different from claiming the machine reports no version.
+      expect(buildHealth().machine.versions).toBeNull();
+    });
+
+    it("remembers the versions a settings read went past", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/settings", () =>
+          HttpResponse.json([
+            {
+              boiler: { steamSetPoint: 145 },
+              versions: {
+                coreVersion: "a06f97fd",
+                frontVersion: "a06f97fd",
+                staticVersion: "a06f97fd",
+              },
+            },
+          ]),
+        ),
+      );
+      await getClient().getSettings();
+
+      expect(buildHealth().machine.versions).toMatchObject({
+        coreVersion: "a06f97fd",
+      });
+    });
+
+    it("does not fail a settings read whose versions block is malformed", async () => {
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/settings", () =>
+          HttpResponse.json([{ boiler: {}, versions: "not an object" }]),
+        ),
+      );
+
+      await expect(getClient().getSettings()).resolves.toMatchObject({
+        boiler: {},
+      });
+      expect(buildHealth().machine.versions).toBeNull();
+    });
+
+    it("publishes only the three documented fields", async () => {
+      // /health is served unauthenticated for the container's benefit, so a
+      // key a future firmware adds under `versions` must not become public
+      // here without anyone deciding it should be.
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/settings", () =>
+          HttpResponse.json([
+            {
+              versions: {
+                coreVersion: "a06f97fd",
+                provisioningKey: "should-not-be-published",
+              },
+            },
+          ]),
+        ),
+      );
+      await getClient().getSettings();
+
+      expect(buildHealth().machine.versions).toEqual({
+        coreVersion: "a06f97fd",
+        frontVersion: null,
+        staticVersion: null,
+      });
+    });
+
+    it("reports a versions block that carries none of them as all-null", () => {
+      // Distinct from `versions: null`, which means this server has not looked.
+      expect(buildHealth({ versions: () => ({}) }).machine.versions).toEqual({
+        coreVersion: null,
+        frontVersion: null,
+        staticVersion: null,
+      });
+    });
+
+    it("makes no request of its own", () => {
+      // The assertion that keeps /health off the upstream forever. The
+      // container HEALTHCHECK runs this every 30s against an ESP32 that serves
+      // one request at a time, and `buildHealth` is synchronous so it cannot.
+      expect(buildHealth).not.toBeInstanceOf(
+        Object.getPrototypeOf(async () => {}).constructor,
+      );
+      expect(buildHealth().machine.versions).toBeNull();
+    });
+  });
 });
 
 describe("observed upstream state", () => {

@@ -24,6 +24,15 @@ export interface CacheOptions {
 
 export interface TtlCache<T> {
   clear(): void;
+  /**
+   * Drop one key, if it is there.
+   *
+   * The TTL answers "has this gone stale on its own"; this answers "we just
+   * changed the thing it describes". A write this server performs is the one
+   * case the TTL cannot cover, because the staleness starts the moment the
+   * write lands rather than at some point in the next thirty seconds.
+   */
+  delete(key: string): void;
   /** The live value for `key`, or `undefined` when absent or expired. */
   get(key: string): T | undefined;
   set(key: string, value: T, ttlMs: number): void;
@@ -61,6 +70,10 @@ export function createCache<T>({
   return {
     clear() {
       entries.clear();
+    },
+
+    delete(key) {
+      entries.delete(key);
     },
 
     get(key) {

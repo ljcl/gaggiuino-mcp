@@ -93,7 +93,15 @@ release workflow — please report it rather than running it.
 - `*.local.yaml` override files can carry personal equipment details (grinder,
   basket, workflow notes). They are gitignored and excluded from the Docker
   build context; they must never be committed or baked into an image.
-- The server persists nothing to disk and holds no credentials.
+- The server persists nothing to disk and holds no credentials of its own.
+- The **machine** does. `GET /api/settings` returns an aggregate that includes
+  the `system` section, which carries `sprofilerToken`, `visualizerToken`,
+  `mqttUsername`, and `mqttPassword`. `get_machine_settings` withholds those:
+  every key is still printed, but a free-form text value is shown only when the
+  server can tell it is not a credential (numbers, `true`/`false`, and a short
+  allowlist of known-safe fields such as the version strings). The decision is
+  by value type rather than by field name, so a firmware that adds a
+  differently-named secret is covered by default rather than by an update here.
 
 If you find machine addresses or local override content leaking anywhere
 outside these paths (logs, error messages, MCP tool output), that is a

@@ -11,10 +11,19 @@ import {
   SCALE_BY_10,
   ShotSummarySchema,
 } from "./analysis";
-import { getClient } from "./client";
-import { MalformedUpstreamError, UpstreamHttpError } from "./errors";
+import {
+  type CreatedProfile,
+  getClient,
+  type MachineMaintenance,
+} from "./client";
+import {
+  MalformedUpstreamError,
+  UpstreamHttpError,
+  UpstreamUnreachableError,
+} from "./errors";
 import { MISSING_GUIDANCE_TEXT, renderDialInGuidance } from "./guidance";
 import { MAX_RECENT_SHOTS, walkShotsBack } from "./history";
+import { extractServiceHistory, formatMaintenance } from "./maintenance";
 import { loadSecurityConfig } from "./mcpAuth";
 import {
   type CatalogEntry,
@@ -22,6 +31,12 @@ import {
   loadProfileCatalog,
   type ProfileCatalog,
 } from "./profileCatalog";
+import {
+  formatProfileDefinition,
+  loadProfileDefinition,
+  ProfileDefinitionOutput,
+} from "./profileDefinition";
+import { PHASE_TYPES, TRANSITION_CURVES } from "./profileShape";
 
 /**
  * Every tool in this server reads: nothing here mutates the machine or any
@@ -43,7 +58,7 @@ const READS_LOCAL_DATA: ToolAnnotations = {
 };
 
 /**
- * The one tool that changes the machine.
+ * A tool that changes the machine, and can safely be repeated.
  *
  * `readOnlyHint: false` is what tells a host to treat this differently from
  * everything else here — it is the signal an approval prompt is keyed on, and
@@ -58,6 +73,28 @@ const READS_LOCAL_DATA: ToolAnnotations = {
 const WRITES_MACHINE: ToolAnnotations = {
   destructiveHint: false,
   idempotentHint: true,
+  openWorldHint: true,
+  readOnlyHint: false,
+};
+
+/**
+ * A write that is not safe to repeat.
+ *
+ * `POST /api/profile` mints a fresh id on every call — the machine's own
+ * documentation says so — so uploading the same profile twice leaves two
+ * profiles. `idempotentHint: false` is the honest annotation, it is the reason
+ * this tool does not inherit `client.ts`'s retry loop, and it is the flag a host
+ * would key an automatic retry on.
+ *
+ * `destructiveHint: false` is a judgement rather than an oversight: a create is
+ * additive, it cannot overwrite or delete an existing profile, and REST offers
+ * no update verb at all (editing a saved profile is `c_upd_prof` over the
+ * WebSocket API, which this server does not speak). An unwanted profile is
+ * removable on the machine; that is friction, not destruction.
+ */
+const CREATES_ON_MACHINE: ToolAnnotations = {
+  destructiveHint: false,
+  idempotentHint: false,
   openWorldHint: true,
   readOnlyHint: false,
 };
@@ -184,6 +221,25 @@ const ProfileOutput = z.object({
     .describe('Control strategy the profile uses, e.g. "flow" or "pressure"'),
 });
 
+/**
+ * What `get_profile_info` adds over a list row: the machine's own definition,
+ * fetched per profile.
+ *
+ * Deliberately an extension rather than a widened `ProfileOutput`.
+ * `list_profiles` shares that schema, so widening it in place would re-key
+ * **two** host permission grants instead of one — and it would imply one
+ * upstream request per profile in a list, against a device that serves one
+ * request at a time.
+ */
+const ProfileDetailOutput = ProfileOutput.extend({
+  definition: ProfileDefinitionOutput.nullable().describe(
+    "The profile as the machine itself stores it: brew temperature, phases with their targets and stop conditions, recipe, and what ends the shot. This is the machine's own wire format — milliseconds, real degrees Celsius — so it can be edited and handed straight to upload_profile. Null when the profile is not on the machine, or when the machine did not serve one; definitionNote says which.",
+  ),
+  definitionNote: z
+    .string()
+    .describe("Where the definition came from, or why there is none"),
+});
+
 const ProfileListOutput = z.object({
   note: z
     .string()
@@ -199,6 +255,311 @@ const ProfileListOutput = z.object({
     .enum(["documentation", "machine"])
     .describe(
       "'machine' when the machine answered, 'documentation' when this server fell back to its bundled docs",
+    ),
+});
+
+/**
+ * A profile on its way *to* the machine — the one strict schema in this server,
+ * and the inversion is deliberate.
+ *
+ * Every schema in `client.ts` is loose because it parses bytes the **machine**
+ * sent, where a firmware revision must not take the server down. This one parses
+ * bytes a **language model** wrote, heading for persistence on the user's
+ * machine, where the reference says *"other missing/malformed fields are filled
+ * with zero-value defaults"* (`docs/upstream/rest-api.md` L81). A stripped
+ * unknown key is therefore not a harmless no-op — it is a phase that silently
+ * targets 0. `strictObject` turns that into `Unrecognized key` with the full
+ * path, which a model can fix, and `z.toJSONSchema(..., { io: "input" })` emits
+ * `additionalProperties: false` so the rule is advertised as well as enforced.
+ *
+ * **Units are the profile's own and are NOT the x10 wire format.** `SCALE_BY_10`
+ * describes shot *datapoints*; a profile's times are milliseconds and its
+ * temperatures real degrees. The `.max()` bounds are there mostly to catch that
+ * confusion in the direction it actually happens: a model that has just read a
+ * shot has `pressure: 91` and `temperature: 910` in front of it, and `.max(20)`
+ * and `.max(110)` reject both rather than writing a profile that asks for 91 bar
+ * at 910°C.
+ *
+ * The `.refine` below is enforced but **not advertised** — `z.toJSONSchema`
+ * cannot represent it and drops it silently — so `target`'s own description has
+ * to carry the rule.
+ */
+const TransitionInput = z.strictObject({
+  curve: z
+    .enum(TRANSITION_CURVES)
+    .optional()
+    .describe(
+      "How the target moves from start to end over `time`. Omit for the machine's default; INSTANT steps straight to `end`.",
+    ),
+  end: z
+    .number()
+    .min(0)
+    .max(20)
+    .describe(
+      "Value to arrive at: bar for a PRESSURE phase, ml/s for a FLOW phase. Real units — 9 means 9 bar, not the x10-scaled 90 a shot's pressure datapoint reports.",
+    ),
+  start: z
+    .number()
+    .min(0)
+    .max(20)
+    .optional()
+    .describe(
+      "Value to start from, same units as `end`. Omit to continue from where the previous phase ended.",
+    ),
+  time: z
+    .number()
+    .int()
+    .min(0)
+    .max(600000)
+    .optional()
+    .describe(
+      "How long the move from start to end takes, in MILLISECONDS (5000 = 5 seconds). Omit or 0 to step straight to `end`.",
+    ),
+  volume: z
+    .number()
+    .min(0)
+    .max(1000)
+    .optional()
+    .describe(
+      "Optional millilitre budget for the transition. Leave unset unless copying a profile that uses it.",
+    ),
+});
+
+const PhaseStopConditionsInput = z.strictObject({
+  flowAbove: z
+    .number()
+    .min(0)
+    .max(20)
+    .optional()
+    .describe("End the phase once pump flow rises above this, in ml/s."),
+  flowBelow: z
+    .number()
+    .min(0)
+    .max(20)
+    .optional()
+    .describe("End the phase once pump flow falls below this, in ml/s."),
+  pressureAbove: z
+    .number()
+    .min(0)
+    .max(20)
+    .optional()
+    .describe("End the phase once group pressure rises above this, in bar."),
+  pressureBelow: z
+    .number()
+    .min(0)
+    .max(20)
+    .optional()
+    .describe("End the phase once group pressure falls below this, in bar."),
+  time: z
+    .number()
+    .int()
+    .min(0)
+    .max(600000)
+    .optional()
+    .describe(
+      "End the phase after this long, in MILLISECONDS (10000 = 10 seconds).",
+    ),
+  waterPumpedInPhase: z
+    .number()
+    .min(0)
+    .max(1000)
+    .optional()
+    .describe(
+      "End the phase once this many millilitres have been pumped during it. The machine's documentation does not state the unit; millilitres is inferred from the flow units.",
+    ),
+  weight: z
+    .number()
+    .min(0)
+    .max(500)
+    .optional()
+    .describe("End the phase once the scale reads this many grams."),
+});
+
+const PhaseInput = z
+  .strictObject({
+    name: z
+      .string()
+      .max(64)
+      .optional()
+      .describe('Label shown on the machine, e.g. "Preinfusion".'),
+    restriction: z
+      .number()
+      .min(0)
+      .max(20)
+      .optional()
+      .describe(
+        "Flow restriction for the phase; 0 is unrestricted. The machine's documentation does not state its unit, so leave it at 0 unless copying a profile that sets it.",
+      ),
+    skip: z
+      .boolean()
+      .optional()
+      .describe("True to keep the phase in the profile but not run it."),
+    stopConditions: PhaseStopConditionsInput.optional().describe(
+      "What ends this phase. Omit only for a final phase meant to run until a global stop condition fires — a phase with neither runs until the brew switch is released.",
+    ),
+    target: TransitionInput.optional().describe(
+      "Where the phase drives pressure or flow to, and how fast. Required for a FLOW or PRESSURE phase.",
+    ),
+    type: z
+      .enum(PHASE_TYPES)
+      .describe(
+        "What the phase controls: PRESSURE holds a pressure target, FLOW holds a flow target, MANUAL hands control to the machine's own sliders.",
+      ),
+    waterTemperature: z
+      .number()
+      .min(0)
+      .max(110)
+      .optional()
+      .describe(
+        "Per-phase brew temperature override, in degrees Celsius. Omit to use the profile's own waterTemperature.",
+      ),
+  })
+  .refine((phase) => phase.type === "MANUAL" || phase.target !== undefined, {
+    error:
+      "a FLOW or PRESSURE phase needs a target — without one the machine fills it with a zero-value default, i.e. a phase that targets 0",
+    path: ["target"],
+  });
+
+const GlobalStopConditionsInput = z.strictObject({
+  switchToManuaFlowCtrl: z
+    .boolean()
+    .optional()
+    .describe(
+      "Switch to manual flow control instead of stopping. Spelled exactly as the firmware spells it, with one 'l' in 'Manua' — that misspelling is the machine's wire format, not a typo here.",
+    ),
+  switchToManualPressureCtrl: z
+    .boolean()
+    .optional()
+    .describe("Switch to manual pressure control instead of stopping."),
+  time: z
+    .number()
+    .int()
+    .min(0)
+    .max(600000)
+    .optional()
+    .describe(
+      "Stop the shot after this long, in MILLISECONDS (40000 = 40 seconds).",
+    ),
+  waterPumped: z
+    .number()
+    .min(0)
+    .max(1000)
+    .optional()
+    .describe("Stop once this many millilitres have been pumped."),
+  weight: z
+    .number()
+    .min(0)
+    .max(500)
+    .optional()
+    .describe(
+      "Stop once the scale reads this many grams — the usual way to end a shot on a machine with scales.",
+    ),
+});
+
+const BrewRecipeInput = z.strictObject({
+  coffeeIn: z
+    .number()
+    .min(0)
+    .max(200)
+    .optional()
+    .describe("Dry dose, in grams."),
+  coffeeOut: z
+    .number()
+    .min(0)
+    .max(500)
+    .optional()
+    .describe("Target yield, in grams."),
+  ratio: z
+    .number()
+    .min(0)
+    .max(20)
+    .optional()
+    .describe(
+      "Yield divided by dose; 2 means 1:2. Informational — the machine does not enforce it.",
+    ),
+});
+
+const ProfileUploadInput = z.strictObject({
+  globalStopConditions: GlobalStopConditionsInput.optional().describe(
+    "What ends the whole shot, whichever phase is running.",
+  ),
+  name: z
+    .string()
+    .min(1)
+    .max(64)
+    .describe(
+      "Name the profile appears under on the machine. Give a copy a distinct name — the machine does not enforce unique names, and two profiles called the same thing are indistinguishable on its screen.",
+    ),
+  phases: z
+    .array(PhaseInput)
+    .min(1)
+    .max(20)
+    .describe(
+      "The phases the shot runs, in order. The machine requires at least one.",
+    ),
+  recipe: BrewRecipeInput.optional().describe(
+    "Dose and yield the profile is written for. Informational.",
+  ),
+  waterTemperature: z
+    .number()
+    .min(0)
+    .max(110)
+    .describe(
+      "Brew temperature in degrees Celsius, e.g. 93. Real degrees — not the x10-scaled 930 a shot's temperature datapoint reports. Required here even though the machine would default it to 0, because a profile that brews at 0°C is not a profile.",
+    ),
+});
+
+const ProfileUploadOutput = z.object({
+  machineProfileId: z
+    .string()
+    .nullable()
+    .describe(
+      "Id the machine assigned the new profile — the value select_profile takes. Null when the machine saved the profile but its answer carried no id; call list_profiles to find it in that case.",
+    ),
+  name: z.string().describe("Name the profile was saved under."),
+});
+
+/**
+ * One service the machine keeps a log for.
+ *
+ * The *list* of services is not modelled — see `maintenance.ts` — so this
+ * describes the shape of a record and `services` carries however many the
+ * firmware sent. That is the difference from `get_machine_settings`, which is
+ * text-only precisely because a schema there would have to enumerate
+ * firmware-chosen fields and would drop the new one. A firmware that starts
+ * tracking a water-filter change appears here with no change to this schema.
+ */
+const ServiceHistoryOutput = z.object({
+  lastAt: z
+    .string()
+    .nullable()
+    .describe(
+      "When the machine last recorded this service, as an ISO-8601 UTC instant. Null when it has never recorded one — the machine reports 0 for that, which is not 1 January 1970 — or when the epoch it reported is too early to be a real date, which means its clock was not set at the time.",
+    ),
+  lastEpochSec: z
+    .number()
+    .nullable()
+    .describe(
+      "The same instant in the machine's own epoch seconds, or null when it has never recorded this service.",
+    ),
+  service: z
+    .string()
+    .describe(
+      'Which service this is, in the machine\'s own naming: "descale" or "backflush" on current firmware.',
+    ),
+  shotsSince: z
+    .number()
+    .nullable()
+    .describe(
+      "Shots recorded since that service. Only shots that ran long enough for the machine to record them — 5 seconds — are counted, so flushes and aborted pulls are not in this number. Null when this firmware reports no counter for the service.",
+    ),
+});
+
+const MaintenanceOutput = z.object({
+  services: z
+    .array(ServiceHistoryOutput)
+    .describe(
+      "One entry per service this firmware tracks, in the order the machine reported them. Empty means the machine's service log is empty, which is different from the firmware having no service log at all — that comes back as an error result.",
     ),
 });
 
@@ -340,28 +701,176 @@ function formatCatalog(catalog: ProfileCatalog): string {
   ].join("\n");
 }
 
+const HIDDEN_VALUE = "[hidden]";
+const UNSET_VALUE = "(not set)";
+
+const HIDDEN_VALUE_NOTE =
+  "Values shown as [hidden] are withheld by this MCP server, not missing from the machine. The machine's settings carry upload tokens and an MQTT password, so a text value is printed only when this server can tell it is not a credential: numbers, true/false, and a short list of known-safe fields. Read a hidden value on the machine's own settings screen.";
+
+/**
+ * Names never printed, whatever else says otherwise — the second, independent
+ * layer under the value-type rule below, so a careless future addition to
+ * `PRINTABLE_TEXT_SETTINGS` still cannot leak.
+ */
+const SECRET_KEY_PATTERN =
+  /token|password|passwd|secret|api[_-]?key|credential|bearer|private[_-]?key/i;
+
+/** The only free-form text settings printed verbatim. Everything else is hidden. */
+const PRINTABLE_TEXT_SETTINGS = new Set([
+  "btscalespinnedmac",
+  "coreversion",
+  "frontversion",
+  "mqtthost",
+  "mqtttopicprefix",
+  "staticversion",
+]);
+
+/**
+ * Whether a settings value can be printed, decided by its **type** rather than
+ * by its name.
+ *
+ * `/api/settings` is an aggregate, and the `system` section inside it carries
+ * `sprofilerToken`, `visualizerToken`, `mqttUsername`, and `mqttPassword`
+ * (`docs/upstream/rest-api.md` L182-183, L193-194). This function used to be
+ * `String(value)`, so every one of them went straight into model context.
+ *
+ * A denylist of those four names is the obvious fix and the wrong one: it
+ * misses `newUploadToken`, `visualizerAuth`, `mqttPsk` — anything a later
+ * firmware names differently — and it fails *silently*, which is how the
+ * original defect survived. Defaulting on type inverts that. Numbers, booleans,
+ * and this firmware's string-encoded numbers and booleans are never credentials
+ * and print unconditionally; a free-form string is hidden unless it is on a
+ * short allowlist, because in this particular payload four of the documented
+ * free-form strings are secrets.
+ *
+ * An empty string prints `(not set)` rather than `[hidden]`, so "no MQTT
+ * password is configured" stays distinguishable from "one exists and is
+ * withheld".
+ *
+ * Residual hole, recorded rather than hidden: a credential whose key matches no
+ * pattern *and* whose value is entirely numeric would print. Closing that would
+ * mean hiding `mqttPort` and every setpoint, and real tokens are alphanumeric —
+ * the reference's own examples (`abc123xyz`, `def456uvw`) are.
+ */
+function renderSettingValue(
+  key: string,
+  value: unknown,
+  forceHidden: boolean,
+): string {
+  // Numbers, booleans, null and undefined in one branch: JSON has no other
+  // scalar, so nothing reaches the string rules below by accident.
+  if (typeof value !== "string") return String(value);
+  if (value === "") return UNSET_VALUE;
+  if (forceHidden || SECRET_KEY_PATTERN.test(key)) return HIDDEN_VALUE;
+  const trimmed = value.trim();
+  if (/^(true|false)$/i.test(trimmed)) return value;
+  if (Number.isFinite(Number(trimmed))) return value;
+  if (PRINTABLE_TEXT_SETTINGS.has(key.toLowerCase())) return value;
+  return HIDDEN_VALUE;
+}
+
 /**
  * Settings are printed rather than modelled. Which knobs a build exposes is a
  * firmware decision, and a hand-written schema would silently drop the one a
  * newer build added — which is the field a user asking about settings is most
  * likely to be asking about.
+ *
+ * Every key still prints, with its nesting, whatever happens to its value. That
+ * is what makes this redaction rather than dropping: the user learns the setting
+ * exists and is told why the value is absent.
+ *
+ * `forceHidden` propagates into a whole subtree so a future
+ * `credentials: { visualizer: "…" }` is covered by its *section* name without
+ * anyone having to notice the leaf.
  */
 function formatSettings(
   settings: Record<string, unknown>,
   indent = "  ",
+  forceHidden = false,
 ): string[] {
   const lines: string[] = [];
   for (const [key, value] of Object.entries(settings)) {
     if (value !== null && typeof value === "object") {
       lines.push(
         `${indent}${key}:`,
-        ...formatSettings(value as Record<string, unknown>, `${indent}  `),
+        ...formatSettings(
+          value as Record<string, unknown>,
+          `${indent}  `,
+          forceHidden || SECRET_KEY_PATTERN.test(key),
+        ),
       );
     } else {
-      lines.push(`${indent}${key}: ${String(value)}`);
+      lines.push(
+        `${indent}${key}: ${renderSettingValue(key, value, forceHidden)}`,
+      );
     }
   }
   return lines;
+}
+
+/**
+ * The gate every tool that changes the machine sits behind.
+ *
+ * The gate is the token, not the origin allowlist: origin validation stops a
+ * browser on another site from calling us, but it does not authenticate
+ * anybody. An open `/mcp` is fine for tools that read a shot history; it is not
+ * fine for one that touches the machine.
+ */
+function writeToolDisabled(action: string): ErrorReply | undefined {
+  if (loadSecurityConfig().token !== undefined) return undefined;
+  return {
+    isError: true,
+    text: `${action} is disabled because this server has no MCP_AUTH_TOKEN set, so its /mcp endpoint is unauthenticated. Every tool here other than the two that change the machine only reads. Ask the user to set MCP_AUTH_TOKEN (see the README's 'Securing the endpoint' section) and restart the server, or to make the change on the machine itself.`,
+  };
+}
+
+/**
+ * What to tell the user when an upload did not come back clean.
+ *
+ * Handled here rather than in `errors.ts` because `describeUpstreamError`'s
+ * generic branches give advice that is actively wrong for a create: the 5xx
+ * branch ends "then retry", and the unreachable branch says "the machine may be
+ * powered off" about a request that may have been applied. Retrying a create
+ * that already landed is how a user ends up with two profiles.
+ *
+ * Returns `undefined` for anything that is not an upstream failure, so the
+ * dispatcher's generic path still catches genuine bugs — the same contract
+ * `describeUpstreamError` has, kept local because the advice is specific.
+ * `MalformedUpstreamError` is deliberately absent: `createdProfileReader`
+ * cannot raise one.
+ */
+export function describeUploadFailure(
+  error: unknown,
+  profileName: string,
+): ErrorReply | undefined {
+  if (error instanceof UpstreamUnreachableError) {
+    return {
+      isError: true,
+      text: `The machine did not answer while saving '${profileName}', so this server cannot tell you whether the profile was saved or not — the request may have been applied before the connection failed. Call list_profiles and look for '${profileName}' before calling upload_profile again: a second upload would create a second profile, because the machine assigns a fresh id every time.`,
+    };
+  }
+  if (error instanceof UpstreamHttpError) {
+    const machineSaid = error.detail
+      ? ` The machine said: ${error.detail}`
+      : "";
+    if (error.status === 404) {
+      return {
+        isError: true,
+        text: `This machine's firmware has no profile-upload endpoint (HTTP 404 for ${error.path}). Nothing was saved. The user would need to update the machine's firmware, or build the profile on the machine itself.`,
+      };
+    }
+    if (error.status === 422 || error.status === 400) {
+      return {
+        isError: true,
+        text: `The machine rejected the profile and saved nothing (HTTP ${error.status}).${machineSaid} It requires a name and at least one phase. Fix the profile and call upload_profile again — this failure is safe to repeat, because nothing was created.`,
+      };
+    }
+    return {
+      isError: true,
+      text: `The machine returned HTTP ${error.status} (${error.statusText}) while saving '${profileName}'.${machineSaid} That usually means the profile could not be written to storage, but this server cannot confirm nothing was saved. Call list_profiles to check before uploading again — do not simply repeat the call, because a second upload would create a second profile.`,
+    };
+  }
+  return undefined;
 }
 
 async function summarizeShot(shotId: string): Promise<string> {
@@ -534,7 +1043,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   defineTool({
     annotations: READS_MACHINE,
     description:
-      "Get everything known about one brew profile: whether it is on the machine, the id select_profile would take, and its prose documentation when this server has any. Accepts a documented id, a machine profile id, or the profile's name. Call list_profiles first if you do not already have one.",
+      "Get everything known about one brew profile: the machine's own definition of it — brew temperature, the phases it runs with their targets and stop conditions, and the recipe it was written around — plus this server's prose documentation when it has any, whether the profile is on the machine, and the id select_profile takes. This is the right tool for 'what does this profile actually do', including a profile the user built themselves. The definition comes back in the machine's own wire format, so it can be edited and handed to upload_profile. Accepts a documented id, a machine profile id, or the profile's name. Call list_profiles first if you do not already have one. Firmware that predates the machine's per-profile export answers with the documentation alone and says so.",
     handler: async (input) => {
       const { catalog, entry } = await findCatalogEntry(input.profile_id);
       if (!entry) {
@@ -543,6 +1052,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           text: `No profile matching '${input.profile_id}'. Available ids: ${catalog.entries.map((candidate) => candidate.id).join(", ")}.`,
         };
       }
+      const definition = await loadProfileDefinition(entry, catalog);
       const lines = [`# ${entry.name}`, ""];
       if (entry.onMachine === false) {
         lines.push(
@@ -566,10 +1076,18 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         );
       } else {
         lines.push(
-          "This profile was created on the machine, so this server has no documentation for it. Read its behaviour from a shot pulled with it — get_shot_data reports the phases the profile actually ran.",
+          "This profile was created on the machine, so this server has no curated documentation for it — what the machine itself stores is below. For how it actually behaved in the cup, call get_shot_data on a shot pulled with it.",
         );
       }
-      return { structured: entry, text: lines.join("\n") };
+      lines.push("", ...formatProfileDefinition(definition));
+      return {
+        structured: {
+          ...entry,
+          definition: definition.definition,
+          definitionNote: definition.note,
+        },
+        text: lines.join("\n"),
+      };
     },
     inputSchema: z.object({
       profile_id: z
@@ -580,7 +1098,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         ),
     }),
     name: "get_profile_info",
-    outputSchema: ProfileOutput,
+    outputSchema: ProfileDetailOutput,
     title: "Get brew profile details",
   }),
 
@@ -590,8 +1108,17 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "Read the machine's configuration: boiler and steam setpoints, temperature offset, scale and predictive-stop settings, and whatever else this firmware exposes. Useful as dial-in context — a brew temperature that never matches the profile usually shows up here as an offset rather than in the shot data. The fields are whatever the machine sends, so treat unfamiliar names as firmware-specific.",
     handler: async () => {
       const settings = await getClient().getSettings();
+      const lines = formatSettings(settings);
+      // The footer is emitted only when something was actually withheld, so a
+      // machine with no credentials configured gets no paragraph explaining a
+      // redaction that did not happen.
+      const hidAnything = lines.some((line) => line.endsWith(HIDDEN_VALUE));
       return {
-        text: ["Gaggiuino Settings:", ...formatSettings(settings)].join("\n"),
+        text: [
+          "Gaggiuino Settings:",
+          ...lines,
+          ...(hidAnything ? ["", HIDDEN_VALUE_NOTE] : []),
+        ].join("\n"),
       };
     },
     inputSchema: NoArgs,
@@ -600,20 +1127,47 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   }),
 
   defineTool({
+    annotations: READS_MACHINE,
+    description:
+      "Read the service history the machine tracks for itself: when it last recorded a descale and a backflush, and how many shots it has pulled since each. Reach for it when the shot data points at the machine rather than the coffee — scale build-up shows up as flow that will not match the profile's targets and a brew temperature that will not hold, at a grind setting that used to work. The machine records a descale at 50% of the descale cycle and a backflush once pressure holds above 10 bar in flush mode for more than two seconds, so a service done by hand is not in these numbers, and the shot counters only count shots that ran 5 seconds or longer. Older firmware does not track any of this and says so.",
+    handler: async () => {
+      let raw: MachineMaintenance;
+      try {
+        raw = await getClient().getMaintenance();
+      } catch (error) {
+        // Older firmware has no service log at all. That is a definitive answer
+        // to "when did I last descale", not a machine fault — and the generic
+        // 404 text in errors.ts ("has no endpoint at /api/maintenance … running
+        // a firmware version that does not expose it") reads as a bug report
+        // rather than as an answer. Handled here, at the one call site that
+        // knows what that path means, so errors.ts gains no per-endpoint branch.
+        if (error instanceof UpstreamHttpError && error.status === 404) {
+          return {
+            isError: true,
+            text: "This machine's firmware does not track service history — it has no /api/maintenance endpoint. Nothing is wrong with the machine; the Service Log is a newer firmware feature. Ask the user when they last descaled and backflushed, or suggest updating the firmware.",
+          };
+        }
+        throw error;
+      }
+      const reading = extractServiceHistory(raw);
+      return {
+        structured: { services: reading.services },
+        text: formatMaintenance(reading, Date.now()),
+      };
+    },
+    inputSchema: NoArgs,
+    name: "get_maintenance_status",
+    outputSchema: MaintenanceOutput,
+    title: "Get machine service history",
+  }),
+
+  defineTool({
     annotations: WRITES_MACHINE,
     description:
       "Switch the machine to a different brew profile. This changes the machine, so confirm the profile with the user before calling it — do not select one on your own initiative from dial-in advice. Takes the id from list_profiles (either the documented id or the machineProfileId). The profile must already be on the machine; this cannot create one. Refuses unless this server is configured with an auth token, since an unauthenticated server exposed over a tunnel would let anyone reach it.",
     handler: async (input) => {
-      // The gate is the token, not the origin allowlist: origin validation
-      // stops a browser on another site from calling us, but it does not
-      // authenticate anybody. An open /mcp is fine for tools that only read a
-      // shot history; it is not fine for one that touches the machine.
-      if (loadSecurityConfig().token === undefined) {
-        return {
-          isError: true,
-          text: "Profile selection is disabled because this server has no MCP_AUTH_TOKEN set, so its /mcp endpoint is unauthenticated. Every other tool here only reads. Ask the user to set MCP_AUTH_TOKEN (see the README's 'Securing the endpoint' section) and restart the server, or to change the profile on the machine itself.",
-        };
-      }
+      const denied = writeToolDisabled("Profile selection");
+      if (denied) return denied;
 
       const { catalog, entry } = await findCatalogEntry(input.profile_id);
       if (!entry) {
@@ -647,6 +1201,42 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     }),
     name: "select_profile",
     title: "Select brew profile",
+  }),
+
+  defineTool({
+    annotations: CREATES_ON_MACHINE,
+    description:
+      "Save a new brew profile to the machine. This creates something the user will see on the machine's own screen, so before calling it, show them the whole profile you intend to write — name, brew temperature, and every phase's target and stop conditions — and get an explicit yes. Do not upload a profile you invented while giving dial-in advice. It creates and never updates: the machine assigns a fresh id and ignores any id you send, so calling this twice leaves two profiles, and this server deliberately will not retry it for you — if a call fails without a clear answer, call list_profiles to see whether it landed before trying again. The reliable way to build one is to take a profile that already works, change only what you mean to change, and give it a new name; get_profile_info's `definition` field is exactly this shape. Uploading does not load the profile — call select_profile afterwards, again with the user's agreement. Times are in milliseconds and temperatures in degrees Celsius; these are NOT the x10-scaled values shot datapoints use. Refuses unless this server is configured with an auth token, since an unauthenticated server exposed over a tunnel would let anyone reach it.",
+    handler: async (input) => {
+      const denied = writeToolDisabled("Profile upload");
+      if (denied) return denied;
+
+      let created: CreatedProfile;
+      try {
+        created = await getClient().createProfile(input.profile);
+      } catch (error) {
+        const failure = describeUploadFailure(error, input.profile.name);
+        if (failure === undefined) throw error;
+        return failure;
+      }
+
+      const machineProfileId = created.id ?? null;
+      return {
+        structured: { machineProfileId, name: input.profile.name },
+        text:
+          machineProfileId === null
+            ? `Saved '${input.profile.name}' to the machine, but its reply carried no id, so this server cannot tell you which one it is. Call list_profiles to find it — do not upload it again, or there will be two.`
+            : `Saved '${input.profile.name}' to the machine as profile id ${machineProfileId}. It is not loaded yet: pass that id to select_profile, with the user's agreement, to brew with it.`,
+      };
+    },
+    inputSchema: z.object({
+      profile: ProfileUploadInput.describe(
+        "The profile to save. Do not include an id — the machine assigns a fresh one and ignores any id sent, and passing one is rejected here so a copied profile cannot be mistaken for an edit of the original.",
+      ),
+    }),
+    name: "upload_profile",
+    outputSchema: ProfileUploadOutput,
+    title: "Save a new brew profile",
   }),
 
   defineTool({

@@ -2,13 +2,16 @@ import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   mockLatestShotResponse,
+  mockMachineSettingsFromDocs,
   mockMachineStatus,
+  mockProfileDefinition,
   mockShotData,
   mockShotWithTimeStop,
 } from "./__fixtures__/api-responses";
 import { resetClient } from "./client";
 import { handleToolCall } from "./server";
 import { mockServer } from "./test-setup";
+import { describeUploadFailure } from "./tools";
 
 describe("tool dispatch", () => {
   beforeEach(() => {
@@ -370,6 +373,27 @@ describe("tool dispatch", () => {
       expect(result.text).toContain("Adaptive");
     });
 
+    it("never fetches a per-profile definition", async () => {
+      // The N+1 guard. `get_profile_info` reads /api/profile/{id}; doing the
+      // same from a list would be one sequential round trip per profile to a
+      // device that serves one request at a time.
+      let asked = 0;
+      machineProfiles([
+        { id: "15", name: "Zer0" },
+        { id: "16", name: "Londinium" },
+        { id: "17", name: "Blooming" },
+      ]);
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profile/:id", () => {
+          asked += 1;
+          return HttpResponse.json({ name: "should not be reached" });
+        }),
+      );
+
+      await handleToolCall("list_profiles", {});
+      expect(asked).toBe(0);
+    });
+
     it("returns every profile in full as structured content", async () => {
       machineProfiles([{ id: "15", name: "Zer0" }]);
       const result = await handleToolCall("list_profiles", {});
@@ -535,6 +559,93 @@ describe("tool dispatch", () => {
       expect(result.text).toContain("Available ids:");
       expect(result.structuredContent).toBeUndefined();
     });
+
+    describe("the machine's own definition", () => {
+      function serveDefinition(id: string, body: object | null, status = 200) {
+        mockServer.use(
+          http.get(`http://gaggiuino.local/api/profile/${id}`, () =>
+            status === 200
+              ? HttpResponse.json(body)
+              : new HttpResponse(null, { status }),
+          ),
+        );
+      }
+
+      it("reads the machine's definition alongside the documentation", async () => {
+        serveDefinition("15", mockProfileDefinition);
+        const result = await handleToolCall("get_profile_info", {
+          profile_id: "zer0",
+        });
+
+        expect(result.text).toContain("## Machine definition");
+        expect(result.text).toContain("Preinfusion");
+        expect(result.structuredContent).toMatchObject({
+          definition: { waterTemperature: 93 },
+        });
+      });
+
+      it("answers what an undocumented profile actually does", async () => {
+        // The headline case. Before this the user's own profile came back as a
+        // row of nulls and a suggestion to go pull a shot with it.
+        mockServer.use(
+          http.get("http://gaggiuino.local/api/profiles/all", () =>
+            HttpResponse.json([{ id: "42", name: "Sunday Filter Experiment" }]),
+          ),
+        );
+        serveDefinition("42", mockProfileDefinition);
+        const result = await handleToolCall("get_profile_info", {
+          profile_id: "42",
+        });
+
+        expect(result.structuredContent).toMatchObject({
+          definition: { waterTemperature: 93 },
+          documented: false,
+        });
+        expect(result.text).toContain("Preinfusion");
+      });
+
+      it("degrades to the documentation when the firmware has no export", async () => {
+        serveDefinition("15", null, 404);
+        const result = await handleToolCall("get_profile_info", {
+          profile_id: "zer0",
+        });
+
+        expect(result.isError).toBeFalsy();
+        // Everything the tool did before still works.
+        expect(result.text).toContain("Zer0");
+        expect(result.text).toContain("Description");
+        expect(result.text).toContain("predates");
+        expect(result.text).toContain("removed since");
+        expect(result.structuredContent).toMatchObject({ definition: null });
+      });
+
+      it("degrades rather than failing when the machine faults", async () => {
+        serveDefinition("15", null, 503);
+        const result = await handleToolCall("get_profile_info", {
+          profile_id: "zer0",
+        });
+
+        expect(result.isError).toBeFalsy();
+        expect(result.text).toContain("HTTP 503");
+        expect(result.structuredContent).toMatchObject({ definition: null });
+      });
+
+      it("does not ask the machine for a profile it does not hold", async () => {
+        let asked = 0;
+        mockServer.use(
+          http.get("http://gaggiuino.local/api/profile/:id", () => {
+            asked += 1;
+            return HttpResponse.json(mockProfileDefinition);
+          }),
+        );
+        const result = await handleToolCall("get_profile_info", {
+          profile_id: "adaptive",
+        });
+
+        expect(asked).toBe(0);
+        expect(result.text).toContain("is not on the machine");
+      });
+    });
   });
 
   describe("get_machine_settings", () => {
@@ -577,6 +688,484 @@ describe("tool dispatch", () => {
       const result = await handleToolCall("get_machine_settings", {});
       expect(result.isError).toBe(true);
       expect(result.text).toContain("Could not reach the Gaggiuino machine");
+    });
+
+    describe("credential redaction", () => {
+      function serveSettings(body: object) {
+        // `/api/settings` is cached for MACHINE_CONFIG_TTL_MS, so a test that
+        // serves two different payloads has to drop the client between them or
+        // the second read is answered from the first.
+        resetClient({ initialDelayMs: 1 });
+        mockServer.use(
+          http.get("http://gaggiuino.local/api/settings", () =>
+            HttpResponse.json([body]),
+          ),
+        );
+      }
+
+      it("never prints the machine's upload tokens", async () => {
+        serveSettings(mockMachineSettingsFromDocs);
+        const result = await handleToolCall("get_machine_settings", {});
+
+        expect(result.text).not.toContain("abc123xyz");
+        expect(result.text).not.toContain("def456uvw");
+        // The keys surviving is what makes this redaction and not dropping —
+        // the user still learns the setting exists.
+        expect(result.text).toContain(`sprofilerToken: ${"[hidden]"}`);
+        expect(result.text).toContain(`visualizerToken: ${"[hidden]"}`);
+      });
+
+      it("hides a credential this server has never heard of", async () => {
+        // The whole reason the rule is on value type rather than field name.
+        // Any name-denylist implementation passes every other test here and
+        // fails this one.
+        serveSettings({ system: { futureUploadKey: "sk-live-9a8b7c6d5e" } });
+        const result = await handleToolCall("get_machine_settings", {});
+
+        expect(result.text).not.toContain("sk-live-9a8b7c6d5e");
+        expect(result.text).toContain("futureUploadKey: [hidden]");
+      });
+
+      it("hides everything under a section whose own name reads as a secret", async () => {
+        serveSettings({ credentials: { visualizer: "plaintext-value" } });
+        const result = await handleToolCall("get_machine_settings", {});
+
+        expect(result.text).not.toContain("plaintext-value");
+        expect(result.text).toContain("visualizer: [hidden]");
+      });
+
+      it("still prints every setting that is not a credential", async () => {
+        serveSettings(mockMachineSettingsFromDocs);
+        const result = await handleToolCall("get_machine_settings", {});
+
+        expect(result.text).toContain("pumpFlowAtZero: 0.5");
+        expect(result.text).toContain("timezoneOffsetMinutes: -300");
+        expect(result.text).toContain("releaseChannel: 0");
+        expect(result.text).toContain("mqttPort: 1883");
+        expect(result.text).toContain("mqttEnabled: false");
+        expect(result.text).toContain("mqttTopicPrefix: gaggiuino");
+        expect(result.text).toContain("steamSetPoint: 145");
+        // This firmware's stringly-typed booleans and numbers are values, not
+        // secrets, and must survive the filter.
+        expect(result.text).toContain("forcePredictive: false");
+        expect(result.text).toContain("hwScalesEnabled: true");
+        expect(result.text).toContain("coreVersion: a06f97fd");
+      });
+
+      it("distinguishes an unset credential from a withheld one", async () => {
+        serveSettings({ system: { mqttPassword: "" } });
+        const empty = await handleToolCall("get_machine_settings", {});
+        expect(empty.text).toContain("mqttPassword: (not set)");
+
+        serveSettings({ system: { mqttPassword: "hunter2" } });
+        const set = await handleToolCall("get_machine_settings", {});
+        expect(set.text).toContain("mqttPassword: [hidden]");
+        expect(set.text).not.toContain("hunter2");
+      });
+
+      it("explains the redaction once, and only when something was hidden", async () => {
+        serveSettings(mockMachineSettingsFromDocs);
+        const hidden = await handleToolCall("get_machine_settings", {});
+        expect(hidden.text.match(/withheld by this MCP server/g)?.length).toBe(
+          1,
+        );
+
+        serveSettings({ boiler: { steamSetPoint: 145 } });
+        const clean = await handleToolCall("get_machine_settings", {});
+        expect(clean.text).not.toContain("withheld by this MCP server");
+      });
+    });
+  });
+
+  describe("upload_profile", () => {
+    /** A profile the strict input schema accepts, matching the reference. */
+    const valid = {
+      globalStopConditions: { time: 40000, weight: 36 },
+      name: "18g Double",
+      phases: [
+        {
+          name: "Preinfusion",
+          stopConditions: { pressureAbove: 4, time: 10000 },
+          target: { curve: "LINEAR" as const, end: 3, time: 5000 },
+          type: "PRESSURE" as const,
+        },
+      ],
+      recipe: { coffeeIn: 18, coffeeOut: 36, ratio: 2 },
+      waterTemperature: 93,
+    };
+
+    let received: unknown;
+    let requests = 0;
+
+    beforeEach(() => {
+      vi.stubEnv("MCP_AUTH_TOKEN", "test-token");
+      received = undefined;
+      requests = 0;
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    function machineAccepts(body: object = { id: 4, name: "18g Double" }) {
+      mockServer.use(
+        http.post("http://gaggiuino.local/api/profile", async ({ request }) => {
+          requests += 1;
+          received = await request.json();
+          return HttpResponse.json(body);
+        }),
+      );
+    }
+
+    function machineRejects(status: number, detail?: string) {
+      mockServer.use(
+        http.post("http://gaggiuino.local/api/profile", () => {
+          requests += 1;
+          return new HttpResponse(detail ?? null, { status });
+        }),
+      );
+    }
+
+    it("refuses without an auth token, and makes no request", async () => {
+      vi.stubEnv("MCP_AUTH_TOKEN", "");
+      machineAccepts();
+      const result = await handleToolCall("upload_profile", { profile: valid });
+
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("MCP_AUTH_TOKEN");
+      // The gate has to come before the fetch, not after it.
+      expect(requests).toBe(0);
+    });
+
+    it("sends the profile unchanged and reports the new id", async () => {
+      machineAccepts();
+      const result = await handleToolCall("upload_profile", { profile: valid });
+
+      expect(received).toEqual(valid);
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toEqual({
+        machineProfileId: "4",
+        name: "18g Double",
+      });
+      expect(result.text).toContain("select_profile");
+    });
+
+    it("accepts a profile downloaded from the machine unchanged", async () => {
+      // The round trip that binds the loose read schema to the strict write
+      // one. get_profile_info's `definition` is this shape, and "copy the
+      // profile that works and change one thing" is the actual workflow.
+      machineAccepts();
+      const result = await handleToolCall("upload_profile", {
+        profile: mockProfileDefinition,
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(received).toEqual(mockProfileDefinition);
+    });
+
+    it("rejects the x10 wire format a model just read off a shot", async () => {
+      machineAccepts();
+      const tooHot = await handleToolCall("upload_profile", {
+        profile: { ...valid, waterTemperature: 930 },
+      });
+      expect(tooHot.isError).toBe(true);
+      expect(tooHot.text).toContain("waterTemperature");
+
+      const tooHigh = await handleToolCall("upload_profile", {
+        profile: {
+          ...valid,
+          phases: [
+            {
+              ...valid.phases[0],
+              target: { ...valid.phases[0]?.target, end: 91 },
+            },
+          ],
+        },
+      });
+      expect(tooHigh.isError).toBe(true);
+      expect(requests).toBe(0);
+    });
+
+    it("rejects a key the machine would silently zero out", async () => {
+      machineAccepts();
+      const result = await handleToolCall("upload_profile", {
+        profile: {
+          ...valid,
+          phases: [{ ...valid.phases[0], pressure: 9 }],
+        },
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("phases");
+      expect(requests).toBe(0);
+    });
+
+    it("rejects a phase type or curve outside the machine's vocabulary", async () => {
+      machineAccepts();
+      const badType = await handleToolCall("upload_profile", {
+        profile: { ...valid, phases: [{ ...valid.phases[0], type: "RAMP" }] },
+      });
+      expect(badType.isError).toBe(true);
+
+      const badCurve = await handleToolCall("upload_profile", {
+        profile: {
+          ...valid,
+          phases: [
+            {
+              ...valid.phases[0],
+              target: { ...valid.phases[0]?.target, curve: "SMOOTH" },
+            },
+          ],
+        },
+      });
+      expect(badCurve.isError).toBe(true);
+      expect(requests).toBe(0);
+    });
+
+    it("requires a pressure or flow phase to say what it targets", async () => {
+      machineAccepts();
+      const noTarget = await handleToolCall("upload_profile", {
+        profile: {
+          ...valid,
+          phases: [{ name: "Bare", type: "PRESSURE" as const }],
+        },
+      });
+      expect(noTarget.isError).toBe(true);
+      expect(noTarget.text).toContain("target");
+
+      // A MANUAL phase legitimately has none.
+      const manual = await handleToolCall("upload_profile", {
+        profile: {
+          ...valid,
+          phases: [{ name: "Hands on", type: "MANUAL" as const }],
+        },
+      });
+      expect(manual.isError).toBeFalsy();
+    });
+
+    it("requires a name and at least one phase", async () => {
+      machineAccepts();
+      const noName = await handleToolCall("upload_profile", {
+        profile: { ...valid, name: "" },
+      });
+      expect(noName.isError).toBe(true);
+
+      const noPhases = await handleToolCall("upload_profile", {
+        profile: { ...valid, phases: [] },
+      });
+      expect(noPhases.isError).toBe(true);
+      expect(requests).toBe(0);
+    });
+
+    it("rejects a caller-supplied id rather than letting it look like an edit", async () => {
+      machineAccepts();
+      const result = await handleToolCall("upload_profile", {
+        profile: { ...valid, id: 4 },
+      });
+
+      expect(result.isError).toBe(true);
+      expect(requests).toBe(0);
+    });
+
+    it("does not retry, and says the write may have landed", async () => {
+      // The crux. A retried create leaves two profiles, so a failure with no
+      // clear answer must send the caller to look rather than repeat.
+      mockServer.use(
+        http.post("http://gaggiuino.local/api/profile", () => {
+          requests += 1;
+          return HttpResponse.error();
+        }),
+      );
+      const result = await handleToolCall("upload_profile", { profile: valid });
+
+      expect(requests).toBe(1);
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("may have been applied");
+      expect(result.text).toContain("list_profiles");
+      // The generic unreachable text would say this instead, and it would be
+      // the wrong advice about a request that may have succeeded.
+      expect(result.text).not.toContain("powered off");
+    });
+
+    it("does not retry a 503 either", async () => {
+      // 503 is retriable under isRetriableStatus — an ESP32 busy writing to
+      // flash. That is exactly when the write may already have landed.
+      machineRejects(503);
+      const result = await handleToolCall("upload_profile", { profile: valid });
+
+      expect(requests).toBe(1);
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("list_profiles");
+      expect(result.text).not.toMatch(/then retry/);
+    });
+
+    it("quotes the machine's own reason for rejecting a profile", async () => {
+      machineRejects(422, "phases[0].target missing");
+      const result = await handleToolCall("upload_profile", { profile: valid });
+
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("phases[0].target missing");
+      expect(result.text).toContain("safe to repeat");
+    });
+
+    it("says nothing was saved when the firmware has no upload endpoint", async () => {
+      machineRejects(404);
+      const result = await handleToolCall("upload_profile", { profile: valid });
+
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("Nothing was saved");
+    });
+
+    it("makes the new profile visible to the tools it tells you to call next", async () => {
+      // The cached profile list is stale the instant the machine accepts the
+      // upload, and the tool's own text says "pass that id to select_profile".
+      // Without eviction that call answers "No profile matching '4'".
+      let listed = [{ id: "15", name: "Zer0" }];
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.json(listed),
+        ),
+      );
+      machineAccepts();
+
+      await handleToolCall("list_profiles", {}); // warms the cache
+      await handleToolCall("upload_profile", { profile: valid });
+      listed = [...listed, { id: "4", name: "18g Double" }];
+
+      const after = await handleToolCall("list_profiles", {});
+      expect(after.text).toContain("18g Double");
+    });
+
+    it("re-reads the profile list even when the upload failed ambiguously", async () => {
+      // The dangerous case. The failure text sends the caller to list_profiles
+      // to find out whether the write landed; answering that from a pre-upload
+      // snapshot reports a landed write as missing, and the caller uploads
+      // again — the duplicate maxAttempts: 1 exists to prevent.
+      let listed = [{ id: "15", name: "Zer0" }];
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.json(listed),
+        ),
+        http.post("http://gaggiuino.local/api/profile", () =>
+          HttpResponse.error(),
+        ),
+      );
+
+      await handleToolCall("list_profiles", {});
+      const failed = await handleToolCall("upload_profile", { profile: valid });
+      expect(failed.text).toContain("list_profiles");
+      // The write did land; the machine just never got to say so.
+      listed = [...listed, { id: "4", name: "18g Double" }];
+
+      const after = await handleToolCall("list_profiles", {});
+      expect(after.text).toContain("18g Double");
+    });
+
+    it("leaves a failure it does not recognise to the dispatcher", () => {
+      // Same contract describeUpstreamError has: anything that is not an
+      // upstream failure is a bug in this server, and must not be dressed up as
+      // advice about a profile that may or may not have been saved.
+      expect(
+        describeUploadFailure(new Error("boom"), "18g Double"),
+      ).toBeUndefined();
+    });
+
+    it("treats an unreadable success body as a success, not a failure", async () => {
+      // The profile is on the machine by the time the body arrives. Reporting
+      // this as a failure is what makes a user upload it a second time.
+      mockServer.use(
+        http.post("http://gaggiuino.local/api/profile", () => {
+          requests += 1;
+          return new HttpResponse("saved", { status: 200 });
+        }),
+      );
+      const result = await handleToolCall("upload_profile", { profile: valid });
+
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toEqual({
+        machineProfileId: null,
+        name: "18g Double",
+      });
+      expect(result.text).toContain("do not upload it again");
+    });
+  });
+
+  describe("get_maintenance_status", () => {
+    function serveMaintenance(body: object | null, status = 200) {
+      resetClient({ initialDelayMs: 1 });
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/maintenance", () =>
+          status === 200
+            ? HttpResponse.json(body)
+            : new HttpResponse(null, { status }),
+        ),
+      );
+    }
+
+    it("summarizes the machine's own service log", async () => {
+      serveMaintenance({
+        lastBackflushTimestamp: 1753000000,
+        lastDescaleTimestamp: 1753900000,
+        shotsSinceBackflush: 10,
+        shotsSinceDescale: 42,
+      });
+      const result = await handleToolCall("get_maintenance_status", {});
+
+      expect(result.isError).toBeFalsy();
+      expect(result.text).toContain("## Descale");
+      expect(result.text).toContain("Shots since: 42");
+      // Order is the machine's own key order, not this server's preference.
+      expect(result.structuredContent).toMatchObject({
+        services: [
+          { service: "backflush", shotsSince: 10 },
+          { service: "descale", shotsSince: 42 },
+        ],
+      });
+    });
+
+    it("unwraps a record the firmware wrapped in an array", async () => {
+      serveMaintenance([{ lastDescaleTimestamp: 1753900000 }]);
+      const result = await handleToolCall("get_maintenance_status", {});
+      expect(result.text).toContain("## Descale");
+    });
+
+    it("reads a 404 as firmware without a service log, not as a broken machine", async () => {
+      serveMaintenance(null, 404);
+      const result = await handleToolCall("get_maintenance_status", {});
+
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("does not track service history");
+      // The generic 404 text reads as a bug report; this one is an answer.
+      expect(result.text).not.toContain("no endpoint at");
+    });
+
+    it("still reports a 503 as a machine fault", async () => {
+      serveMaintenance(null, 503);
+      const result = await handleToolCall("get_maintenance_status", {});
+
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("HTTP 503");
+    });
+
+    it("still reports an unreachable machine as unreachable", async () => {
+      resetClient({ initialDelayMs: 1 });
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/maintenance", () =>
+          HttpResponse.error(),
+        ),
+      );
+      const result = await handleToolCall("get_maintenance_status", {});
+
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("Could not reach the Gaggiuino machine");
+    });
+
+    it("rejects a body that is not a record", async () => {
+      serveMaintenance([]);
+      const result = await handleToolCall("get_maintenance_status", {});
+
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("/api/maintenance");
     });
   });
 
