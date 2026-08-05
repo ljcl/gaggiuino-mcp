@@ -34,6 +34,21 @@ export interface AccessTokenClaims {
   /** RFC 8707 resource indicator: the MCP endpoint this token is good for. */
   aud: string;
   exp: number;
+  /**
+   * Refresh-token generation, absent on access tokens.
+   *
+   * Rotation is required of a public client, and this is what makes it
+   * detectable rather than merely performed: a refresh token carries the
+   * generation it was minted at, and the token endpoint keeps the highest one
+   * it has seen per client in memory. A refresh token presented below that has
+   * already been superseded, which means it was replayed.
+   *
+   * That memory is lost on restart, so this is **bounded replay detection and
+   * not revocation** — a deliberate weakening for a single-user server that
+   * would otherwise need a database. Said out loud here because a comment
+   * naming a tradeoff is what stops it being quietly undone.
+   */
+  gen?: number;
   iat: number;
   iss: string;
   /** Unique id, so a token can be named in a log without logging the token. */

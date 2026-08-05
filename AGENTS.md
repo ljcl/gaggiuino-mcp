@@ -1024,6 +1024,7 @@ curl -X POST http://localhost:8000/mcp \
 | `HOST`                | `0.0.0.0`                | Bind address                                      |
 | `MCP_PUBLIC_URL`      | _(unset)_                | Public https origin, no path. With `MCP_OAUTH_SECRET`, enables OAuth and is advertised as the `resource` |
 | `MCP_OAUTH_SECRET`    | _(unset)_                | ≥32-char signing key for self-issued tokens; keep it stable across restarts |
+| `MCP_OAUTH_PASSPHRASE_HASH` | _(unset)_          | scrypt hash for the consent page. Required when OAuth is on; `bun run hash-passphrase` |
 | `MCP_AUTH_TOKEN`      | _(unset)_                | Legacy bearer secret for `/mcp`; a Claude connector cannot present it. OAuth wins when both are set |
 | `MCP_ALLOWED_ORIGINS` | _(empty)_                | Browser origins allowed on `/mcp`; `*` allows any |
 | `MCP_ALLOWED_HOSTS`   | _(empty)_                | `Host` values to accept; empty disables the check |
@@ -1134,6 +1135,68 @@ The 401's `resource_metadata` pointer is the part that actually fixes the
 reported failure: without it claude.ai web and mobile fail against a URL Claude
 Code connects to happily, because Claude Code probes `.well-known` as a fallback
 and the hosted surfaces rely on the header.
+
+### The built-in authorization server
+
+`/oauth/authorize`, `/oauth/token` and
+`/.well-known/oauth-authorization-server`, mounted by `oauth/router.ts` — a
+factory, so codes, failed-attempt counters and refresh generations belong to a
+handler rather than a process and two tests cannot see each other's state.
+
+**It is small because of CIMD.** The `client_id` *is* a URL; `/oauth/authorize`
+fetches it, checks the document is self-referential, and checks `redirect_uri`
+against its `redirect_uris`. No client registry, no `POST /register`, no client
+secret. Claude only picks CIMD when the metadata advertises **both**
+`client_id_metadata_document_supported: true` **and** `"none"` in
+`token_endpoint_auth_methods_supported`; lose either and it goes hunting for a
+`registration_endpoint` that deliberately does not exist. A test asserts the
+pair, because `OAuthMetadataSchema` is what serialises the document and a schema
+that dropped the flag would fail silently.
+
+Things worth not re-breaking:
+
+- **The two Claude documents are pinned as a fallback**, used only when the live
+  fetch fails, and which path was taken is logged. The live document still wins,
+  so a redirect URI Anthropic adds works without a release here.
+- **`resolveClient` refuses anything that does not resolve publicly.** The
+  `client_id` comes from the caller and this server fetches it, so without the
+  guard a stranger aims it at the LAN. Loopback, RFC 1918, link-local
+  (`169.254`, where cloud metadata lives) and `100.64/10` — the tailnet this
+  server is probably inside — are all refused.
+- **Loopback redirect URIs ignore the port, everything else is exact.** RFC 8252
+  §7.3 requires it for the IP literal, and Anthropic's guidance extends it to
+  `localhost`, because Claude Code declares `http://localhost/callback` and then
+  binds an ephemeral port. The exemption must not leak to remote hosts.
+- **No RFC 9207 `iss` on the authorization redirect.** One self-hosted server
+  correlated adding it with Anthropic's backend ceasing to call `/token` at all.
+  Unconfirmed, and not worth testing on the owner's own connector.
+- **`/oauth/token` reads `application/x-www-form-urlencoded`.** A JSON-only body
+  parser answers 415 and the flow dies at the last step. Errors are RFC 6749
+  codes — `invalid_grant`, never a custom one — because Claude's refresh
+  handling keys on them.
+- **Refresh tokens rotate**, and the new one is returned in the response that
+  supersedes the old one. Replay detection is an in-memory generation counter,
+  which is **bounded detection and not revocation**: a restart forgets it. A
+  deliberate weakening for a single-user server, named in the code so it is not
+  quietly undone.
+- **Access and refresh tokens are domain-separated by HKDF `info`**, so a
+  refresh token can never be replayed as an access token even though one secret
+  mints both.
+- **An unrecognised scope is dropped, not refused.** Claude appends
+  `offline_access`; refusing the whole request over a scope this server does not
+  model would break the flow it exists for.
+
+The consent page (`oauth/consent.ts`) shows the **host of the `client_id` URL**,
+never the self-asserted `client_name` — the host is the part TLS and the
+self-reference check actually establish, and `client_name` is whatever the
+document's author typed. `apps/server` has no dependency on
+`@gaggiuino/design-system` and must not gain one; if the page grows a template
+engine, that is a signal it is doing too much.
+
+`MCP_OAUTH_PASSPHRASE_HASH` is **mandatory** whenever OAuth is on — an
+unauthenticated consent page hands a token to anyone who finds the URL, so it is
+a startup failure rather than a degraded mode. It is the one place a real KDF
+belongs: scrypt to derive, `secretsMatch` to compare.
 
 `writeToolDisabled` (`tools.ts`) now answers only the third state — no
 credential configured at all. That one must stay an `isError`: a 401 pointing at

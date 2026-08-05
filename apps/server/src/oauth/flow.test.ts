@@ -1,0 +1,769 @@
+import { createHash, randomBytes } from "node:crypto";
+import { beforeEach, describe, expect, it } from "vitest";
+import { createFetchHandler, type FetchHandler } from "../http";
+import { type SecurityConfig } from "../mcpAuth";
+import {
+  TEST_ISSUER,
+  TEST_PASSPHRASE,
+  TEST_PASSPHRASE_HASH,
+  TEST_RESOURCE,
+  TEST_SECRET,
+} from "./__fixtures__";
+import { type ClientMetadata } from "./clients";
+
+/**
+ * The whole authorization flow, driven through the real fetch handler.
+ *
+ * This is the test that matters: every module below it can be individually
+ * correct while the flow still fails, and the flow is the thing that either
+ * works against a real connector or does not. It runs discovery, consent, the
+ * code exchange, a call to `/mcp` with the resulting token, and a refresh.
+ *
+ * CIMD resolution is injected rather than fetched — `test-setup.ts` runs msw
+ * with `onUnhandledRequest: "error"`, and a test suite that reaches claude.ai
+ * is a test suite that fails when the network does.
+ */
+
+const CLIENT_ID = "https://claude.ai/oauth/mcp-oauth-client-metadata";
+const REDIRECT_URI = "https://claude.ai/api/mcp/auth_callback";
+
+const CLAUDE: ClientMetadata = {
+  clientId: CLIENT_ID,
+  clientName: "Claude",
+  redirectUris: [REDIRECT_URI],
+};
+
+const LOOPBACK: ClientMetadata = {
+  clientId: "https://claude.ai/oauth/claude-code-client-metadata",
+  clientName: "Claude Code",
+  redirectUris: ["http://localhost/callback", "http://127.0.0.1/callback"],
+};
+
+const OAUTH: SecurityConfig = {
+  allowedHosts: [],
+  allowedOrigins: [],
+  oauth: {
+    issuer: TEST_ISSUER,
+    passphraseHash: TEST_PASSPHRASE_HASH,
+    resource: TEST_RESOURCE,
+    secret: TEST_SECRET,
+  },
+};
+
+let handler: FetchHandler;
+
+/** The clients this handler will resolve, by id. */
+function clientsFor(...known: ClientMetadata[]) {
+  const table = new Map(known.map((client) => [client.clientId, client]));
+  return (clientId: string) => Promise.resolve(table.get(clientId));
+}
+
+beforeEach(() => {
+  handler = createFetchHandler({
+    resolveClient: clientsFor(CLAUDE, LOOPBACK),
+    security: OAUTH,
+  });
+});
+
+function pkce() {
+  const verifier = randomBytes(32).toString("base64url");
+  return {
+    challenge: createHash("sha256").update(verifier).digest("base64url"),
+    verifier,
+  };
+}
+
+function authorizeUrl(params: Record<string, string>): string {
+  const url = new URL(`${TEST_ISSUER}/oauth/authorize`);
+  for (const [key, value] of Object.entries(params)) {
+    url.searchParams.set(key, value);
+  }
+  return url.toString();
+}
+
+/** A well-formed authorization request for the hosted Claude client. */
+function authorizeParams(challenge: string): Record<string, string> {
+  return {
+    client_id: CLIENT_ID,
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    redirect_uri: REDIRECT_URI,
+    resource: TEST_RESOURCE,
+    response_type: "code",
+    scope: "espresso:read espresso:write offline_access",
+    state: "opaque-state",
+  };
+}
+
+/** Pull the one-time CSRF token out of the rendered consent page. */
+function requestTokenFrom(html: string): string {
+  const match = /name="request_token" value="([^"]+)"/.exec(html);
+  expect(match?.[1], "consent page carries a request_token").toBeTruthy();
+  return match?.[1] ?? "";
+}
+
+function consentPost(
+  requestToken: string,
+  passphrase: string,
+  headers: Record<string, string> = {},
+): Request {
+  return new Request(`${TEST_ISSUER}/oauth/authorize`, {
+    body: new URLSearchParams({
+      passphrase,
+      request_token: requestToken,
+    }).toString(),
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      ...headers,
+    },
+    method: "POST",
+  });
+}
+
+/**
+ * A POST whose body stream fails part-way.
+ *
+ * What a dropped upload looks like from inside the handler. Unguarded, the
+ * `await req.text()` rejects out of `fetch` as an unhandled rejection rather
+ * than an HTTP status.
+ */
+function brokenBodyRequest(path: string): Request {
+  return new Request(`${TEST_ISSUER}${path}`, {
+    body: new ReadableStream({
+      pull(controller) {
+        controller.error(new Error("connection reset"));
+      },
+    }),
+    // Required whenever the body is a stream.
+    duplex: "half",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    method: "POST",
+  });
+}
+
+function tokenPost(body: Record<string, string>): Request {
+  return new Request(`${TEST_ISSUER}/oauth/token`, {
+    body: new URLSearchParams(body).toString(),
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    method: "POST",
+  });
+}
+
+/** Run consent to completion and return the authorization code. */
+async function grantCode(challenge: string): Promise<string> {
+  const page = await handler.fetch(
+    new Request(authorizeUrl(authorizeParams(challenge))),
+  );
+  const token = requestTokenFrom(await page.text());
+  const redirect = await handler.fetch(consentPost(token, TEST_PASSPHRASE));
+  expect(redirect.status).toBe(302);
+  const location = new URL(redirect.headers.get("Location") ?? "");
+  return location.searchParams.get("code") ?? "";
+}
+
+describe("discovery", () => {
+  it("advertises the two things that make Claude choose CIMD", async () => {
+    // Claude requires BOTH the flag and "none" before it will use a client_id
+    // URL. If either is missing it goes looking for a registration_endpoint
+    // this server deliberately does not have, and the connection fails.
+    const response = await handler.fetch(
+      new Request(`${TEST_ISSUER}/.well-known/oauth-authorization-server`),
+    );
+    expect(response.status).toBe(200);
+    const doc = (await response.json()) as Record<string, unknown>;
+    expect(doc.client_id_metadata_document_supported).toBe(true);
+    expect(doc.token_endpoint_auth_methods_supported).toEqual(["none"]);
+  });
+
+  it("advertises S256 and offline_access", async () => {
+    const response = await handler.fetch(
+      new Request(`${TEST_ISSUER}/.well-known/oauth-authorization-server`),
+    );
+    const doc = (await response.json()) as Record<string, unknown>;
+    // Claude sends code_challenge_method=S256 on every authorization request,
+    // and the spec says a client MUST refuse to proceed if this is absent.
+    expect(doc.code_challenge_methods_supported).toEqual(["S256"]);
+    // Claude appends offline_access only when the metadata lists it. Without a
+    // refresh token the owner re-consents constantly on iOS.
+    expect(doc.scopes_supported).toContain("offline_access");
+  });
+
+  it("keeps the authorization server off an unconfigured deployment", async () => {
+    const open = createFetchHandler({
+      security: { allowedHosts: [], allowedOrigins: [] },
+    });
+    const response = await open.fetch(
+      new Request(`${TEST_ISSUER}/.well-known/oauth-authorization-server`),
+    );
+    expect(response.status).toBe(404);
+    await open.shutdown();
+  });
+});
+
+describe("/oauth/authorize", () => {
+  it("renders a consent page naming the client's host", async () => {
+    const response = await handler.fetch(
+      new Request(authorizeUrl(authorizeParams(pkce().challenge))),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    // Never framed: a clickjacked "Allow access" defeats the passphrase.
+    expect(response.headers.get("X-Frame-Options")).toBe("DENY");
+    const html = await response.text();
+    expect(html).toContain("claude.ai");
+    // Plain language, not the raw scope strings — the person reading this is
+    // deciding whether to hand over their machine, not auditing an OAuth flow.
+    expect(html).toContain("Read your shot history");
+    expect(html).toContain("Change your machine");
+  });
+
+  it("refuses a request with nowhere safe to send the user back to", async () => {
+    for (const missing of ["client_id", "redirect_uri"]) {
+      const params = { ...authorizeParams(pkce().challenge) } as Record<
+        string,
+        string
+      >;
+      delete params[missing];
+      const response = await handler.fetch(new Request(authorizeUrl(params)));
+      expect(response.status, missing).toBe(400);
+      expect(response.headers.get("Location"), missing).toBeNull();
+    }
+  });
+
+  it("refuses an unverifiable client without redirecting anywhere", async () => {
+    const response = await handler.fetch(
+      new Request(
+        authorizeUrl({
+          ...authorizeParams(pkce().challenge),
+          client_id: "https://stranger.test/meta",
+        }),
+      ),
+    );
+    expect(response.status).toBe(400);
+    expect(response.headers.get("Location")).toBeNull();
+  });
+
+  it("refuses a redirect_uri the client never declared", async () => {
+    // The open redirect this validation exists to prevent: a stolen code is
+    // only useful if it can be delivered somewhere the attacker controls.
+    const response = await handler.fetch(
+      new Request(
+        authorizeUrl({
+          ...authorizeParams(pkce().challenge),
+          redirect_uri: "https://evil.test/steal",
+        }),
+      ),
+    );
+    expect(response.status).toBe(400);
+    expect(response.headers.get("Location")).toBeNull();
+  });
+
+  it("reports a bad request_type back to a verified redirect_uri", async () => {
+    // Once redirect_uri is established, errors are the client's to handle.
+    const response = await handler.fetch(
+      new Request(
+        authorizeUrl({
+          ...authorizeParams(pkce().challenge),
+          response_type: "token",
+        }),
+      ),
+    );
+    expect(response.status).toBe(302);
+    const location = new URL(response.headers.get("Location") ?? "");
+    expect(location.origin + location.pathname).toBe(REDIRECT_URI);
+    expect(location.searchParams.get("error")).toBe(
+      "unsupported_response_type",
+    );
+    expect(location.searchParams.get("state")).toBe("opaque-state");
+  });
+
+  it("requires PKCE", async () => {
+    const { code_challenge: _dropped, ...withoutPkce } = authorizeParams("x");
+    const response = await handler.fetch(
+      new Request(authorizeUrl(withoutPkce)),
+    );
+    expect(response.status).toBe(302);
+    expect(
+      new URL(response.headers.get("Location") ?? "").searchParams.get("error"),
+    ).toBe("invalid_request");
+  });
+
+  it("never emits the RFC 9207 iss parameter", async () => {
+    // A self-hosted server correlated adding it with Anthropic's backend
+    // ceasing to call /token at all. Not worth testing on a real connector.
+    const response = await handler.fetch(
+      new Request(
+        authorizeUrl({
+          ...authorizeParams(pkce().challenge),
+          response_type: "token",
+        }),
+      ),
+    );
+    const location = new URL(response.headers.get("Location") ?? "");
+    expect(location.searchParams.get("iss")).toBeNull();
+  });
+
+  it("warns when every redirect address is on this computer", async () => {
+    const response = await handler.fetch(
+      new Request(
+        authorizeUrl({
+          ...authorizeParams(pkce().challenge),
+          client_id: LOOPBACK.clientId,
+          redirect_uri: "http://127.0.0.1:54321/callback",
+        }),
+      ),
+    );
+    expect(response.status).toBe(200);
+    // Any local process can bind a port and claim to be the client.
+    expect(await response.text()).toContain("Any program running locally");
+  });
+
+  it("ignores the port on a loopback redirect", async () => {
+    // Claude Code declares http://localhost/callback and then binds an
+    // ephemeral port, so an exact match would reject every real attempt.
+    const response = await handler.fetch(
+      new Request(
+        authorizeUrl({
+          ...authorizeParams(pkce().challenge),
+          client_id: LOOPBACK.clientId,
+          redirect_uri: "http://localhost:61234/callback",
+        }),
+      ),
+    );
+    expect(response.status).toBe(200);
+  });
+});
+
+describe("consent", () => {
+  it("mints a code and preserves state on the right passphrase", async () => {
+    const page = await handler.fetch(
+      new Request(authorizeUrl(authorizeParams(pkce().challenge))),
+    );
+    const requestToken = requestTokenFrom(await page.text());
+
+    const response = await handler.fetch(
+      consentPost(requestToken, TEST_PASSPHRASE),
+    );
+    expect(response.status).toBe(302);
+    const location = new URL(response.headers.get("Location") ?? "");
+    expect(location.origin + location.pathname).toBe(REDIRECT_URI);
+    expect(location.searchParams.get("code")).toBeTruthy();
+    expect(location.searchParams.get("state")).toBe("opaque-state");
+  });
+
+  it("re-renders with a fresh token on the wrong passphrase", async () => {
+    const page = await handler.fetch(
+      new Request(authorizeUrl(authorizeParams(pkce().challenge))),
+    );
+    const first = requestTokenFrom(await page.text());
+
+    const response = await handler.fetch(consentPost(first, "wrong"));
+    expect(response.status).toBe(401);
+    const html = await response.text();
+    expect(html).toContain("not correct");
+    // `recall` is single-use, so the page the owner is looking at has already
+    // spent its token — without a fresh one, a typo would end the flow.
+    const second = requestTokenFrom(html);
+    expect(second).not.toBe(first);
+
+    const retry = await handler.fetch(consentPost(second, TEST_PASSPHRASE));
+    expect(retry.status).toBe(302);
+  });
+
+  it("refuses a request token that was already spent", async () => {
+    const challenge = pkce().challenge;
+    const page = await handler.fetch(
+      new Request(authorizeUrl(authorizeParams(challenge))),
+    );
+    const requestToken = requestTokenFrom(await page.text());
+
+    expect(
+      (await handler.fetch(consentPost(requestToken, TEST_PASSPHRASE))).status,
+    ).toBe(302);
+    const replayed = await handler.fetch(
+      consentPost(requestToken, TEST_PASSPHRASE),
+    );
+    expect(replayed.status).toBe(400);
+  });
+
+  it("refuses a form submitted from another site", async () => {
+    const page = await handler.fetch(
+      new Request(authorizeUrl(authorizeParams(pkce().challenge))),
+    );
+    const requestToken = requestTokenFrom(await page.text());
+    const response = await handler.fetch(
+      consentPost(requestToken, TEST_PASSPHRASE, {
+        origin: "https://evil.test",
+      }),
+    );
+    expect(response.status).toBe(403);
+  });
+
+  it("accepts the form from its own origin", async () => {
+    const page = await handler.fetch(
+      new Request(authorizeUrl(authorizeParams(pkce().challenge))),
+    );
+    const requestToken = requestTokenFrom(await page.text());
+    const response = await handler.fetch(
+      consentPost(requestToken, TEST_PASSPHRASE, { origin: TEST_ISSUER }),
+    );
+    expect(response.status).toBe(302);
+  });
+
+  it("refuses a GET-less POST with no pending request", async () => {
+    const response = await handler.fetch(
+      consentPost("never-issued", TEST_PASSPHRASE),
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it("stops answering after enough wrong passphrases", async () => {
+    // The default is ten attempts per fifteen minutes. Each one costs ~36 ms of
+    // scrypt, so this bounds the CPU an unauthenticated caller can spend as
+    // much as it bounds the guessing.
+    const statuses: number[] = [];
+    for (let attempt = 0; attempt < 11; attempt += 1) {
+      const page = await handler.fetch(
+        new Request(authorizeUrl(authorizeParams(pkce().challenge))),
+      );
+      const requestToken = requestTokenFrom(await page.text());
+      const response = await handler.fetch(consentPost(requestToken, "wrong"));
+      statuses.push(response.status);
+    }
+    // Ten refusals, then the door closes — not one early, which would lock the
+    // owner out sooner than the documented limit.
+    expect(statuses.slice(0, 10)).toEqual(Array<number>(10).fill(401));
+    expect(statuses[10]).toBe(429);
+  });
+
+  it("forgets the failures once a passphrase succeeds", async () => {
+    // A typo must not leave the owner part-way to a lockout.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const page = await handler.fetch(
+        new Request(authorizeUrl(authorizeParams(pkce().challenge))),
+      );
+      await handler.fetch(
+        consentPost(requestTokenFrom(await page.text()), "wrong"),
+      );
+    }
+    const page = await handler.fetch(
+      new Request(authorizeUrl(authorizeParams(pkce().challenge))),
+    );
+    const ok = await handler.fetch(
+      consentPost(requestTokenFrom(await page.text()), TEST_PASSPHRASE),
+    );
+    expect(ok.status).toBe(302);
+
+    for (let attempt = 0; attempt < 9; attempt += 1) {
+      const retry = await handler.fetch(
+        new Request(authorizeUrl(authorizeParams(pkce().challenge))),
+      );
+      const response = await handler.fetch(
+        consentPost(requestTokenFrom(await retry.text()), "wrong"),
+      );
+      expect(response.status, `attempt ${attempt}`).toBe(401);
+    }
+  });
+
+  it("answers a method that is neither GET nor POST with 405", async () => {
+    const response = await handler.fetch(
+      new Request(`${TEST_ISSUER}/oauth/authorize`, { method: "DELETE" }),
+    );
+    expect(response.status).toBe(405);
+    expect(response.headers.get("Allow")).toContain("POST");
+  });
+
+  it("refuses a body it cannot read rather than rejecting out of the handler", async () => {
+    const response = await handler.fetch(brokenBodyRequest("/oauth/authorize"));
+    expect(response.status).toBe(400);
+  });
+});
+
+describe("/oauth/token", () => {
+  it("exchanges a code for an access and refresh token", async () => {
+    const { challenge, verifier } = pkce();
+    const code = await grantCode(challenge);
+
+    const response = await handler.fetch(
+      tokenPost({
+        client_id: CLIENT_ID,
+        code,
+        code_verifier: verifier,
+        grant_type: "authorization_code",
+        redirect_uri: REDIRECT_URI,
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body.token_type).toBe("Bearer");
+    expect(body.access_token).toBeTruthy();
+    expect(body.refresh_token).toBeTruthy();
+    expect(body.scope).toBe("espresso:read espresso:write");
+  });
+
+  it("reads a form body, not JSON", async () => {
+    // The documented tripwire: a JSON-only body parser answers 415 here and
+    // the whole flow dies at the last step.
+    const { challenge, verifier } = pkce();
+    const code = await grantCode(challenge);
+    const response = await handler.fetch(
+      new Request(`${TEST_ISSUER}/oauth/token`, {
+        body: new URLSearchParams({
+          client_id: CLIENT_ID,
+          code,
+          code_verifier: verifier,
+          grant_type: "authorization_code",
+        }).toString(),
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        method: "POST",
+      }),
+    );
+    expect(response.status).toBe(200);
+  });
+
+  it("rejects a wrong PKCE verifier with invalid_grant", async () => {
+    const code = await grantCode(pkce().challenge);
+    const response = await handler.fetch(
+      tokenPost({
+        client_id: CLIENT_ID,
+        code,
+        code_verifier: pkce().verifier,
+        grant_type: "authorization_code",
+      }),
+    );
+    expect(response.status).toBe(400);
+    // The exact code matters: Claude's refresh handling keys on invalid_grant,
+    // and a custom code or invalid_request breaks it.
+    expect((await response.json()) as { error: string }).toMatchObject({
+      error: "invalid_grant",
+    });
+  });
+
+  it("spends a code exactly once", async () => {
+    const { challenge, verifier } = pkce();
+    const code = await grantCode(challenge);
+    const exchange = () =>
+      handler.fetch(
+        tokenPost({
+          client_id: CLIENT_ID,
+          code,
+          code_verifier: verifier,
+          grant_type: "authorization_code",
+        }),
+      );
+    expect((await exchange()).status).toBe(200);
+    expect((await exchange()).status).toBe(400);
+  });
+
+  it("refuses a code redeemed by a different client", async () => {
+    const { challenge, verifier } = pkce();
+    const code = await grantCode(challenge);
+    const response = await handler.fetch(
+      tokenPost({
+        client_id: LOOPBACK.clientId,
+        code,
+        code_verifier: verifier,
+        grant_type: "authorization_code",
+      }),
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it("refuses a code redeemed against a different redirect_uri", async () => {
+    const { challenge, verifier } = pkce();
+    const code = await grantCode(challenge);
+    const response = await handler.fetch(
+      tokenPost({
+        client_id: CLIENT_ID,
+        code,
+        code_verifier: verifier,
+        grant_type: "authorization_code",
+        redirect_uri: "https://evil.test/steal",
+      }),
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it("names an unsupported grant rather than failing opaquely", async () => {
+    const response = await handler.fetch(tokenPost({ grant_type: "password" }));
+    expect(response.status).toBe(400);
+    expect((await response.json()) as { error: string }).toMatchObject({
+      error: "unsupported_grant_type",
+    });
+  });
+
+  it("answers anything but POST with 405", async () => {
+    const response = await handler.fetch(
+      new Request(`${TEST_ISSUER}/oauth/token`),
+    );
+    expect(response.status).toBe(405);
+  });
+
+  it("requires a code_verifier, and says which field is missing", async () => {
+    const code = await grantCode(pkce().challenge);
+    const response = await handler.fetch(
+      tokenPost({
+        client_id: CLIENT_ID,
+        code,
+        grant_type: "authorization_code",
+      }),
+    );
+    expect(response.status).toBe(400);
+    expect((await response.json()) as { error: string }).toMatchObject({
+      error: "invalid_request",
+    });
+  });
+
+  it("refuses a body it cannot read rather than rejecting out of the handler", async () => {
+    const response = await handler.fetch(brokenBodyRequest("/oauth/token"));
+    expect(response.status).toBe(400);
+  });
+});
+
+describe("refresh", () => {
+  async function firstTokens(): Promise<Record<string, string>> {
+    const { challenge, verifier } = pkce();
+    const code = await grantCode(challenge);
+    const response = await handler.fetch(
+      tokenPost({
+        client_id: CLIENT_ID,
+        code,
+        code_verifier: verifier,
+        grant_type: "authorization_code",
+      }),
+    );
+    return (await response.json()) as Record<string, string>;
+  }
+
+  it("rotates the refresh token in the same response", async () => {
+    const first = await firstTokens();
+    const response = await handler.fetch(
+      tokenPost({
+        client_id: CLIENT_ID,
+        grant_type: "refresh_token",
+        refresh_token: first.refresh_token ?? "",
+      }),
+    );
+    expect(response.status).toBe(200);
+    const second = (await response.json()) as Record<string, string>;
+    expect(second.refresh_token).toBeTruthy();
+    expect(second.refresh_token).not.toBe(first.refresh_token);
+    expect(second.access_token).not.toBe(first.access_token);
+  });
+
+  it("detects a superseded refresh token being replayed", async () => {
+    const first = await firstTokens();
+    const rotated = await handler.fetch(
+      tokenPost({
+        client_id: CLIENT_ID,
+        grant_type: "refresh_token",
+        refresh_token: first.refresh_token ?? "",
+      }),
+    );
+    expect(rotated.status).toBe(200);
+
+    const replayed = await handler.fetch(
+      tokenPost({
+        client_id: CLIENT_ID,
+        grant_type: "refresh_token",
+        refresh_token: first.refresh_token ?? "",
+      }),
+    );
+    expect(replayed.status).toBe(400);
+    expect((await replayed.json()) as { error: string }).toMatchObject({
+      error: "invalid_grant",
+    });
+  });
+
+  it("refuses a refresh token that is not a token at all", async () => {
+    const response = await handler.fetch(
+      tokenPost({
+        client_id: CLIENT_ID,
+        grant_type: "refresh_token",
+        refresh_token: "",
+      }),
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it("keeps each client's rotation independent", async () => {
+    // The generation counter is keyed by client. Sharing one counter would let
+    // a second client's refresh invalidate the first client's token.
+    const first = await firstTokens();
+    const rotated = await handler.fetch(
+      tokenPost({
+        client_id: CLIENT_ID,
+        grant_type: "refresh_token",
+        refresh_token: first.refresh_token ?? "",
+      }),
+    );
+    expect(rotated.status).toBe(200);
+
+    const other = await handler.fetch(
+      tokenPost({
+        client_id: LOOPBACK.clientId,
+        grant_type: "refresh_token",
+        refresh_token:
+          ((await rotated.json()) as Record<string, string>).refresh_token ??
+          "",
+      }),
+    );
+    expect(other.status).toBe(200);
+  });
+
+  it("refuses an access token presented as a refresh token", async () => {
+    // The HKDF `info` split: same secret, different derived key.
+    const first = await firstTokens();
+    const response = await handler.fetch(
+      tokenPost({
+        client_id: CLIENT_ID,
+        grant_type: "refresh_token",
+        refresh_token: first.access_token ?? "",
+      }),
+    );
+    expect(response.status).toBe(400);
+  });
+});
+
+describe("the token the flow produced", () => {
+  it("is accepted by /mcp, which the flow exists to reach", async () => {
+    const { challenge, verifier } = pkce();
+    const code = await grantCode(challenge);
+    const exchanged = await handler.fetch(
+      tokenPost({
+        client_id: CLIENT_ID,
+        code,
+        code_verifier: verifier,
+        grant_type: "authorization_code",
+      }),
+    );
+    const { access_token: accessToken } = (await exchanged.json()) as {
+      access_token: string;
+    };
+
+    const response = await handler.fetch(
+      new Request(`${TEST_ISSUER}/mcp`, {
+        body: JSON.stringify({
+          id: 1,
+          jsonrpc: "2.0",
+          method: "initialize",
+          params: {
+            capabilities: {},
+            clientInfo: { name: "test", version: "1.0" },
+            protocolVersion: "2025-06-18",
+          },
+        }),
+        headers: {
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${accessToken}`,
+          "content-type": "application/json",
+        },
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("mcp-session-id")).toBeTruthy();
+  });
+});

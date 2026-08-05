@@ -2,6 +2,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { ConfigError, parsePublicUrl } from "./config";
 import { type LogFields } from "./logging";
 import { invalidTokenChallenge, type OAuthConfig } from "./oauth/metadata";
+import { isWellFormedHash } from "./oauth/passphrase";
 import { ALL_SCOPES, parseScopes } from "./oauth/scopes";
 import { type TokenFailure, verifyToken } from "./oauth/tokens";
 
@@ -113,7 +114,28 @@ function loadOAuthConfig(
       `MCP_OAUTH_SECRET must be at least ${MIN_SECRET_LENGTH} characters; it is the key every access token is signed with. Generate one with \`openssl rand -hex 32\`.`,
     );
   }
-  return { issuer, resource: `${issuer}${MCP_PATH}`, secret };
+
+  // Mandatory, because the consent page is what stands between a stranger who
+  // has found the URL and a token that can drive the machine. Without it
+  // `/oauth/authorize` would authorize anyone who asked.
+  const passphraseHash = env.MCP_OAUTH_PASSPHRASE_HASH?.trim();
+  if (!passphraseHash) {
+    throw new ConfigError(
+      "MCP_OAUTH_PASSPHRASE_HASH is required when OAuth is enabled — without it the consent page would grant a token to anyone who reaches it. Generate one with `bun run hash-passphrase` in apps/server.",
+    );
+  }
+  if (!isWellFormedHash(passphraseHash)) {
+    throw new ConfigError(
+      "MCP_OAUTH_PASSPHRASE_HASH is not a scrypt hash in the expected `scrypt$N$r$p$salt$hash` form. Generate one with `bun run hash-passphrase` in apps/server, and paste the whole line — not the passphrase itself.",
+    );
+  }
+
+  return {
+    issuer,
+    passphraseHash,
+    resource: `${issuer}${MCP_PATH}`,
+    secret,
+  };
 }
 
 export function loadSecurityConfig(

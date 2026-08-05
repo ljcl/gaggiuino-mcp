@@ -19,10 +19,8 @@ import {
   type SessionManager,
   type SessionManagerOptions,
 } from "./mcpSession";
-import {
-  handleMetadataRequest,
-  insufficientScopeChallenge,
-} from "./oauth/metadata";
+import { insufficientScopeChallenge } from "./oauth/metadata";
+import { createOAuthRouter, type OAuthRouterOptions } from "./oauth/router";
 import { protectedToolsIn } from "./oauth/scopeGate";
 import { SCOPE_WRITE } from "./oauth/scopes";
 import { createServer } from "./server";
@@ -35,6 +33,8 @@ import { createServer } from "./server";
  */
 
 export interface FetchHandlerOptions {
+  /** Test seam for CIMD resolution, so no test reaches claude.ai. */
+  resolveClient?: OAuthRouterOptions["resolve"];
   security: SecurityConfig;
   sessions?: SessionManagerOptions;
 }
@@ -94,6 +94,13 @@ function describeInitiator(body: InitializeRequest): Record<string, string> {
 }
 
 export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
+  const oauthRouter = options.security.oauth
+    ? createOAuthRouter({
+        config: options.security.oauth,
+        resolve: options.resolveClient,
+      })
+    : undefined;
+
   const sessions =
     createSessionManager<WebStandardStreamableHTTPServerTransport>({
       onEvicted: (sessionId, reason) =>
@@ -250,13 +257,11 @@ export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
 
       // Ahead of the gate for the same reason `/health` is, and it is not a
       // hole: a document a client fetches *in order to* authenticate cannot
-      // itself require authentication. It carries no machine data and no
-      // secret — only where this server's authorization server lives.
-      const metadata = handleMetadataRequest(
-        url.pathname,
-        options.security.oauth,
-      );
-      if (metadata) return metadata;
+      // itself require authentication, and neither can the endpoints that mint
+      // the token. `/oauth/authorize` carries its own gate — the owner
+      // passphrase — and `/oauth/token` carries PKCE.
+      const oauth = await oauthRouter?.handle(req, url.pathname);
+      if (oauth) return oauth;
 
       if (url.pathname === "/mcp") {
         const preflight = handlePreflight(req, options.security);

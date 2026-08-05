@@ -101,6 +101,7 @@ docker compose pull && docker compose up -d
 | `HOST` | `0.0.0.0` | Host to bind to |
 | `MCP_PUBLIC_URL` | _(unset)_ | Public `https` origin clients reach this server on, with no path (e.g. `https://box.tailnet.ts.net`). Set together with `MCP_OAUTH_SECRET` to enable OAuth. It is advertised as the OAuth `resource`, so it must match the URL you enter in the client exactly. |
 | `MCP_OAUTH_SECRET` | _(unset)_ | Signing key for self-issued OAuth tokens, at least 32 characters (`openssl rand -hex 32`). Keep it stable across restarts so clients stay signed in. Setting only one of these two fails at startup. |
+| `MCP_OAUTH_PASSPHRASE_HASH` | _(unset)_ | scrypt hash of the passphrase you type on the consent page when connecting a client. Required whenever OAuth is on — without it the consent page would grant a token to anyone who reached it, so the server refuses to start. Generate with `cd apps/server && bun run hash-passphrase`; never store the passphrase itself. |
 | `MCP_AUTH_TOKEN` | _(unset)_ | Legacy shared secret presented as `Authorization: Bearer <token>` on `/mcp`. **A Claude connector cannot present this** — the custom-connector dialog has no request-header field — so use the OAuth variables above for Claude. OAuth takes precedence when both are configured. |
 | `MCP_ALLOWED_ORIGINS` | _(empty)_ | Comma-separated browser origins allowed to call `/mcp`. `*` allows any (unsafe). |
 | `MCP_ALLOWED_HOSTS` | _(empty)_ | Comma-separated `Host` header values to accept. Empty disables the check. |
