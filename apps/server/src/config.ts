@@ -59,6 +59,56 @@ function parseMachineUrl(value: string | undefined): string {
   return raw.replace(/\/$/, "");
 }
 
+/**
+ * Validate `MCP_PUBLIC_URL` — the external identity this server answers as.
+ *
+ * The server has never needed to know its own public URL, and it cannot infer
+ * one: Tailscale Funnel terminates TLS and hands the container plain HTTP on a
+ * private address. It must not come from the `Host` header either, because the
+ * value ends up as the `resource` an access token's audience is checked
+ * against, and a caller controls `Host`.
+ *
+ * Returns the RFC 8707 canonical origin, which is what a client sends as
+ * `resource`. `URL` does most of the canonicalisation itself — lowercasing the
+ * scheme and host, dropping a default `:443`, dropping a trailing slash — so
+ * those are normalised rather than rejected. What is rejected is anything that
+ * would make the value ambiguous: a path (the issuer must stay a bare origin so
+ * RFC 8414's path-insertion collapses), a query, a fragment, credentials, or a
+ * scheme that is not https.
+ *
+ * Getting this wrong is silent in the worst way: discovery succeeds, a token is
+ * issued, and then every single request 401s. `index.ts` logs the canonical
+ * value at startup for exactly that reason.
+ */
+export function parsePublicUrl(value: string | undefined): string | undefined {
+  if (value === undefined || value.trim() === "") return undefined;
+  const raw = value.trim();
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new ConfigError(
+      `MCP_PUBLIC_URL must be a valid URL, got ${JSON.stringify(raw)} (did you omit the https:// prefix?)`,
+    );
+  }
+  if (url.protocol !== "https:") {
+    throw new ConfigError(
+      `MCP_PUBLIC_URL must be https, got ${JSON.stringify(url.protocol)}. Claude reaches this server over the public internet, and OAuth credentials cannot cross plain HTTP.`,
+    );
+  }
+  if (url.username !== "" || url.password !== "") {
+    throw new ConfigError(
+      "MCP_PUBLIC_URL must not contain credentials; it is published in discovery metadata",
+    );
+  }
+  if (url.pathname !== "/" || url.search !== "" || url.hash !== "") {
+    throw new ConfigError(
+      `MCP_PUBLIC_URL must be a bare origin with no path, query or fragment, got ${JSON.stringify(raw)} (try ${JSON.stringify(url.origin)})`,
+    );
+  }
+  return url.origin;
+}
+
 export function loadServerConfig(
   env: Record<string, string | undefined> = process.env,
 ): ServerConfig {

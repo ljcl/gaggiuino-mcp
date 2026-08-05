@@ -1,5 +1,9 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { ConfigError, parsePublicUrl } from "./config";
 import { type LogFields } from "./logging";
+import { invalidTokenChallenge, type OAuthConfig } from "./oauth/metadata";
+import { ALL_SCOPES, parseScopes } from "./oauth/scopes";
+import { type TokenFailure, verifyToken } from "./oauth/tokens";
 
 /**
  * Request-level gate for `/mcp`.
@@ -43,6 +47,13 @@ export interface SecurityConfig {
    * cross-origin requests and nothing else.
    */
   allowedOrigins: string[];
+  /**
+   * OAuth configuration, or `undefined` when this server is not an OAuth
+   * resource server. Requires both a public URL to answer as and a secret to
+   * sign with; either one alone is an incomplete configuration and is treated
+   * as unconfigured rather than half-mounted.
+   */
+  oauth?: OAuthConfig;
   /** Shared secret, or `undefined` to serve `/mcp` unauthenticated. */
   token?: string;
 }
@@ -55,6 +66,56 @@ function parseList(value: string | undefined): string[] {
     .filter((entry) => entry.length > 0);
 }
 
+/**
+ * The path `MCP_PUBLIC_URL` is combined with to form the resource identifier.
+ *
+ * This must match the URL the user types into the connector dialog exactly,
+ * path component included — Anthropic's troubleshooting page is explicit that a
+ * mismatch here produces a token that is issued happily and then rejected on
+ * every request.
+ */
+const MCP_PATH = "/mcp";
+
+/**
+ * Shortest secret worth accepting.
+ *
+ * The documented recipe is `openssl rand -hex 32`, which is 64 characters. This
+ * floor exists to reject a placeholder somebody typed by hand, not to grade
+ * entropy — the signing key is HKDF-derived from whatever is here, so a weak
+ * secret means forgeable access tokens.
+ */
+const MIN_SECRET_LENGTH = 32;
+
+function loadOAuthConfig(
+  env: Record<string, string | undefined>,
+): OAuthConfig | undefined {
+  const issuer = parsePublicUrl(env.MCP_PUBLIC_URL);
+  const secret = env.MCP_OAUTH_SECRET?.trim();
+
+  // Half a configuration is a deployment mistake, not a mode. Silently falling
+  // back to the previous behaviour is how somebody exposes a tunnel believing
+  // it is OAuth-gated, so this fails at startup and names what is missing —
+  // the same contract `config.ts` has for PORT and GAGGIUINO_URL.
+  if (issuer && !secret) {
+    throw new ConfigError(
+      "MCP_PUBLIC_URL is set but MCP_OAUTH_SECRET is not, so OAuth cannot be enabled. Generate one with `openssl rand -hex 32`, or unset MCP_PUBLIC_URL.",
+    );
+  }
+  if (secret && !issuer) {
+    throw new ConfigError(
+      "MCP_OAUTH_SECRET is set but MCP_PUBLIC_URL is not, so this server does not know the URL its tokens are issued for. Set MCP_PUBLIC_URL to the public origin clients reach it on, or unset MCP_OAUTH_SECRET.",
+    );
+  }
+  if (!issuer || !secret) return undefined;
+
+  if (secret.length < MIN_SECRET_LENGTH) {
+    throw new ConfigError(
+      `MCP_OAUTH_SECRET must be at least ${MIN_SECRET_LENGTH} characters; it is the key every access token is signed with. Generate one with \`openssl rand -hex 32\`.`,
+    );
+  }
+  return { issuer, resource: `${issuer}${MCP_PATH}`, secret };
+}
+
 export function loadSecurityConfig(
   env: Record<string, string | undefined> = process.env,
 ): SecurityConfig {
@@ -62,6 +123,7 @@ export function loadSecurityConfig(
   return {
     allowedHosts: parseList(env.MCP_ALLOWED_HOSTS),
     allowedOrigins: parseList(env.MCP_ALLOWED_ORIGINS),
+    oauth: loadOAuthConfig(env),
     token: token ? token : undefined,
   };
 }
@@ -203,35 +265,144 @@ function checkHost(req: Request, allowed: string[]): Response | undefined {
   return jsonRpcError(403, `Forbidden: Host not allowed: ${host ?? "(none)"}`);
 }
 
-function checkToken(
+/** How a caller got through the gate, and what it is allowed to ask for. */
+export interface AuthGrant {
+  /**
+   * `none` — no credential is configured, so `/mcp` is open. Writes are still
+   * refused, by `writeToolDisabled`, with text that explains why.
+   * `bearer` — the legacy `MCP_AUTH_TOKEN` matched.
+   * `oauth` — a verified access token.
+   */
+  mode: "none" | "bearer" | "oauth";
+  /** Scopes the caller holds. Empty on a refusal. */
+  scopes: readonly string[];
+  /** Token subject, when there was one. Logged; never sent to the caller. */
+  subject?: string;
+}
+
+/**
+ * The outcome of checking a credential.
+ *
+ * Both halves are always present so the caller never has to narrow a union to
+ * reach the grant: past the gate, `grant` is authoritative, and on the way out
+ * `refusal` is the response to send. Returning them together is also what lets
+ * `http.ts` verify a token once and use the same result for both the gate and
+ * the scope check, rather than verifying it twice.
+ */
+export interface AuthOutcome {
+  grant: AuthGrant;
+  /** The 401 to send, when the presented credential did not check out. */
+  refusal?: Response;
+  /**
+   * Why it was refused, for the operator's log only.
+   *
+   * The caller is told `invalid_token` and nothing more: telling an
+   * unauthenticated prober that its token was *expired* rather than
+   * *badly signed* confirms half of a guess. The person who has to fix a real
+   * misconfiguration is reading the log, not the response body.
+   */
+  reason?: TokenFailure | "missing" | "malformed-header" | "bad-token";
+}
+
+/** Every scope, for the modes that are not scope-aware. */
+const FULL_GRANT: readonly string[] = ALL_SCOPES;
+
+/**
+ * Authenticate a request. Never throws; an unusable credential is a refusal.
+ *
+ * OAuth takes precedence over the legacy shared secret when both are
+ * configured, because OAuth is the mechanism a host can actually complete. The
+ * shared secret remains for LAN installs that already depend on it, and is
+ * removed in its own change once OAuth is proven end to end.
+ */
+export function authenticate(
   req: Request,
-  token: string | undefined,
-): Response | undefined {
-  if (!token) return undefined;
-  const presented = bearerToken(req.headers.get("authorization"));
-  if (presented !== undefined && secretsMatch(presented, token)) {
-    return undefined;
+  config: SecurityConfig,
+  now: () => number = Date.now,
+): AuthOutcome {
+  const header = req.headers.get("authorization");
+
+  if (config.oauth) {
+    const presented = bearerToken(header);
+    if (presented === undefined) {
+      return {
+        grant: { mode: "oauth", scopes: [] },
+        reason: header === null ? "missing" : "malformed-header",
+        refusal: jsonRpcError(
+          401,
+          "Unauthorized: an OAuth access token is required",
+          { "WWW-Authenticate": invalidTokenChallenge(config.oauth) },
+        ),
+      };
+    }
+    const verdict = verifyToken(presented, {
+      audience: config.oauth.resource,
+      expectedIssuer: config.oauth.issuer,
+      now,
+      secret: config.oauth.secret,
+    });
+    if (!verdict.ok) {
+      return {
+        grant: { mode: "oauth", scopes: [] },
+        reason: verdict.reason,
+        refusal: jsonRpcError(
+          401,
+          "Unauthorized: the access token was not accepted",
+          { "WWW-Authenticate": invalidTokenChallenge(config.oauth) },
+        ),
+      };
+    }
+    return {
+      grant: {
+        mode: "oauth",
+        scopes: parseScopes(verdict.claims.scope),
+        subject: verdict.claims.sub,
+      },
+    };
   }
-  return jsonRpcError(401, "Unauthorized: a valid bearer token is required", {
-    "WWW-Authenticate": `Bearer realm="${REALM}"`,
-  });
+
+  if (config.token) {
+    const presented = bearerToken(header);
+    if (presented !== undefined && secretsMatch(presented, config.token)) {
+      return { grant: { mode: "bearer", scopes: FULL_GRANT } };
+    }
+    return {
+      grant: { mode: "bearer", scopes: [] },
+      reason: presented === undefined ? "missing" : "bad-token",
+      refusal: jsonRpcError(
+        401,
+        "Unauthorized: a valid bearer token is required",
+        { "WWW-Authenticate": `Bearer realm="${REALM}"` },
+      ),
+    };
+  }
+
+  // No credential configured. Every scope is granted because there is no way to
+  // obtain one, and a 403 pointing at an authorization server that does not
+  // exist is worse than the honest tool-level refusal `writeToolDisabled` gives.
+  return { grant: { mode: "none", scopes: FULL_GRANT } };
 }
 
 /**
  * Returns the rejection to send, or `undefined` to let the request through.
  *
- * Origin and Host are checked before the token so that an unauthenticated
+ * Origin and Host are checked before the credential so that an unauthenticated
  * cross-origin probe cannot use the difference between 401 and 403 to discover
- * whether a token is configured at all.
+ * whether authentication is configured at all.
+ *
+ * `auth` is a parameter so a caller that already authenticated the request can
+ * pass the result in rather than have it recomputed; it defaults to doing the
+ * work, which is what every test and every non-`/mcp` caller wants.
  */
 export function checkRequest(
   req: Request,
   config: SecurityConfig,
+  auth: AuthOutcome = authenticate(req, config),
 ): Response | undefined {
   return (
     checkOrigin(req, config.allowedOrigins) ??
     checkHost(req, config.allowedHosts) ??
-    checkToken(req, config.token)
+    auth.refusal
   );
 }
 
@@ -252,7 +423,22 @@ export interface SecurityReport {
 export function describeSecurity(config: SecurityConfig): SecurityReport[] {
   const reports: SecurityReport[] = [];
 
-  if (config.token) {
+  if (config.oauth) {
+    reports.push({
+      event: "security.auth",
+      fields: {
+        issuer: config.oauth.issuer,
+        // The advertised `resource`, printed verbatim. A mismatch between this
+        // and the URL the user types into Claude is silent — discovery
+        // succeeds, a token is issued, and every request 401s — so the one
+        // value that has to be right is the one an operator can read back.
+        message: `OAuth access token required on /mcp; advertising resource ${config.oauth.resource}`,
+        mode: "oauth",
+        resource: config.oauth.resource,
+      },
+      level: "info",
+    });
+  } else if (config.token) {
     reports.push({
       event: "security.auth",
       fields: { message: "Bearer token required on /mcp", mode: "bearer" },
@@ -263,7 +449,7 @@ export function describeSecurity(config: SecurityConfig): SecurityReport[] {
       event: "security.unauthenticated",
       fields: {
         message:
-          "WARNING: /mcp is unauthenticated — anyone who can reach this port can control the machine. Set MCP_AUTH_TOKEN before exposing it beyond your LAN (Tailscale Funnel, cloudflared, ngrok).",
+          "WARNING: /mcp is unauthenticated — anyone who can reach this port can control the machine. Set MCP_PUBLIC_URL and MCP_OAUTH_SECRET to enable OAuth before exposing it beyond your LAN (Tailscale Funnel, cloudflared, ngrok). MCP_AUTH_TOKEN still works for clients that can set their own headers, but a Claude connector cannot.",
         mode: "none",
       },
       level: "warn",

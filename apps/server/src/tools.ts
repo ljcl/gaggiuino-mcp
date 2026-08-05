@@ -811,16 +811,27 @@ function formatSettings(
 /**
  * The gate every tool that changes the machine sits behind.
  *
- * The gate is the token, not the origin allowlist: origin validation stops a
+ * The gate is a credential, not the origin allowlist: origin validation stops a
  * browser on another site from calling us, but it does not authenticate
  * anybody. An open `/mcp` is fine for tools that read a shot history; it is not
  * fine for one that touches the machine.
+ *
+ * This is the third of three states, and the only one a tool handler ever sees.
+ * With OAuth configured, a caller with no token or the wrong scope is refused at
+ * the HTTP layer with a 401 or 403 (`http.ts`), because only a status code
+ * produces an authentication prompt. What is left for this function is the case
+ * where there is no way to authenticate at all — and *that* must not be a 401,
+ * because a 401 pointing at metadata that does not exist is what produces
+ * Anthropic's "Couldn't reach the MCP server." An `isError` explaining the
+ * situation is the honest answer, and the model can relay it.
  */
 function writeToolDisabled(action: string): ErrorReply | undefined {
-  if (loadSecurityConfig().token !== undefined) return undefined;
+  const config = loadSecurityConfig();
+  if (config.oauth !== undefined || config.token !== undefined)
+    return undefined;
   return {
     isError: true,
-    text: `${action} is disabled because this server has no MCP_AUTH_TOKEN set, so its /mcp endpoint is unauthenticated. Every tool here other than the two that change the machine only reads. Ask the user to set MCP_AUTH_TOKEN (see the README's 'Securing the endpoint' section) and restart the server, or to make the change on the machine itself.`,
+    text: `${action} is disabled because this server has no way to authenticate anyone: its /mcp endpoint is open. Every tool here other than the two that change the machine only reads. Ask the user to configure OAuth by setting MCP_PUBLIC_URL and MCP_OAUTH_SECRET (see the README's 'Securing the endpoint' section) and restart the server, or to make the change on the machine itself.`,
   };
 }
 

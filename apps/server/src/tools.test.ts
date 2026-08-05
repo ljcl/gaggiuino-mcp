@@ -826,15 +826,32 @@ describe("tool dispatch", () => {
       );
     }
 
-    it("refuses without an auth token, and makes no request", async () => {
+    it("refuses when no credential is configured, and makes no request", async () => {
       vi.stubEnv("MCP_AUTH_TOKEN", "");
+      vi.stubEnv("MCP_PUBLIC_URL", "");
+      vi.stubEnv("MCP_OAUTH_SECRET", "");
       machineAccepts();
       const result = await handleToolCall("upload_profile", { profile: valid });
 
       expect(result.isError).toBe(true);
-      expect(result.text).toContain("MCP_AUTH_TOKEN");
+      expect(result.text).toContain("MCP_PUBLIC_URL");
+      expect(result.text).toContain("MCP_OAUTH_SECRET");
       // The gate has to come before the fetch, not after it.
       expect(requests).toBe(0);
+    });
+
+    it("is allowed when OAuth is configured, with no shared secret", async () => {
+      // The state that mattered when OAuth arrived: a server whose only
+      // credential is OAuth must not be treated as unauthenticated, or the two
+      // write tools stay refused on exactly the deployment they were built for.
+      vi.stubEnv("MCP_AUTH_TOKEN", "");
+      vi.stubEnv("MCP_PUBLIC_URL", "https://box.tail1234.ts.net");
+      vi.stubEnv("MCP_OAUTH_SECRET", "s".repeat(64));
+      machineAccepts();
+      const result = await handleToolCall("upload_profile", { profile: valid });
+
+      expect(result.isError).toBeUndefined();
+      expect(requests).toBe(1);
     });
 
     it("sends the profile unchanged and reports the new id", async () => {
@@ -1195,17 +1212,19 @@ describe("tool dispatch", () => {
       return selected;
     }
 
-    it("refuses when the server has no auth token", async () => {
+    it("refuses when the server has no credential configured", async () => {
       // The gate is the whole reason this tool waited on #19: an open /mcp
       // over a tunnel would let anyone drive the machine.
       vi.stubEnv("MCP_AUTH_TOKEN", "");
+      vi.stubEnv("MCP_PUBLIC_URL", "");
+      vi.stubEnv("MCP_OAUTH_SECRET", "");
       machineHolding([{ id: "15", name: "Zer0" }]);
 
       const result = await handleToolCall("select_profile", {
         profile_id: "zer0",
       });
       expect(result.isError).toBe(true);
-      expect(result.text).toContain("MCP_AUTH_TOKEN");
+      expect(result.text).toContain("MCP_PUBLIC_URL");
     });
 
     describe("with the endpoint authenticated", () => {

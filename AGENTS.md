@@ -1022,7 +1022,9 @@ curl -X POST http://localhost:8000/mcp \
 | `GAGGIUINO_URL`       | `http://gaggiuino.local` | Gaggiuino machine URL                             |
 | `PORT`                | `8000`                   | Server port                                       |
 | `HOST`                | `0.0.0.0`                | Bind address                                      |
-| `MCP_AUTH_TOKEN`      | _(unset)_                | Bearer secret for `/mcp`; unset serves it open and disables `select_profile` and `upload_profile` |
+| `MCP_PUBLIC_URL`      | _(unset)_                | Public https origin, no path. With `MCP_OAUTH_SECRET`, enables OAuth and is advertised as the `resource` |
+| `MCP_OAUTH_SECRET`    | _(unset)_                | ≥32-char signing key for self-issued tokens; keep it stable across restarts |
+| `MCP_AUTH_TOKEN`      | _(unset)_                | Legacy bearer secret for `/mcp`; a Claude connector cannot present it. OAuth wins when both are set |
 | `MCP_ALLOWED_ORIGINS` | _(empty)_                | Browser origins allowed on `/mcp`; `*` allows any |
 | `MCP_ALLOWED_HOSTS`   | _(empty)_                | `Host` values to accept; empty disables the check |
 | `LOG_LEVEL`           | `info`                   | `debug`/`info`/`warn`/`error`/`silent`            |
@@ -1085,6 +1087,58 @@ are always 32 bytes.
 `scripts/test-auth.sh` probes a running server for all of the above. It tests
 bearer auth, not OAuth — the server implements no OAuth and advertises no
 discovery document.
+
+### OAuth, and why an auth refusal is not a tool result
+
+`MCP_AUTH_TOKEN` is a control the owner cannot use. The connector is added at the
+account level so it works on claude.ai, Desktop and iOS, and on a personal plan
+the "Add custom connector" dialog exposes only an OAuth Client ID and Secret —
+there is no request-header field, and a local stdio bridge cannot run on iOS. So
+the token can never leave the client and the two write tools are permanently
+refused on the one deployment this repo is built for. OAuth is the replacement.
+
+`oauth/` holds the resource-server half: `metadata.ts` (RFC 9728 document and the
+`WWW-Authenticate` challenges), `tokens.ts` (sign/verify), `scopes.ts`, and
+`scopeGate.ts`. OAuth is on when **both** `MCP_PUBLIC_URL` and
+`MCP_OAUTH_SECRET` are set; either alone is a `ConfigError` at startup, because
+silently falling back is how somebody exposes a tunnel believing it is gated.
+
+Five things are load-bearing.
+
+- **An authentication failure is an HTTP status, never an `isError` result.**
+  This is the documented exception to "expected failures are results, not
+  exceptions" and to "`handleToolCall` is the only dispatch point", and it is a
+  protocol fact rather than a style choice: a `200` carrying `isError: true`
+  produces **no auth prompt at all** — Claude passes the text to the model as a
+  tool result and moves on. Turning the 401 or the 403 back into an `isError`
+  would be correct by house style and would silently break the connector.
+- **The scope gate therefore lives in `handleMcp`, before
+  `transport.handleRequest`.** Once a tool handler is running its return value is
+  already destined to be wrapped in a `200`. The protected set is *derived* from
+  `annotations.readOnlyHint === false`, so a new write tool inherits the gate;
+  `scopeGate.test.ts` pins the derived set so the inheritance stays visible.
+- **Both scopes are named on an `insufficient_scope` 403**, never just the
+  missing one — scopes from an earlier step-up are not reliably carried forward,
+  and the value is cached per user per server for about fifteen minutes.
+- **The well-known routes sit ahead of the gate, beside `/health`.** A document a
+  client fetches *in order to* authenticate cannot itself require
+  authentication. They are not mounted at all while OAuth is unconfigured, so an
+  existing install is unchanged.
+- **`MCP_PUBLIC_URL` never comes from the `Host` header.** It is what an access
+  token's `aud` is checked against, and `Host` is attacker-controlled. Audience
+  comparison goes through the SDK's `checkResourceAllowed` rather than a string
+  equality, because Claude sends the RFC 8707 canonical form, which need not be
+  byte-identical to what the user typed.
+
+The 401's `resource_metadata` pointer is the part that actually fixes the
+reported failure: without it claude.ai web and mobile fail against a URL Claude
+Code connects to happily, because Claude Code probes `.well-known` as a fallback
+and the hosted surfaces rely on the header.
+
+`writeToolDisabled` (`tools.ts`) now answers only the third state — no
+credential configured at all. That one must stay an `isError`: a 401 pointing at
+metadata that does not exist produces Anthropic's documented "Couldn't reach the
+MCP server."
 
 ### Session lifetime
 

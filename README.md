@@ -20,8 +20,8 @@ A Remote [MCP](https://modelcontextprotocol.io) server for integrating a [Gaggiu
 - `get_machine_settings` - Boiler, steam, and scale configuration as the machine reports it
 - `get_maintenance_status` - Descale and backflush history the machine tracks itself, with shots since each
 - `get_dial_in_guidance` - Expert guidance for analyzing espresso shots
-- `select_profile` - Switch the active profile (changes the machine; requires `MCP_AUTH_TOKEN`)
-- `upload_profile` - Save a new brew profile to the machine (changes the machine; requires `MCP_AUTH_TOKEN`). Creates only — it never updates, and the machine assigns a fresh id every time, so uploading twice leaves two profiles
+- `select_profile` - Switch the active profile (changes the machine; requires an authenticated server)
+- `upload_profile` - Save a new brew profile to the machine (changes the machine; requires an authenticated server). Creates only — it never updates, and the machine assigns a fresh id every time, so uploading twice leaves two profiles
 
 **MCP Prompts** - workflow templates your host surfaces as slash commands or menu items:
 
@@ -99,7 +99,9 @@ docker compose pull && docker compose up -d
 | `GAGGIUINO_URL` | `http://gaggiuino.local` | URL of your Gaggiuino machine |
 | `PORT` | `8000` | Port for the MCP server |
 | `HOST` | `0.0.0.0` | Host to bind to |
-| `MCP_AUTH_TOKEN` | _(unset)_ | Shared secret required as `Authorization: Bearer <token>` on `/mcp`. Unset serves the endpoint unauthenticated and disables the two tools that change the machine, `select_profile` and `upload_profile`. |
+| `MCP_PUBLIC_URL` | _(unset)_ | Public `https` origin clients reach this server on, with no path (e.g. `https://box.tailnet.ts.net`). Set together with `MCP_OAUTH_SECRET` to enable OAuth. It is advertised as the OAuth `resource`, so it must match the URL you enter in the client exactly. |
+| `MCP_OAUTH_SECRET` | _(unset)_ | Signing key for self-issued OAuth tokens, at least 32 characters (`openssl rand -hex 32`). Keep it stable across restarts so clients stay signed in. Setting only one of these two fails at startup. |
+| `MCP_AUTH_TOKEN` | _(unset)_ | Legacy shared secret presented as `Authorization: Bearer <token>` on `/mcp`. **A Claude connector cannot present this** — the custom-connector dialog has no request-header field — so use the OAuth variables above for Claude. OAuth takes precedence when both are configured. |
 | `MCP_ALLOWED_ORIGINS` | _(empty)_ | Comma-separated browser origins allowed to call `/mcp`. `*` allows any (unsafe). |
 | `MCP_ALLOWED_HOSTS` | _(empty)_ | Comma-separated `Host` header values to accept. Empty disables the check. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, or `silent`. Logs are one JSON object per line on stderr. |

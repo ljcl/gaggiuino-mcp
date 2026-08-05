@@ -5,6 +5,7 @@ import { getClient, resetClient } from "./client";
 import { createFetchHandler, type FetchHandler } from "./http";
 import { setLogLevel } from "./logging";
 import { type SecurityConfig } from "./mcpAuth";
+import { signToken } from "./oauth/tokens";
 import { mockServer } from "./test-setup";
 import { SERVER_VERSION } from "./version";
 
@@ -487,5 +488,284 @@ describe("unknown routes", () => {
       new Request("http://localhost:8000/nope"),
     );
     expect(response.status).toBe(404);
+  });
+});
+
+describe("OAuth", () => {
+  const ISSUER = "https://box.tail1234.ts.net";
+  const RESOURCE = `${ISSUER}/mcp`;
+  const SECRET = "s".repeat(64);
+
+  const OAUTH: SecurityConfig = {
+    allowedHosts: [],
+    allowedOrigins: [],
+    oauth: { issuer: ISSUER, resource: RESOURCE, secret: SECRET },
+  };
+
+  let oauthHandler: FetchHandler;
+
+  function token(scope: string): string {
+    return signToken(
+      {
+        aud: RESOURCE,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        iat: Math.floor(Date.now() / 1000),
+        iss: ISSUER,
+        jti: "id",
+        scope,
+        sub: "owner",
+      },
+      SECRET,
+      "access-token",
+    );
+  }
+
+  function bearer(scope: string): Record<string, string> {
+    return { authorization: `Bearer ${token(scope)}` };
+  }
+
+  function get(path: string): Request {
+    return new Request(`http://localhost:8000${path}`);
+  }
+
+  /** The `result` of a tool call, taken from whichever framing came back. */
+  async function readResult(
+    response: Response,
+  ): Promise<{ isError?: boolean }> {
+    const body = await response.text();
+    const payload = body.startsWith("{")
+      ? body
+      : (body
+          .split("\n")
+          .find((line) => line.startsWith("data:"))
+          ?.slice("data:".length)
+          .trim() ?? "");
+    return (JSON.parse(payload) as { result: { isError?: boolean } }).result;
+  }
+
+  beforeEach(() => {
+    oauthHandler = createFetchHandler({ security: OAUTH });
+  });
+
+  afterEach(async () => {
+    await oauthHandler.shutdown();
+  });
+
+  describe("discovery", () => {
+    it("serves both well-known documents with no credential", async () => {
+      // A document a client fetches *in order to* authenticate cannot itself
+      // require authentication — the same reason `/health` is routed early.
+      for (const path of [
+        "/.well-known/oauth-protected-resource/mcp",
+        "/.well-known/oauth-protected-resource",
+      ]) {
+        const response = await oauthHandler.fetch(get(path));
+        expect(response.status, path).toBe(200);
+        expect(await response.json()).toMatchObject({ resource: RESOURCE });
+      }
+    });
+
+    it("does not mount the routes while OAuth is unconfigured", async () => {
+      // The gated handler from the outer `beforeEach` has no OAuth config, so
+      // an existing install is unchanged by all of this.
+      const response = await handler.fetch(
+        get("/.well-known/oauth-protected-resource"),
+      );
+      expect(response.status).toBe(404);
+    });
+  });
+
+  describe("the 401", () => {
+    it("is a 401 carrying a pointer to the metadata", async () => {
+      // Claude does not honour a `WWW-Authenticate` on a 200, and with no
+      // pointer it never learns where the authorization server is.
+      const response = await oauthHandler.fetch(post(initializeBody()));
+      expect(response.status).toBe(401);
+      const challenge = response.headers.get("WWW-Authenticate") ?? "";
+      expect(challenge).toContain(
+        `resource_metadata="${ISSUER}/.well-known/oauth-protected-resource/mcp"`,
+      );
+      expect(challenge).toContain('scope="espresso:read espresso:write"');
+    });
+
+    it("refuses a token minted for a different resource", async () => {
+      const foreign = signToken(
+        {
+          aud: "https://someone-else.ts.net/mcp",
+          exp: Math.floor(Date.now() / 1000) + 3600,
+          iat: Math.floor(Date.now() / 1000),
+          iss: ISSUER,
+          jti: "id",
+          scope: "espresso:read espresso:write",
+          sub: "owner",
+        },
+        SECRET,
+        "access-token",
+      );
+      const response = await oauthHandler.fetch(
+        post(initializeBody(), { authorization: `Bearer ${foreign}` }),
+      );
+      expect(response.status).toBe(401);
+    });
+
+    it("logs whether a credential was presented at all", async () => {
+      // The field an upstream report of "Claude authorizes then never sends the
+      // bearer" could not produce. If it ever bites us, this is the evidence.
+      const records: Array<Record<string, unknown>> = [];
+      const spy = vi
+        .spyOn(console, "error")
+        .mockImplementation((line: unknown) => {
+          records.push(JSON.parse(String(line)) as Record<string, unknown>);
+        });
+      setLogLevel("warn");
+      try {
+        await oauthHandler.fetch(post(initializeBody()));
+        await oauthHandler.fetch(
+          post(initializeBody(), { authorization: "Bearer nonsense" }),
+        );
+      } finally {
+        setLogLevel("silent");
+        spy.mockRestore();
+      }
+      const rejected = records.filter(
+        (entry) => entry.event === "security.rejected",
+      );
+      expect(rejected).toHaveLength(2);
+      expect(rejected[0]).toMatchObject({
+        hasAuthorization: false,
+        reason: "missing",
+        status: 401,
+      });
+      expect(rejected[1]).toMatchObject({
+        hasAuthorization: true,
+        // "nonsense" is one segment, so it never reaches the signature check.
+        reason: "malformed",
+      });
+    });
+  });
+
+  describe("the scope step-up", () => {
+    async function callTool(name: string, scope: string): Promise<Response> {
+      const init = await oauthHandler.fetch(
+        post(initializeBody(), bearer(scope)),
+      );
+      const sessionId = init.headers.get("mcp-session-id") ?? "";
+      return oauthHandler.fetch(
+        post(
+          JSON.stringify({
+            id: 2,
+            jsonrpc: "2.0",
+            method: "tools/call",
+            params: { arguments: {}, name },
+          }),
+          { ...bearer(scope), "mcp-session-id": sessionId },
+        ),
+      );
+    }
+
+    it("403s a write tool when the token lacks espresso:write", async () => {
+      const response = await callTool("select_profile", "espresso:read");
+      expect(response.status).toBe(403);
+      const challenge = response.headers.get("WWW-Authenticate") ?? "";
+      expect(challenge).toContain('error="insufficient_scope"');
+      // Both scopes, not just the missing one — an earlier step-up's scopes are
+      // not reliably carried forward, and this value is cached for ~15 minutes.
+      expect(challenge).toContain('scope="espresso:read espresso:write"');
+    });
+
+    it("lets a read tool through on a read-only token", async () => {
+      const response = await callTool("get_dial_in_guidance", "espresso:read");
+      expect(response.status).toBe(200);
+    });
+
+    it("refuses before the machine is contacted", async () => {
+      // The ESP32 constraint, asserted rather than assumed: a refused call must
+      // cost the machine nothing. msw's `onUnhandledRequest: "error"` would
+      // already fail this, but the count says so explicitly.
+      let upstream = 0;
+      mockServer.use(
+        http.get("http://gaggiuino.local/*", () => {
+          upstream += 1;
+          return HttpResponse.json({});
+        }),
+        http.post("http://gaggiuino.local/*", () => {
+          upstream += 1;
+          return HttpResponse.text("OK");
+        }),
+      );
+      resetClient();
+
+      await oauthHandler.fetch(post(initializeBody()));
+      await oauthHandler.fetch(
+        post(initializeBody(), { authorization: "Bearer nonsense" }),
+      );
+      const refused = await callTool("select_profile", "espresso:read");
+
+      expect(refused.status).toBe(403);
+      expect(upstream).toBe(0);
+    });
+  });
+
+  describe("a fully scoped token", () => {
+    // `writeToolDisabled` reads `process.env` directly rather than the injected
+    // `SecurityConfig` — in the running server those are the same source, but a
+    // test that only injects the config leaves the tool believing nothing is
+    // configured. Stubbing the environment is what makes this test model
+    // production rather than the harness.
+    beforeEach(() => {
+      vi.stubEnv("MCP_PUBLIC_URL", ISSUER);
+      vi.stubEnv("MCP_OAUTH_SECRET", SECRET);
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("reaches the tool, which then reaches the machine", async () => {
+      const selected: string[] = [];
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.json([{ id: "15", name: "Zer0" }]),
+        ),
+        http.post(
+          "http://gaggiuino.local/api/profile-select/:id",
+          ({ params }) => {
+            selected.push(String(params.id));
+            return HttpResponse.text("OK");
+          },
+        ),
+      );
+      resetClient();
+
+      const init = await oauthHandler.fetch(
+        post(initializeBody(), bearer("espresso:read espresso:write")),
+      );
+      const sessionId = init.headers.get("mcp-session-id") ?? "";
+      const response = await oauthHandler.fetch(
+        post(
+          JSON.stringify({
+            id: 2,
+            jsonrpc: "2.0",
+            method: "tools/call",
+            params: {
+              arguments: { profile_id: "zer0" },
+              name: "select_profile",
+            },
+          }),
+          {
+            ...bearer("espresso:read espresso:write"),
+            "mcp-session-id": sessionId,
+          },
+        ),
+      );
+
+      expect(response.status).toBe(200);
+      // The body has to be read before the side effect is asserted: the
+      // transport answers on an SSE stream, so the handler has not necessarily
+      // run to completion until the stream is drained.
+      const result = await readResult(response);
+      expect(result.isError).toBeFalsy();
+      expect(selected).toEqual(["15"]);
+    });
   });
 });

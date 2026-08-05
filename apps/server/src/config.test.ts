@@ -5,7 +5,80 @@ import {
   DEFAULT_MACHINE_URL,
   DEFAULT_PORT,
   loadServerConfig,
+  parsePublicUrl,
 } from "./config";
+
+describe("parsePublicUrl", () => {
+  it("treats absent and blank as unset", () => {
+    expect(parsePublicUrl(undefined)).toBeUndefined();
+    expect(parsePublicUrl("   ")).toBeUndefined();
+  });
+
+  it("returns the origin unchanged when it is already canonical", () => {
+    expect(parsePublicUrl("https://box.tail1234.ts.net")).toBe(
+      "https://box.tail1234.ts.net",
+    );
+  });
+
+  it("canonicalises rather than rejecting the forms URL can normalise", () => {
+    // The advertised `resource` has to be the RFC 8707 canonical form, which is
+    // what a client sends back. `URL` already lowercases the scheme and host,
+    // drops a default `:443` and drops a trailing slash, so these are the same
+    // deployment described four ways — rejecting them would be pedantry that
+    // costs an operator an afternoon.
+    for (const written of [
+      "https://BOX.Tail1234.TS.NET",
+      "https://box.tail1234.ts.net/",
+      "https://box.tail1234.ts.net:443",
+      "  https://box.tail1234.ts.net  ",
+    ]) {
+      expect(parsePublicUrl(written), written).toBe(
+        "https://box.tail1234.ts.net",
+      );
+    }
+  });
+
+  it("keeps a non-default port", () => {
+    expect(parsePublicUrl("https://example.test:8443")).toBe(
+      "https://example.test:8443",
+    );
+  });
+
+  it("rejects a URL it cannot parse, naming the likely mistake", () => {
+    expect(() => parsePublicUrl("box.tail1234.ts.net")).toThrow(ConfigError);
+    expect(() => parsePublicUrl("box.tail1234.ts.net")).toThrow(/https:\/\//);
+  });
+
+  it("rejects plain http", () => {
+    // Claude reaches this over the public internet; OAuth credentials cannot
+    // cross plain HTTP.
+    expect(() => parsePublicUrl("http://box.tail1234.ts.net")).toThrow(
+      ConfigError,
+    );
+  });
+
+  it("rejects credentials, which discovery metadata would publish", () => {
+    expect(() => parsePublicUrl("https://user:pw@example.test")).toThrow(
+      ConfigError,
+    );
+  });
+
+  it("rejects a path, query or fragment and suggests the origin", () => {
+    // A path would break the assumption the built-in authorization server rests
+    // on: an issuer that is a bare origin is what collapses RFC 8414's
+    // path-insertion rule to one well-known path.
+    for (const written of [
+      "https://example.test/mcp",
+      "https://example.test/?x=1",
+      "https://example.test/#frag",
+    ]) {
+      expect(() => parsePublicUrl(written), written).toThrow(ConfigError);
+    }
+    expect(() => parsePublicUrl("https://example.test/mcp")).toThrow(
+      /https:\/\/example\.test/,
+    );
+  });
+});
 
 describe("defaults", () => {
   it("falls back to the documented defaults on an empty environment", () => {
