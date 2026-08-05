@@ -116,6 +116,27 @@ describe("extractServiceHistory", () => {
     const { services } = readingOf({ lastDescaleTimestamp: 1753900000 });
     expect(services[0]?.shotsSince).toBeNull();
   });
+
+  it("survives an epoch too large for a Date rather than throwing", () => {
+    // `new Date(ms).toISOString()` throws past ±8.64e15 ms. An expected
+    // upstream oddity must not surface as an uncaught RangeError.
+    const { services } = readingOf({ lastDescaleTimestamp: 9007199254740991 });
+
+    expect(services[0]?.lastAt).toBeNull();
+    expect(services[0]?.lastEpochSec).toBe(9007199254740991);
+  });
+
+  it("surfaces a counter it could not read rather than hiding it", () => {
+    // Consuming the key either way would make "not reported by this firmware"
+    // a lie about a counter the firmware did report.
+    const { extras, services } = readingOf({
+      lastDescaleTimestamp: 1753900000,
+      shotsSinceDescale: "n/a",
+    });
+
+    expect(services[0]?.shotsSince).toBeNull();
+    expect(extras).toEqual({ shotsSinceDescale: "n/a" });
+  });
 });
 
 describe("formatMaintenance", () => {

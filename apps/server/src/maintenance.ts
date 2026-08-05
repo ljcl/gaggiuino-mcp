@@ -56,6 +56,15 @@ const SERVICE_TIMESTAMP_KEY = /^last(.+)Timestamp$/;
 const PLAUSIBLE_EPOCH_FLOOR_SEC = 1_577_836_800;
 
 /**
+ * And a ceiling, because `new Date(ms).toISOString()` *throws* past ±8.64e15 ms
+ * rather than returning something odd. Without this a machine reporting a
+ * nonsense epoch takes the whole tool call down with an uncaught `RangeError` —
+ * an expected upstream oddity surfacing as a crash, which is exactly what the
+ * boundary rules here exist to stop. Year 9999, comfortably past any real clock.
+ */
+const PLAUSIBLE_EPOCH_CEILING_SEC = 253_402_300_800;
+
+/**
  * Mirrors `NumericSchema` in `client.ts` rather than importing it. This firmware
  * sends numbers as decimal strings on some endpoints, and the boundary schema
  * for `/api/maintenance` deliberately types nothing, so the tolerance has to
@@ -107,18 +116,24 @@ export function extractServiceHistory(
 
     const name = match[1];
     const counterKey = `shotsSince${name}`;
+    const shotsSince = finiteNumber(raw[counterKey]);
     consumed.add(key);
-    consumed.add(counterKey);
+    // Only claim the counter if it was actually readable. Consuming it either
+    // way would let `shotsSince: null` mean two different things, and the text
+    // then says "not reported by this firmware" about a counter the firmware
+    // did report — in a value this server could not parse and has now hidden.
+    if (shotsSince !== null) consumed.add(counterKey);
 
     const lastEpochSec = epochSec === 0 ? null : epochSec;
+    const datable =
+      lastEpochSec !== null &&
+      lastEpochSec >= PLAUSIBLE_EPOCH_FLOOR_SEC &&
+      lastEpochSec <= PLAUSIBLE_EPOCH_CEILING_SEC;
     services.push({
-      lastAt:
-        lastEpochSec !== null && lastEpochSec >= PLAUSIBLE_EPOCH_FLOOR_SEC
-          ? new Date(lastEpochSec * 1000).toISOString()
-          : null,
+      lastAt: datable ? new Date(lastEpochSec * 1000).toISOString() : null,
       lastEpochSec,
       service: name.charAt(0).toLowerCase() + name.slice(1),
-      shotsSince: finiteNumber(raw[counterKey]),
+      shotsSince,
     });
   }
 

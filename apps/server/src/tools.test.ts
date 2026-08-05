@@ -1016,6 +1016,51 @@ describe("tool dispatch", () => {
       expect(result.text).toContain("Nothing was saved");
     });
 
+    it("makes the new profile visible to the tools it tells you to call next", async () => {
+      // The cached profile list is stale the instant the machine accepts the
+      // upload, and the tool's own text says "pass that id to select_profile".
+      // Without eviction that call answers "No profile matching '4'".
+      let listed = [{ id: "15", name: "Zer0" }];
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.json(listed),
+        ),
+      );
+      machineAccepts();
+
+      await handleToolCall("list_profiles", {}); // warms the cache
+      await handleToolCall("upload_profile", { profile: valid });
+      listed = [...listed, { id: "4", name: "18g Double" }];
+
+      const after = await handleToolCall("list_profiles", {});
+      expect(after.text).toContain("18g Double");
+    });
+
+    it("re-reads the profile list even when the upload failed ambiguously", async () => {
+      // The dangerous case. The failure text sends the caller to list_profiles
+      // to find out whether the write landed; answering that from a pre-upload
+      // snapshot reports a landed write as missing, and the caller uploads
+      // again — the duplicate maxAttempts: 1 exists to prevent.
+      let listed = [{ id: "15", name: "Zer0" }];
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.json(listed),
+        ),
+        http.post("http://gaggiuino.local/api/profile", () =>
+          HttpResponse.error(),
+        ),
+      );
+
+      await handleToolCall("list_profiles", {});
+      const failed = await handleToolCall("upload_profile", { profile: valid });
+      expect(failed.text).toContain("list_profiles");
+      // The write did land; the machine just never got to say so.
+      listed = [...listed, { id: "4", name: "18g Double" }];
+
+      const after = await handleToolCall("list_profiles", {});
+      expect(after.text).toContain("18g Double");
+    });
+
     it("leaves a failure it does not recognise to the dispatcher", () => {
       // Same contract describeUpstreamError has: anything that is not an
       // upstream failure is a bug in this server, and must not be dressed up as

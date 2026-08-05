@@ -71,6 +71,40 @@ describe("buildHealth", () => {
       expect(buildHealth().machine.versions).toBeNull();
     });
 
+    it("publishes only the three documented fields", async () => {
+      // /health is served unauthenticated for the container's benefit, so a
+      // key a future firmware adds under `versions` must not become public
+      // here without anyone deciding it should be.
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/settings", () =>
+          HttpResponse.json([
+            {
+              versions: {
+                coreVersion: "a06f97fd",
+                provisioningKey: "should-not-be-published",
+              },
+            },
+          ]),
+        ),
+      );
+      await getClient().getSettings();
+
+      expect(buildHealth().machine.versions).toEqual({
+        coreVersion: "a06f97fd",
+        frontVersion: null,
+        staticVersion: null,
+      });
+    });
+
+    it("reports a versions block that carries none of them as all-null", () => {
+      // Distinct from `versions: null`, which means this server has not looked.
+      expect(buildHealth({ versions: () => ({}) }).machine.versions).toEqual({
+        coreVersion: null,
+        frontVersion: null,
+        staticVersion: null,
+      });
+    });
+
     it("makes no request of its own", () => {
       // The assertion that keeps /health off the upstream forever. The
       // container HEALTHCHECK runs this every 30s against an ESP32 that serves

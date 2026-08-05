@@ -34,10 +34,16 @@ import { SERVER_VERSION } from "./version";
  * **`buildHealth` is synchronous, and `/health` makes zero upstream requests.**
  */
 
+export interface ReportedVersions {
+  coreVersion: string | null;
+  frontVersion: string | null;
+  staticVersion: string | null;
+}
+
 export interface HealthPayload {
   machine: UpstreamHealth & {
     url: string;
-    versions: MachineVersions | null;
+    versions: ReportedVersions | null;
   };
   status: "ok";
   uptimeSec: number;
@@ -59,8 +65,26 @@ export function buildHealth(options: HealthOptions = {}): HealthPayload {
     versions = getUpstreamVersions,
   } = options;
 
+  const observed = versions();
   return {
-    machine: { ...upstream(), url: machineUrl, versions: versions() ?? null },
+    machine: {
+      ...upstream(),
+      url: machineUrl,
+      // Projected to the three documented fields rather than spread.
+      // `MachineVersions` is a loose schema — correctly, at the client boundary
+      // — but `/health` is served unauthenticated for the container's benefit,
+      // so a key a future firmware adds under `versions` would become public
+      // here without anyone deciding it should be. Nothing sensitive is
+      // documented there today; this is what keeps that true by default.
+      versions:
+        observed === undefined
+          ? null
+          : {
+              coreVersion: observed.coreVersion ?? null,
+              frontVersion: observed.frontVersion ?? null,
+              staticVersion: observed.staticVersion ?? null,
+            },
+    },
     status: "ok",
     uptimeSec: Math.round(uptimeSec()),
     version: SERVER_VERSION,

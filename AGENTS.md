@@ -173,6 +173,18 @@ failed.
 firmware detail — parsing it would turn a successful selection into a failure
 and then retry it.
 
+**A write this server performs invalidates the cache the write invalidated.**
+`createProfile` drops `/api/profiles/all` in a `finally`, not on success, and the
+failure path is the reason. The TTL cannot cover this: thirty seconds is "edited
+on the machine, so do not serve it too long", and a write *this* server made
+starts its staleness at a moment the TTL never sees. When an upload fails
+ambiguously — a 5xx, or a connection that dropped after the request left — the
+tool tells the caller to check `list_profiles` before trying again, because a
+second upload creates a second profile. Answering that check from a pre-upload
+snapshot reports a landed write as missing and walks the caller straight into the
+duplicate `maxAttempts: 1` exists to prevent. Both directions have tests, and
+both fail without the eviction.
+
 ### Shot ids have gaps
 
 `history.ts` owns the walk back through history, and it exists because `id - 1`
@@ -1152,6 +1164,12 @@ machine is switched off — 2,880 requests a day to read a field that changes wh
 the user flashes firmware. The "a cache hit must never `recordUpstream("ok")`"
 rule does not extend to versions: a version string is a fact about the machine,
 not a claim that it is answering now.
+
+`buildHealth` **projects** the three documented fields rather than spreading the
+observed object. `MachineVersions` is loose — correctly, at the client boundary —
+but `/health` is unauthenticated so the container's HEALTHCHECK can reach it, and
+a spread would publish whatever key a future firmware adds under `versions`
+without anyone deciding it should be public.
 
 `config.ts` validates `PORT` and `GAGGIUINO_URL` before the port is bound and
 names the offending variable. `PORT` previously went through a bare `Number()`

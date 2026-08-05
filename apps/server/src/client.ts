@@ -12,7 +12,7 @@
  * hand-written and disagrees with itself about types — `lcdDarkMode` is the
  * string `"false"` at L283 and the boolean `false` at L118; `forcePredictive`
  * and `hwScalesEnabled` are strings at L330-331 and booleans at L117 — and four
- * of the six endpoints this client calls have no response example at all. So
+ * of the nine endpoints this client calls have no response example at all. So
  * the loose schemas below are **policy, not drift**, and nothing in the
  * reference is evidence for narrowing one.
  *
@@ -787,7 +787,7 @@ export function createClient(config: ClientConfig) {
     },
 
     /**
-     * The one call in this client that changes the machine.
+     * A call that changes the machine, and is safe to repeat.
      *
      * Retrying it is safe for the same reason the tool advertises
      * `idempotentHint: true`: selecting profile 15 twice leaves the machine in
@@ -829,11 +829,29 @@ export function createClient(config: ClientConfig) {
      * caller can check and repeat deliberately.
      */
     async createProfile(profile: unknown): Promise<CreatedProfile> {
-      return perform("/api/profile", createdProfileReader, {
-        body: JSON.stringify(profile),
-        maxAttempts: 1,
-        method: "POST",
-      });
+      try {
+        return await perform("/api/profile", createdProfileReader, {
+          body: JSON.stringify(profile),
+          maxAttempts: 1,
+          method: "POST",
+        });
+      } finally {
+        // `finally`, not "on success" — and this is the whole point.
+        //
+        // The cached profile list is stale the instant the machine accepts the
+        // upload, which the TTL cannot know: it is thirty seconds of "edited on
+        // the machine, so do not serve it too long", and a write *this server*
+        // performed starts its staleness at a moment the TTL never sees.
+        //
+        // The failure path matters more than the success path. When the upload
+        // errors ambiguously — a 5xx, or a connection that dropped after the
+        // request left — the tool tells the caller to check `list_profiles`
+        // before trying again, because a second upload creates a second
+        // profile. Answering that check from a pre-upload snapshot reports a
+        // write that landed as missing, and walks the caller straight into the
+        // duplicate that `maxAttempts: 1` exists to prevent.
+        cache.delete("/api/profiles/all");
+      }
     },
   };
 }

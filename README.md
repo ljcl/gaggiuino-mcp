@@ -135,7 +135,9 @@ a probe, so `/health` puts no extra load on the machine. `machine.versions` is
 observed the same way — remembered the first time anything reads the machine's
 settings (`get_machine_settings`), never fetched by `/health` itself — so `null`
 there means "this server has not read the settings yet", not "the machine
-reports no version".
+reports no version". Only those three documented fields are published: `/health`
+is unauthenticated, so anything a future firmware adds under `versions` stays
+out of it until someone decides otherwise.
 
 Logs are one JSON object per line, so you can pick out what you need:
 

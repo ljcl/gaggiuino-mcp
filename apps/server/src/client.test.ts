@@ -476,6 +476,19 @@ describe("client", () => {
       await expect(client.createProfile({})).resolves.toEqual({});
     });
 
+    it("resolves when the ack is valid JSON of the wrong shape", async () => {
+      // Same reasoning as the non-JSON case: the profile is already on the
+      // machine, so nothing the ack says may turn this into a failure.
+      mockServer.use(
+        http.post("http://gaggiuino.local/api/profile", () =>
+          HttpResponse.json("saved it"),
+        ),
+      );
+      const client = createClient({ baseUrl: "http://gaggiuino.local" });
+
+      await expect(client.createProfile({})).resolves.toEqual({});
+    });
+
     it("unwraps a created profile the firmware wrapped in an array", async () => {
       mockServer.use(
         http.post("http://gaggiuino.local/api/profile", () =>

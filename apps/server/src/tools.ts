@@ -58,7 +58,7 @@ const READS_LOCAL_DATA: ToolAnnotations = {
 };
 
 /**
- * The one tool that changes the machine.
+ * A tool that changes the machine, and can safely be repeated.
  *
  * `readOnlyHint: false` is what tells a host to treat this differently from
  * everything else here — it is the signal an approval prompt is keyed on, and
