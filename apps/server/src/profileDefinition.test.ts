@@ -318,14 +318,62 @@ describe("formatProfileDefinition", () => {
     expect(text).not.toContain("to 5 ml/s");
   });
 
-  it("names an unnamed phase and omits what the machine did not send", () => {
+  it("omits what the machine did not send rather than labelling it", () => {
     const text = render(
       shapeDefinition(wire({ name: "Sparse", phases: [{}] })),
     );
 
-    expect(text).toContain("1. **Unnamed**");
+    // Profiles built on the machine's own screen send no phase `name` at all,
+    // so a placeholder here would print on nearly every phase of nearly every
+    // profile. The phase leads with its type, or with nothing.
+    expect(text).toContain("1.");
+    expect(text).not.toContain("Unnamed");
     expect(text).not.toContain("Ends at:");
     expect(text).not.toContain("ramp");
+  });
+
+  it("leads with the type when the machine sent no phase name", () => {
+    const text = render(
+      shapeDefinition(
+        wire({
+          name: "Machine made",
+          phases: [{ target: { end: 5 }, type: "FLOW" }],
+        }),
+      ),
+    );
+
+    expect(text).toContain("1. FLOW, ramp to 5 ml/s");
+  });
+
+  it("separates a phase name from its type", () => {
+    const text = render(
+      shapeDefinition(
+        wire({
+          name: "Named",
+          phases: [{ name: "Preinfusion", target: { end: 4 }, type: "FLOW" }],
+        }),
+      ),
+    );
+
+    expect(text).toContain("1. **Preinfusion** — FLOW, ramp to 4 ml/s");
+  });
+
+  it("states the restriction unit caveat once, not per phase", () => {
+    const text = render(
+      shapeDefinition(
+        wire({
+          name: "Lever",
+          phases: [
+            { restriction: 4, type: "PRESSURE" },
+            { restriction: 4, type: "PRESSURE" },
+            { restriction: 4, type: "PRESSURE" },
+          ],
+        }),
+      ),
+    );
+
+    expect(text.match(/does not state this field's unit/g)).toHaveLength(1);
+    expect(text.match(/Restriction: 4/g)).toHaveLength(3);
   });
 
   it("reports a pressure hand-off as well as a flow one", () => {

@@ -280,21 +280,34 @@ export function formatProfileDefinition(
     return lines;
   }
 
+  // A phase is named only when someone set one in the machine's UI or uploaded
+  // it with the profile. Profiles built on the machine's own screen carry no
+  // `name` on any phase, so a fallback label prints on nearly every phase of
+  // nearly every profile — marking the rule rather than the exception. Omit it
+  // instead and let the phase lead with its type.
   definition.phases.forEach((phase, index) => {
-    const heading = [`${index + 1}. **${phase.name ?? "Unnamed"}**`];
-    if (phase.type !== undefined) heading.push(`— ${phase.type}`);
+    const label = [
+      phase.name === undefined ? null : `**${phase.name}**`,
+      phase.type ?? null,
+    ].filter((part) => part !== null);
+
     const target = phase.target;
+    let ramp: string | null = null;
     if (target?.end !== undefined) {
       const unit = targetUnit(phase.type);
-      const ramp =
+      const over =
         target.time === undefined ? "" : ` over ${seconds(target.time)}`;
       const curve = target.curve === undefined ? "" : ` (${target.curve})`;
       const from =
         target.start === undefined ? "" : `from ${target.start}${unit} `;
-      heading.push(`, ramp ${from}to ${target.end}${unit}${ramp}${curve}`);
+      ramp = `ramp ${from}to ${target.end}${unit}${over}${curve}`;
     }
-    if (phase.skip === true) heading.push(" — SKIPPED, will not run");
-    lines.push(heading.join(""));
+
+    const summary = [label.join(" — "), ramp]
+      .filter((part) => part !== null && part !== "")
+      .join(", ");
+    const skipped = phase.skip === true ? " — SKIPPED, will not run" : "";
+    lines.push(`${index + 1}.${summary === "" ? "" : ` ${summary}`}${skipped}`);
 
     const stops = describeStopConditions(phase.stopConditions);
     if (stops !== null) lines.push(`   Ends at: ${stops}`);
@@ -302,11 +315,23 @@ export function formatProfileDefinition(
       lines.push(`   Brew temperature: ${phase.waterTemperature}°C`);
     }
     if (phase.restriction !== undefined && phase.restriction !== 0) {
-      lines.push(
-        `   Restriction: ${phase.restriction} (the machine's documentation does not state this field's unit)`,
-      );
+      lines.push(`   Restriction: ${phase.restriction}`);
     }
   });
+
+  // Once, not per phase. A real lever profile runs to nineteen phases and
+  // sixteen of them set a restriction; the caveat is the same sentence every
+  // time, and repeating it costs more context than the values it annotates.
+  if (
+    definition.phases.some(
+      (phase) => phase.restriction !== undefined && phase.restriction !== 0,
+    )
+  ) {
+    lines.push(
+      "",
+      "Restriction values above are the machine's own; its documentation does not state this field's unit.",
+    );
+  }
 
   return lines;
 }
