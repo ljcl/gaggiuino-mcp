@@ -135,7 +135,25 @@ export function loadSecurityConfig(
  * `timingSafeEqual` throws on a length mismatch, and the obvious guard against
  * that (`a.length !== b.length` early return) leaks the secret's length. Two
  * SHA-256 digests are always 32 bytes, so the comparison is uniform.
+ *
+ * **This is a comparison, not password storage, and it must not become one.**
+ * CodeQL flags the `createHash` below as `js/insufficient-password-hash` — a
+ * false positive here, and acting on it would make things worse in two ways.
+ * Nothing is persisted: the digests exist for the length of this call and are
+ * never written, sent or logged, so there is no artifact for an offline attack
+ * to work against. And the inputs are machine-generated secrets
+ * (`openssl rand -hex 32`), not human passwords, so there is no dictionary to
+ * run. Swapping in scrypt or argon2 would put a deliberately slow KDF on the
+ * unauthenticated path of every request — roughly 100 ms of CPU per attempt on
+ * the class of hardware this ships to, which is a denial-of-service primitive
+ * handed to anyone who can reach the port.
+ *
+ * A *stored* passphrase hash is the opposite case and does need a real KDF;
+ * that is `MCP_OAUTH_PASSPHRASE_HASH`, which uses scrypt and lands with the
+ * consent page. Its verified result is then compared here, which is the correct
+ * division: scrypt to derive, this to compare.
  */
+// codeql[js/insufficient-password-hash]
 export function secretsMatch(a: string, b: string): boolean {
   const digest = (value: string) =>
     createHash("sha256").update(value, "utf8").digest();
