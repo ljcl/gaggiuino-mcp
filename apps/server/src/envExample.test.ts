@@ -34,15 +34,30 @@ const TEMPLATE = fileURLToPath(
  * `loadSecurityConfig` take, which is every shape this server uses.
  */
 function variablesReadFromSource(): Map<string, string[]> {
-  const dir = fileURLToPath(new URL("./", import.meta.url));
+  const root = fileURLToPath(new URL("./", import.meta.url));
   const readers = new Map<string, string[]>();
-  for (const entry of readdirSync(dir)) {
-    if (!entry.endsWith(".ts") || entry.endsWith(".test.ts")) continue;
-    const source = readFileSync(join(dir, entry), "utf-8");
-    for (const [, name] of source.matchAll(/\benv\.([A-Z][A-Z0-9_]*)\b/g)) {
-      if (name) readers.set(name, [...(readers.get(name) ?? []), entry]);
+  // Recursive, because the scan is the guard. A flat `readdirSync` covered
+  // `src/*.ts` only, so the day a variable was first read from a subdirectory
+  // — `src/oauth/` — this test would have gone on passing while the template
+  // silently stopped documenting it. That is the exact failure it exists to
+  // catch, one directory deeper.
+  const walk = (dir: string, prefix: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const label = `${prefix}${entry.name}`;
+      if (entry.isDirectory()) {
+        walk(join(dir, entry.name), `${label}/`);
+        continue;
+      }
+      if (!entry.name.endsWith(".ts") || entry.name.endsWith(".test.ts")) {
+        continue;
+      }
+      const source = readFileSync(join(dir, entry.name), "utf-8");
+      for (const [, name] of source.matchAll(/\benv\.([A-Z][A-Z0-9_]*)\b/g)) {
+        if (name) readers.set(name, [...(readers.get(name) ?? []), label]);
+      }
     }
-  }
+  };
+  walk(root, "");
   return readers;
 }
 
@@ -95,10 +110,21 @@ describe(".env.example", () => {
     expect(template).not.toMatch(/^MCP_AUTH_TOKEN=/m);
   });
 
+  it("leaves the OAuth variables commented out rather than set", () => {
+    // Same reasoning as the token above, with a sharper edge: a placeholder
+    // MCP_PUBLIC_URL would be advertised as this server's `resource` and every
+    // token minted against it would be rejected on arrival.
+    for (const name of ["MCP_PUBLIC_URL", "MCP_OAUTH_SECRET"]) {
+      expect(template).toMatch(new RegExp(`^#${name}=`, "m"));
+      expect(template).not.toMatch(new RegExp(`^${name}=`, "m"));
+    }
+  });
+
   it("ships a template that serves /mcp open with empty allowlists", () => {
     expect(loadSecurityConfig(activeSettings())).toEqual({
       allowedHosts: [],
       allowedOrigins: [],
+      oauth: undefined,
       token: undefined,
     });
   });

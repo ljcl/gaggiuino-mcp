@@ -7,6 +7,8 @@ import {
 import { buildHealth } from "./health";
 import { logger } from "./logging";
 import {
+  type AuthGrant,
+  authenticate,
   checkRequest,
   corsHeaders,
   handlePreflight,
@@ -17,6 +19,12 @@ import {
   type SessionManager,
   type SessionManagerOptions,
 } from "./mcpSession";
+import {
+  handleMetadataRequest,
+  insufficientScopeChallenge,
+} from "./oauth/metadata";
+import { protectedToolsIn } from "./oauth/scopeGate";
+import { SCOPE_WRITE } from "./oauth/scopes";
 import { createServer } from "./server";
 
 /**
@@ -112,7 +120,46 @@ export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
     return transport;
   }
 
-  async function handleMcp(req: Request): Promise<Response> {
+  /**
+   * Refuse a write the caller's token is not scoped for, as an HTTP status.
+   *
+   * Returns `undefined` when there is nothing to refuse, which covers the two
+   * modes that hold every scope: an unauthenticated LAN server (where
+   * `writeToolDisabled` gives the honest tool-level explanation instead) and the
+   * legacy shared secret.
+   */
+  function checkScopes(body: unknown, grant: AuthGrant): Response | undefined {
+    if (grant.scopes.includes(SCOPE_WRITE)) return undefined;
+    const wanted = protectedToolsIn(body);
+    if (wanted.length === 0) return undefined;
+    const oauth = options.security.oauth;
+    logger.warn("security.insufficient_scope", {
+      held: [...grant.scopes],
+      subject: grant.subject,
+      tools: wanted,
+    });
+    return new Response(
+      JSON.stringify({
+        error: {
+          code: -32000,
+          message: `Forbidden: ${wanted.join(", ")} requires the ${SCOPE_WRITE} scope`,
+        },
+        id: null,
+        jsonrpc: "2.0",
+      }),
+      {
+        headers: {
+          "Content-Type": "application/json",
+          ...(oauth
+            ? { "WWW-Authenticate": insufficientScopeChallenge(oauth) }
+            : {}),
+        },
+        status: 403,
+      },
+    );
+  }
+
+  async function handleMcp(req: Request, grant: AuthGrant): Promise<Response> {
     const sessionId = req.headers.get("mcp-session-id");
 
     if (req.method === "GET" || req.method === "DELETE") {
@@ -149,6 +196,12 @@ export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
       } catch {
         return jsonRpcError(400, -32700, "Parse error: body is not valid JSON");
       }
+
+      // Before the message reaches the SDK, and before a session is reserved:
+      // past `transport.handleRequest` the answer is already destined to be a
+      // 200, and a 200 does not produce an auth prompt.
+      const insufficient = checkScopes(body, grant);
+      if (insufficient) return insufficient;
 
       // Reuse existing session
       if (sessionId) {
@@ -195,11 +248,25 @@ export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
         return Response.json(buildHealth());
       }
 
+      // Ahead of the gate for the same reason `/health` is, and it is not a
+      // hole: a document a client fetches *in order to* authenticate cannot
+      // itself require authentication. It carries no machine data and no
+      // secret — only where this server's authorization server lives.
+      const metadata = handleMetadataRequest(
+        url.pathname,
+        options.security.oauth,
+      );
+      if (metadata) return metadata;
+
       if (url.pathname === "/mcp") {
         const preflight = handlePreflight(req, options.security);
         if (preflight) return preflight;
 
-        const rejection = checkRequest(req, options.security);
+        // Authenticated once, here, and the result is used for both the gate
+        // and the scope check below — rather than verifying the same token
+        // twice on every call.
+        const auth = authenticate(req, options.security);
+        const rejection = checkRequest(req, options.security, auth);
         if (rejection) {
           // Rejections used to be silent, which made the two failures an
           // operator actually hits — a host whose Origin is not on the
@@ -207,15 +274,25 @@ export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
           // from the server being unreachable. The status carries which one it
           // was; 403 is Origin or Host, 401 is the token.
           logger.warn("security.rejected", {
+            // Whether a credential was presented at all, which is the one fact
+            // that separates "the client never sent the token" from "the token
+            // it sent was wrong". There is an open upstream report of Claude
+            // completing authorization and then never sending the bearer
+            // (anthropics/claude-ai-mcp#540) that nobody could evidence; if it
+            // ever bites this server, this field is the evidence.
+            hasAuthorization: req.headers.get("authorization") !== null,
             method: req.method,
             origin: req.headers.get("origin") ?? undefined,
+            // The specific verification failure, which is deliberately not in
+            // the response body — see `AuthOutcome.reason`.
+            reason: auth.reason,
             status: rejection.status,
           });
           return rejection;
         }
 
         return withCors(
-          await handleMcp(req),
+          await handleMcp(req, auth.grant),
           corsHeaders(req, options.security),
         );
       }

@@ -37,6 +37,19 @@
           "format": "string"
         },
         {
+          "name": "MCP_PUBLIC_URL",
+          "description": "Public https origin clients reach this server on, with no path (e.g. https://box.tailnet.ts.net). Set with MCP_OAUTH_SECRET to enable OAuth; it is advertised as the OAuth resource and must match the URL entered in the client exactly",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "MCP_OAUTH_SECRET",
+          "description": "Signing key for self-issued OAuth access and refresh tokens, at least 32 characters (openssl rand -hex 32). Keep it stable across restarts so clients stay signed in",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
           "name": "MCP_AUTH_TOKEN",
           "description": "Shared secret required as an Authorization: Bearer token on /mcp. Unset serves the endpoint unauthenticated; set it before exposing the server beyond your LAN",
           "isRequired": false,

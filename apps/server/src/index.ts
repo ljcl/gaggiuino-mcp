@@ -11,8 +11,14 @@ import { SERVER_VERSION } from "./version";
  */
 
 let config: ReturnType<typeof loadServerConfig>;
+let security: ReturnType<typeof loadSecurityConfig>;
 try {
   config = loadServerConfig();
+  // Inside the same guard: `MCP_PUBLIC_URL` is validated here too, and a bad
+  // one is worse than a bad PORT. It is the value an access token's audience is
+  // checked against, so getting it wrong fails silently — discovery succeeds, a
+  // token is issued, and then every request 401s.
+  security = loadSecurityConfig();
 } catch (error) {
   if (!(error instanceof ConfigError)) throw error;
   // Fail before binding a port, and name the variable. A bad PORT used to bind
@@ -22,7 +28,6 @@ try {
   process.exit(1);
 }
 
-const security = loadSecurityConfig();
 const handler = createFetchHandler({ security });
 
 logger.info("server.starting", {
