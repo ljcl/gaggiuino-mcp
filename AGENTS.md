@@ -1082,12 +1082,20 @@ allocated.
 
 `secretsMatch` hashes both values before `timingSafeEqual`. That is not
 decoration — `timingSafeEqual` throws on a length mismatch, and the obvious
-guard (`a.length !== b.length`) leaks the secret's length. Two SHA-256 digests
-are always 32 bytes.
+guard (`a.length !== b.length`) leaks the secret's length. Two HMAC-SHA256
+digests are always 32 bytes, and the key is random per call and discarded, so
+the digest is evidence only within the call and cannot be password storage —
+which is what CodeQL keeps mistaking it for.
 
-`scripts/test-auth.sh` probes a running server for all of the above. It tests
-bearer auth, not OAuth — the server implements no OAuth and advertises no
-discovery document.
+`scripts/test-auth.sh` is the **OAuth discovery probe**, and it is meant to run
+from **outside the LAN**. It automates Anthropic's own diagnostic checklist: both
+well-known documents, `resource` matching the URL under test, the authorization
+server's metadata (RFC 8414 with the OIDC fallback) advertising S256 and either
+CIMD or a `registration_endpoint`, a `401` carrying `resource_metadata` and
+`scope`, no cross-host redirect, and origin validation. Probing localhost tests a
+path no connector takes, and the failure that bites most often — `MCP_PUBLIC_URL`
+disagreeing with the URL the user typed — is invisible there. `jq` is optional;
+the status-code checks still run without it.
 
 ### OAuth, and why an auth refusal is not a tool result
 

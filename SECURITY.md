@@ -40,7 +40,7 @@ Out of scope:
 - The Gaggiuino firmware and its own HTTP API — report those upstream.
 - Vulnerabilities that require an already-compromised host or a misconfigured
   deployment (for example, exposing the server publicly without the documented
-  reverse proxy or tunnel, or without `MCP_AUTH_TOKEN` set).
+  reverse proxy or tunnel, or with no authorization server configured).
 
 ## Hardening the endpoint
 
@@ -48,8 +48,13 @@ Out of scope:
 public deployment needs both of these — see
 [README > Securing the endpoint](README.md#securing-the-endpoint):
 
-- **`MCP_AUTH_TOKEN`** — a shared secret checked with a constant-time compare.
-  Unset serves `/mcp` unauthenticated, and the server says so at startup.
+- **OAuth** (`MCP_PUBLIC_URL`, `MCP_OAUTH_SECRET`, `MCP_OAUTH_PASSPHRASE_HASH`)
+  — access tokens are verified for signature, issuer, expiry and audience, and
+  the two tools that change the machine additionally require the
+  `espresso:write` scope. With none of it set, `/mcp` is unauthenticated and the
+  server says so at startup. Setting only some of them fails at startup rather
+  than falling back to open. `MCP_AUTH_TOKEN` remains as a legacy shared secret
+  for clients that can set their own headers; a Claude connector cannot.
 - **`MCP_ALLOWED_ORIGINS`** — the browser origins allowed to reach `/mcp`.
   Empty (the default) rejects every request that carries an `Origin` header,
   which is what stops a page the user visits from driving a server on their own
