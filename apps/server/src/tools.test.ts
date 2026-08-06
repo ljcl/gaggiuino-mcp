@@ -9,6 +9,7 @@ import {
   mockShotWithTimeStop,
 } from "./__fixtures__/api-responses";
 import { resetClient } from "./client";
+import { TEST_PASSPHRASE_HASH } from "./oauth/__fixtures__";
 import { handleToolCall } from "./server";
 import { mockServer } from "./test-setup";
 import { describeUploadFailure } from "./tools";
@@ -847,6 +848,7 @@ describe("tool dispatch", () => {
       vi.stubEnv("MCP_AUTH_TOKEN", "");
       vi.stubEnv("MCP_PUBLIC_URL", "https://box.tail1234.ts.net");
       vi.stubEnv("MCP_OAUTH_SECRET", "s".repeat(64));
+      vi.stubEnv("MCP_OAUTH_PASSPHRASE_HASH", TEST_PASSPHRASE_HASH);
       machineAccepts();
       const result = await handleToolCall("upload_profile", { profile: valid });
 

@@ -5,6 +5,7 @@ import { getClient, resetClient } from "./client";
 import { createFetchHandler, type FetchHandler } from "./http";
 import { setLogLevel } from "./logging";
 import { type SecurityConfig } from "./mcpAuth";
+import { TEST_PASSPHRASE_HASH } from "./oauth/__fixtures__";
 import { signToken } from "./oauth/tokens";
 import { mockServer } from "./test-setup";
 import { SERVER_VERSION } from "./version";
@@ -715,6 +716,7 @@ describe("OAuth", () => {
     beforeEach(() => {
       vi.stubEnv("MCP_PUBLIC_URL", ISSUER);
       vi.stubEnv("MCP_OAUTH_SECRET", SECRET);
+      vi.stubEnv("MCP_OAUTH_PASSPHRASE_HASH", TEST_PASSPHRASE_HASH);
     });
 
     afterEach(() => {

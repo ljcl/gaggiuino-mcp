@@ -50,6 +50,13 @@
           "format": "string"
         },
         {
+          "name": "MCP_OAUTH_PASSPHRASE_HASH",
+          "description": "scrypt hash of the passphrase you type on the OAuth consent page, in the form scrypt$N$r$p$salt$hash. Required whenever OAuth is enabled. Generate with `bun run hash-passphrase` — never store the passphrase itself",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
           "name": "MCP_AUTH_TOKEN",
           "description": "Shared secret required as an Authorization: Bearer token on /mcp. Unset serves the endpoint unauthenticated; set it before exposing the server beyond your LAN",
           "isRequired": false,

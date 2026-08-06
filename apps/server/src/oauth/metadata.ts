@@ -27,6 +27,15 @@ export interface OAuthConfig {
    */
   issuer: string;
   /**
+   * scrypt hash of the owner's passphrase, for the consent page.
+   *
+   * Optional on the type, mandatory in practice: `loadSecurityConfig` refuses to
+   * start without one, because an unauthenticated consent page hands a token to
+   * anyone who finds the URL. It stays optional here so the resource-server half
+   * — which never touches it — can be constructed without one in tests.
+   */
+  passphraseHash?: string;
+  /**
    * The RFC 8707 canonical resource identifier: the MCP endpoint itself.
    *
    * This is a security boundary — it is what an access token's `aud` is checked
@@ -36,6 +45,11 @@ export interface OAuthConfig {
   resource: string;
   /** Signing secret for self-issued tokens. */
   secret: string;
+}
+
+/** An `OAuthConfig` complete enough to run the built-in authorization server. */
+export interface AuthServerConfig extends OAuthConfig {
+  passphraseHash: string;
 }
 
 /**

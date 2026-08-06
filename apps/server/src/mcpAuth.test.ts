@@ -10,6 +10,7 @@ import {
   type SecurityConfig,
   secretsMatch,
 } from "./mcpAuth";
+import { TEST_OAUTH_ENV, TEST_PASSPHRASE_HASH } from "./oauth/__fixtures__";
 import { signToken } from "./oauth/tokens";
 
 const OPEN: SecurityConfig = { allowedHosts: [], allowedOrigins: [] };
@@ -308,10 +309,7 @@ describe("handlePreflight", () => {
 });
 
 describe("loadSecurityConfig — OAuth", () => {
-  const COMPLETE = {
-    MCP_OAUTH_SECRET: SECRET,
-    MCP_PUBLIC_URL: ISSUER,
-  };
+  const COMPLETE = TEST_OAUTH_ENV;
 
   it("stays unconfigured when neither variable is set", () => {
     expect(loadSecurityConfig({}).oauth).toBeUndefined();
@@ -321,9 +319,28 @@ describe("loadSecurityConfig — OAuth", () => {
     // This must equal the URL the user types into Claude, path included.
     expect(loadSecurityConfig(COMPLETE).oauth).toEqual({
       issuer: ISSUER,
+      passphraseHash: TEST_PASSPHRASE_HASH,
       resource: RESOURCE,
       secret: SECRET,
     });
+  });
+
+  it("refuses to enable OAuth with no consent passphrase", () => {
+    // Without one, /oauth/authorize would hand a token to anyone who reached
+    // the URL — so this is a startup failure rather than a degraded mode.
+    const { MCP_OAUTH_PASSPHRASE_HASH: _omitted, ...rest } = COMPLETE;
+    expect(() => loadSecurityConfig(rest)).toThrow(ConfigError);
+    expect(() => loadSecurityConfig(rest)).toThrow(/PASSPHRASE/);
+  });
+
+  it("refuses a passphrase hash that is not a scrypt hash", () => {
+    // The likely mistake is pasting the passphrase itself into the variable.
+    expect(() =>
+      loadSecurityConfig({
+        ...COMPLETE,
+        MCP_OAUTH_PASSPHRASE_HASH: "hunter2",
+      }),
+    ).toThrow(ConfigError);
   });
 
   it("fails startup when only half of it is configured", () => {
