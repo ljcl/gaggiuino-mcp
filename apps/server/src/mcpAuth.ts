@@ -125,8 +125,14 @@ function loadOAuthConfig(
     );
   }
   if (!isWellFormedHash(passphraseHash)) {
+    // The likeliest cause is named first, because it is invisible from the
+    // value as written in `.env`: the salt and hash are base64url, so `$<salt>`
+    // and `$<hash>` read as variable references and docker compose substitutes
+    // them away — inside double quotes too, since only single quotes are
+    // literal to its dotenv parser. What arrives here is truncated to
+    // `scrypt$16384$8$1`, which looks nothing like what the operator typed.
     throw new ConfigError(
-      "MCP_OAUTH_PASSPHRASE_HASH is not a scrypt hash in the expected `scrypt$N$r$p$salt$hash` form. Generate one with `bun run hash-passphrase` in apps/server, and paste the whole line — not the passphrase itself.",
+      'MCP_OAUTH_PASSPHRASE_HASH is not a scrypt hash in the expected `scrypt$N$r$p$salt$hash` form. If it looks right in your .env, check the quoting: the value contains `$` and must be SINGLE-quoted, or docker compose substitutes part of it away (it warns `The "..." variable is not set`). Double quotes do not help. Otherwise generate a fresh one with `bun run hash-passphrase` in apps/server, and paste the whole line — not the passphrase itself.',
     );
   }
 

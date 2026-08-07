@@ -172,9 +172,29 @@ openssl rand -hex 32
 cd apps/server && bun run hash-passphrase >> ../../.env
 ```
 
+**Then recreate the container — a plain restart is not enough:**
+
+```bash
+docker compose up -d --force-recreate
+```
+
+Compose tracks the *list* of `env_file` paths, not their contents, so editing
+`.env` and running `docker compose up -d` (or `restart`) can reuse the existing
+container along with the environment it was created with. The new variables
+never reach the process and the server comes up unauthenticated exactly as if
+you had not set them — with no error, because from its point of view nothing is
+configured. Check what actually arrived:
+
+```bash
+docker inspect gaggiuino-mcp --format '{{range .Config.Env}}{{println .}}{{end}}' | grep MCP_
+```
+
 Setting only some of them fails at startup and names the missing one. That is
 deliberate: silently falling back to an open endpoint is how somebody exposes a
-tunnel believing it is protected.
+tunnel believing it is protected. **The corollary is worth knowing when
+diagnosing:** a server that is *running* and unauthenticated has seen none of
+the three — if you believe you set them, the container is stale, not the config
+wrong.
 
 #### Why OAuth and not a shared token
 

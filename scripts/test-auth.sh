@@ -101,7 +101,7 @@ else
     echo "  INFO  No metadata and no /mcp — is BASE_URL right?"
   fi
   bad "the path-suffixed well-known document is missing" \
-    "Claude probes this first when the resource URL has a path. With no metadata to read it never learns where the authorization server is, and the connection fails with 'Couldn't reach the MCP server.' If OAuth is off, set MCP_PUBLIC_URL and MCP_OAUTH_SECRET."
+    "Claude probes this first when the resource URL has a path. With no metadata to read it never learns where the authorization server is, and the connection fails with 'Couldn't reach the MCP server.' If OAuth is off, set MCP_PUBLIC_URL, MCP_OAUTH_SECRET and MCP_OAUTH_PASSPHRASE_HASH. ALREADY SET THEM? Recreate the container: docker compose up -d --force-recreate. Compose tracks the env_file list, not its contents, so a plain up/restart keeps the environment the container was created with."
 fi
 
 if [ "$OAUTH_ON" = "1" ]; then
@@ -193,6 +193,10 @@ if [ "$OAUTH_ON" != "1" ] && [ "$code" = "200" ]; then
   echo "  WARN  POST /mcp succeeded with no credential — this server is open."
   echo "        Set MCP_PUBLIC_URL, MCP_OAUTH_SECRET and MCP_OAUTH_PASSPHRASE_HASH"
   echo "        before exposing it beyond your LAN."
+  echo "        Already set them? The process has seen NONE of the three —"
+  echo "        setting only some is a startup failure, so a running open"
+  echo "        server means a stale container environment. Recreate it:"
+  echo "          docker compose up -d --force-recreate"
 elif [ "$code" = "401" ]; then
   # A WWW-Authenticate on a 200 is not honoured, so the status is load-bearing.
   ok "unauthenticated POST /mcp -> 401"
