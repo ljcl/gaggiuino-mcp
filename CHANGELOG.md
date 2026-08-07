@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.7.0](https://github.com/ljcl/gaggiuino-mcp/compare/v1.6.0...v1.7.0) (2026-08-06)
+
+
+### Features
+
+* **server:** add a built-in OAuth authorization server ([#118](https://github.com/ljcl/gaggiuino-mcp/issues/118)) ([6a07a91](https://github.com/ljcl/gaggiuino-mcp/commit/6a07a913ebd7e68348bb0a5867c8070dbab48be1))
+* **server:** serve OAuth metadata and verify access tokens on /mcp ([#117](https://github.com/ljcl/gaggiuino-mcp/issues/117)) ([eb41bfc](https://github.com/ljcl/gaggiuino-mcp/commit/eb41bfc7f59750dc81b01ed0cbbd45a47b0e69b8))
+* **server:** support the main-7889b7d firmware's new REST surface ([#104](https://github.com/ljcl/gaggiuino-mcp/issues/104)) ([7ad4500](https://github.com/ljcl/gaggiuino-mcp/commit/7ad450021fd66e31be27f6ce8245ccadff3649c6))
+
+
+### Bug Fixes
+
+* **deps:** bump @vitejs/plugin-react from 6.0.4 to 6.0.5 in the production-minor-patch group ([#96](https://github.com/ljcl/gaggiuino-mcp/issues/96)) ([c3cb658](https://github.com/ljcl/gaggiuino-mcp/commit/c3cb65860e1c7dd4f5f98c2f2c496ecd8970a264))
+
 ## [1.6.0](https://github.com/ljcl/gaggiuino-mcp/compare/v1.5.0...v1.6.0) (2026-07-31)
 
 
