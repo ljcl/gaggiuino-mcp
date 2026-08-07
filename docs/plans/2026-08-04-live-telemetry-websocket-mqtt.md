@@ -83,7 +83,7 @@ control:
 - **`gaggiuino.local` is mDNS**, which mobile browsers frequently will not
   resolve even when they are on the right network.
 - **It would bypass the server entirely.** An app talking straight to the
-  machine gives up `MCP_AUTH_TOKEN`, the retry/deadline discipline, the zod
+  machine gives up the OAuth gate, the retry/deadline discipline, the zod
   validation boundary, and the rule that the server writes the actionable
   diagnostic — all four in one move — and puts the machine's LAN address in the
   host's browser.
@@ -219,7 +219,7 @@ It loses on everything else:
   default (`mqttEnabled: false` in the documented settings example).
 - **It adds a second secret.** Broker credentials would need environment
   variables, `.env.example` entries (which `envExample.test.ts` enforces in both
-  directions), and documentation — alongside `MCP_AUTH_TOKEN`.
+  directions), and documentation — alongside the three OAuth variables.
 - **It does not solve the crux.** A subscription is still a push channel into a
   process that has no push channel to the model. Every argument in "Candidate 1"
   applies to MQTT unchanged.

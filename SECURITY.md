@@ -53,8 +53,9 @@ public deployment needs both of these — see
   the two tools that change the machine additionally require the
   `espresso:write` scope. With none of it set, `/mcp` is unauthenticated and the
   server says so at startup. Setting only some of them fails at startup rather
-  than falling back to open. `MCP_AUTH_TOKEN` remains as a legacy shared secret
-  for clients that can set their own headers; a Claude connector cannot.
+  than falling back to open. This is the only way to authenticate `/mcp`: the
+  `MCP_AUTH_TOKEN` shared secret was removed in 2.0.0, and a server that still
+  has it set refuses to start rather than come up open.
 - **`MCP_ALLOWED_ORIGINS`** — the browser origins allowed to reach `/mcp`.
   Empty (the default) rejects every request that carries an `Origin` header,
   which is what stops a page the user visits from driving a server on their own

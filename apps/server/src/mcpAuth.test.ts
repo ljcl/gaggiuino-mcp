@@ -56,18 +56,23 @@ function preflight(headers: Record<string, string> = {}): Request {
 }
 
 describe("loadSecurityConfig", () => {
-  it("serves unauthenticated when no token is set", () => {
+  it("serves unauthenticated when OAuth is not configured", () => {
     expect(loadSecurityConfig({})).toEqual({
       allowedHosts: [],
       allowedOrigins: [],
-      token: undefined,
+      oauth: undefined,
     });
   });
 
-  it("treats a blank token as no token rather than as an empty secret", () => {
-    // Otherwise `MCP_AUTH_TOKEN=` in a compose file would look configured
-    // while accepting `Authorization: Bearer ` from anyone.
-    expect(loadSecurityConfig({ MCP_AUTH_TOKEN: "   " }).token).toBeUndefined();
+  it("ignores MCP_AUTH_TOKEN entirely", () => {
+    // The variable is still *read*, but by `loadServerConfig`, and only to
+    // refuse to start. Nothing about the request gate consults it any more, so
+    // a stale value cannot quietly re-gate `/mcp` — see config.test.ts.
+    expect(loadSecurityConfig({ MCP_AUTH_TOKEN: "correct-horse" })).toEqual({
+      allowedHosts: [],
+      allowedOrigins: [],
+      oauth: undefined,
+    });
   });
 
   it("splits and trims the comma-separated allowlists", () => {
@@ -149,44 +154,41 @@ describe("checkRequest — host", () => {
       checkRequest(request({ host: "gaggiuino.local:8000" }), config),
     ).toBeUndefined();
   });
+
+  it("rejects a request carrying no Host header at all", async () => {
+    // An allowlist is a list of values to accept, so "sent nothing" is not on
+    // it. Worth asserting separately because the absent case reaches a
+    // different arm — the message has to name something, and `undefined`
+    // interpolated into it would read as a host called "undefined".
+    const response = checkRequest(request(), {
+      ...OPEN,
+      allowedHosts: ["gaggiuino.local:8000"],
+    });
+    expect(response?.status).toBe(403);
+    const body = (await response?.json()) as { error: { message: string } };
+    expect(body.error.message).toContain("(none)");
+  });
 });
 
-describe("checkRequest — token", () => {
-  const config: SecurityConfig = { ...OPEN, token: "correct-horse" };
-
-  it("lets every request through when no token is configured", () => {
+describe("checkRequest — credential", () => {
+  it("lets every request through when OAuth is not configured", () => {
     expect(checkRequest(request(), OPEN)).toBeUndefined();
   });
 
   it("challenges a request with no Authorization header", async () => {
-    const response = checkRequest(request(), config);
+    const response = checkRequest(request(), OAUTH);
     expect(response?.status).toBe(401);
-    expect(response?.headers.get("WWW-Authenticate")).toBe(
-      'Bearer realm="gaggiuino-mcp"',
+    expect(response?.headers.get("WWW-Authenticate")).toContain(
+      "resource_metadata=",
     );
     const body = (await response?.json()) as { jsonrpc: string };
     // JSON-RPC shaped so an MCP client surfaces something it can parse.
     expect(body.jsonrpc).toBe("2.0");
   });
 
-  it("rejects a wrong token and accepts the right one", () => {
+  it("rejects a bare credential with no scheme", () => {
     expect(
-      checkRequest(request({ authorization: "Bearer wrong" }), config)?.status,
-    ).toBe(401);
-    expect(
-      checkRequest(request({ authorization: "Bearer correct-horse" }), config),
-    ).toBeUndefined();
-  });
-
-  it("accepts the scheme case-insensitively, as RFC 7235 requires", () => {
-    expect(
-      checkRequest(request({ authorization: "bearer correct-horse" }), config),
-    ).toBeUndefined();
-  });
-
-  it("rejects a bare token with no scheme", () => {
-    expect(
-      checkRequest(request({ authorization: "correct-horse" }), config)?.status,
+      checkRequest(request({ authorization: "correct-horse" }), OAUTH)?.status,
     ).toBe(401);
   });
 });
@@ -194,11 +196,10 @@ describe("checkRequest — token", () => {
 describe("checkRequest — ordering", () => {
   it("answers a disallowed origin with 403 even when the token is missing", async () => {
     // If auth ran first, the 401/403 split would tell an unauthenticated
-    // cross-origin prober whether a token is configured at all.
+    // cross-origin prober whether authentication is configured at all.
     const config: SecurityConfig = {
-      allowedHosts: [],
+      ...OAUTH,
       allowedOrigins: ["https://claude.ai"],
-      token: "correct-horse",
     };
     const response = checkRequest(
       request({ origin: "https://evil.test" }),
@@ -252,9 +253,8 @@ describe("corsHeaders", () => {
 
 describe("handlePreflight", () => {
   const ALLOWED: SecurityConfig = {
-    allowedHosts: [],
+    ...OAUTH,
     allowedOrigins: ["https://claude.ai"],
-    token: "correct-horse",
   };
 
   it("ignores anything that is not an OPTIONS request", () => {
@@ -446,15 +446,17 @@ describe("authenticate — OAuth", () => {
     }
   });
 
-  it("ignores the legacy shared secret once OAuth is configured", () => {
-    // Two live credentials would mean two gates to reason about; OAuth is the
-    // one a host can actually complete, so it wins.
+  it("refuses a credential that is not one of its own access tokens", () => {
+    // The shape a deployment that never migrated would present: whatever it
+    // used to send as MCP_AUTH_TOKEN. There is no second credential path left
+    // for it to fall into, so it fails verification like any other bad token.
     const outcome = authenticate(
-      request({ authorization: "Bearer legacy" }),
-      { ...OAUTH, token: "legacy" },
+      request({ authorization: "Bearer correct-horse-battery-staple" }),
+      OAUTH,
       () => NOW_MS,
     );
     expect(outcome.refusal?.status).toBe(401);
+    expect(outcome.grant).toEqual({ mode: "oauth", scopes: [] });
   });
 
   it("grants every scope when nothing is configured", () => {
@@ -467,13 +469,12 @@ describe("authenticate — OAuth", () => {
     });
   });
 
-  it("grants every scope to a matching legacy token", () => {
+  it("ignores an Authorization header when nothing is configured", () => {
+    // An unconfigured server has nothing to check a credential against, so a
+    // presented one is neither honoured nor a reason to refuse.
     expect(
-      authenticate(request({ authorization: "Bearer t" }), {
-        ...OPEN,
-        token: "t",
-      }).grant,
-    ).toEqual({ mode: "bearer", scopes: ["espresso:read", "espresso:write"] });
+      authenticate(request({ authorization: "Bearer anything" }), OPEN).grant,
+    ).toEqual({ mode: "none", scopes: ["espresso:read", "espresso:write"] });
   });
 
   it("defaults its clock to the real one", () => {
@@ -516,14 +517,31 @@ describe("describeSecurity", () => {
   it("warns at warn level when the endpoint is unauthenticated", () => {
     const entry = report(OPEN, "security.unauthenticated");
     expect(entry?.level).toBe("warn");
-    expect(String(entry?.fields.message)).toContain("MCP_PUBLIC_URL");
-    expect(String(entry?.fields.message)).toContain("MCP_AUTH_TOKEN");
+    // Every variable needed to act on the warning, including the passphrase
+    // hash: leave it out and the operator sets the other two and the server
+    // then refuses to start, which reads as the advice having been wrong.
+    for (const name of [
+      "MCP_PUBLIC_URL",
+      "MCP_OAUTH_SECRET",
+      "MCP_OAUTH_PASSPHRASE_HASH",
+    ]) {
+      expect(String(entry?.fields.message)).toContain(name);
+    }
   });
 
-  it("reports the gate instead of warning once a token is set", () => {
-    const gated = { ...OPEN, token: "t" };
-    expect(report(gated, "security.unauthenticated")).toBeUndefined();
-    expect(report(gated, "security.auth")?.fields.mode).toBe("bearer");
+  it("says the removed shared secret is not an alternative", () => {
+    // The warning used to end by offering MCP_AUTH_TOKEN to clients that can
+    // set their own headers. Someone following that now writes a variable that
+    // stops the server from booting at all.
+    const message = String(
+      report(OPEN, "security.unauthenticated")?.fields.message,
+    );
+    expect(message).toContain("MCP_AUTH_TOKEN was removed");
+  });
+
+  it("reports the gate instead of warning once OAuth is set", () => {
+    expect(report(OAUTH, "security.unauthenticated")).toBeUndefined();
+    expect(report(OAUTH, "security.auth")?.fields.mode).toBe("oauth");
   });
 
   it("prints the advertised resource verbatim under OAuth", () => {
@@ -538,23 +556,28 @@ describe("describeSecurity", () => {
     expect(String(entry?.fields.message)).toContain(RESOURCE);
   });
 
-  it("prefers the OAuth report when both credentials are configured", () => {
-    expect(report({ ...OAUTH, token: "t" }, "security.auth")?.fields.mode).toBe(
-      "oauth",
-    );
-  });
-
   it("warns about the wildcard, the one unsafe origin setting", () => {
     const entry = report(
-      { ...OPEN, allowedOrigins: ["*"], token: "t" },
+      { ...OAUTH, allowedOrigins: ["*"] },
       "security.origins",
     );
     expect(entry?.level).toBe("warn");
     expect(entry?.fields.allowed).toBe("*");
   });
 
+  it("lists the configured origins so they can be read back", () => {
+    const entry = report(
+      { ...OAUTH, allowedOrigins: ["https://claude.ai", "https://a.test"] },
+      "security.origins",
+    );
+    expect(entry?.level).toBe("info");
+    expect(String(entry?.fields.message)).toContain(
+      "https://claude.ai, https://a.test",
+    );
+  });
+
   it("explains the empty allowlist rather than looking like a misconfiguration", () => {
-    const entry = report({ ...OPEN, token: "t" }, "security.origins");
+    const entry = report(OAUTH, "security.origins");
     expect(entry?.level).toBe("info");
     expect(String(entry?.fields.message)).toContain("without an Origin header");
   });

@@ -102,7 +102,7 @@ docker compose pull && docker compose up -d
 | `MCP_PUBLIC_URL` | _(unset)_ | Public `https` origin clients reach this server on, with no path (e.g. `https://box.tailnet.ts.net`). Set together with `MCP_OAUTH_SECRET` to enable OAuth. It is advertised as the OAuth `resource`, so it must match the URL you enter in the client exactly. |
 | `MCP_OAUTH_SECRET` | _(unset)_ | Signing key for self-issued OAuth tokens, at least 32 characters (`openssl rand -hex 32`). Keep it stable across restarts so clients stay signed in. Setting only one of these two fails at startup. |
 | `MCP_OAUTH_PASSPHRASE_HASH` | _(unset)_ | scrypt hash of the passphrase you type on the consent page when connecting a client. Required whenever OAuth is on — without it the consent page would grant a token to anyone who reached it, so the server refuses to start. Generate with `cd apps/server && bun run hash-passphrase`; never store the passphrase itself. |
-| `MCP_AUTH_TOKEN` | _(unset)_ | Legacy shared secret presented as `Authorization: Bearer <token>` on `/mcp`. **A Claude connector cannot present this** — the custom-connector dialog has no request-header field — so use the OAuth variables above for Claude. OAuth takes precedence when both are configured. |
+| `MCP_AUTH_TOKEN` | _(removed)_ | **Removed in 2.0.0.** The shared secret is gone; a Claude connector could never present it. The server now refuses to start while this is set, rather than silently coming up open on a deployment that relied on it — unset it and configure OAuth above. |
 | `MCP_ALLOWED_ORIGINS` | _(empty)_ | Comma-separated browser origins allowed to call `/mcp`. `*` allows any (unsafe). |
 | `MCP_ALLOWED_HOSTS` | _(empty)_ | Comma-separated `Host` header values to accept. Empty disables the check. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, or `silent`. Logs are one JSON object per line on stderr. |
@@ -198,13 +198,20 @@ wrong.
 
 #### Why OAuth and not a shared token
 
-`MCP_AUTH_TOKEN` still works for clients that can set their own headers, but **a
-Claude connector cannot use it.** A connector is added at the account level so
-one entry has to work on claude.ai, Claude Desktop and iOS, and on a personal
-plan the "Add custom connector" dialog offers an OAuth Client ID and Secret and
-no request-header field. A local stdio bridge is not a way around it either — it
-cannot run on iOS. So on the deployment this project is built for, the token can
-never leave the client and the two write tools stay permanently refused.
+There used to be a `MCP_AUTH_TOKEN` shared secret. It was removed in 2.0.0,
+because **a Claude connector could never present it.** A connector is added at
+the account level so one entry has to work on claude.ai, Claude Desktop and
+iOS, and on a personal plan the "Add custom connector" dialog offers an OAuth
+Client ID and Secret and no request-header field. A local stdio bridge is not a
+way around it either — it cannot run on iOS. So on the deployment this project
+is built for, the token could never leave the client, and the two write tools
+stayed permanently refused.
+
+**If you set that variable, unset it.** The server refuses to start while it has
+a value, and says so by name. That is on purpose: an ignored variable would have
+meant a deployment that used the token to gate `/mcp` coming up wide open on the
+next image pull, with nothing in the log to say the gate had gone. The check is
+removed a release from now.
 
 When you connect, Claude discovers the endpoint, sends you to a consent page
 served by this server, and you type the passphrase. There is nothing to

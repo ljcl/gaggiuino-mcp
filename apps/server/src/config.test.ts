@@ -151,3 +151,50 @@ describe("GAGGIUINO_URL", () => {
     );
   });
 });
+
+describe("MCP_AUTH_TOKEN tombstone", () => {
+  it("refuses to start while the removed variable is set", () => {
+    // The failure this exists to prevent is silent: with the variable simply
+    // unread, a deployment that gated /mcp with it would come up open and log
+    // nothing to say the gate had gone.
+    expect(() => loadServerConfig({ MCP_AUTH_TOKEN: "old-secret" })).toThrow(
+      ConfigError,
+    );
+    expect(() => loadServerConfig({ MCP_AUTH_TOKEN: "old-secret" })).toThrow(
+      /MCP_AUTH_TOKEN/,
+    );
+  });
+
+  it("names the OAuth variables to configure instead", () => {
+    // Refusing to boot without saying what to do next just moves the outage.
+    try {
+      loadServerConfig({ MCP_AUTH_TOKEN: "old-secret" });
+      expect.unreachable("expected a ConfigError");
+    } catch (error) {
+      const message = (error as Error).message;
+      for (const name of [
+        "MCP_PUBLIC_URL",
+        "MCP_OAUTH_SECRET",
+        "MCP_OAUTH_PASSPHRASE_HASH",
+      ]) {
+        expect(message).toContain(name);
+      }
+    }
+  });
+
+  it("treats blank and whitespace as unset", () => {
+    // `MCP_AUTH_TOKEN=` left behind in a compose file is a stale line, not a
+    // configured secret, and refusing to start over it would be a worse
+    // outcome than the one this guard exists to prevent.
+    expect(loadServerConfig({ MCP_AUTH_TOKEN: "" }).port).toBe(DEFAULT_PORT);
+    expect(loadServerConfig({ MCP_AUTH_TOKEN: "   " }).port).toBe(DEFAULT_PORT);
+  });
+
+  it("refuses before it reports anything else that is wrong", () => {
+    // Two problems, one answer: stop. Reporting the PORT first would send the
+    // operator to fix the variable that is not the reason for the exit.
+    expect(() =>
+      loadServerConfig({ MCP_AUTH_TOKEN: "old-secret", PORT: "not-a-port" }),
+    ).toThrow(/MCP_AUTH_TOKEN/);
+  });
+});

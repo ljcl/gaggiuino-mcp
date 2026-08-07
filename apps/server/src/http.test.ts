@@ -6,6 +6,7 @@ import { createFetchHandler, type FetchHandler } from "./http";
 import { setLogLevel } from "./logging";
 import { type SecurityConfig } from "./mcpAuth";
 import { TEST_PASSPHRASE_HASH } from "./oauth/__fixtures__";
+import { ALL_SCOPES_HEADER } from "./oauth/scopes";
 import { signToken } from "./oauth/tokens";
 import { mockServer } from "./test-setup";
 import { SERVER_VERSION } from "./version";
@@ -18,12 +19,32 @@ import { SERVER_VERSION } from "./version";
  * `Bun.serve`.
  */
 
-const TOKEN = "correct-horse-battery-staple";
+const ISSUER = "https://box.tail1234.ts.net";
+const RESOURCE = `${ISSUER}/mcp`;
+const SECRET = "s".repeat(64);
+
+/** Mint an access token this server will accept, scoped as asked. */
+function accessToken(scope: string): string {
+  const issuedAt = Math.floor(Date.now() / 1000);
+  return signToken(
+    {
+      aud: RESOURCE,
+      exp: issuedAt + 3600,
+      iat: issuedAt,
+      iss: ISSUER,
+      jti: "id",
+      scope,
+      sub: "owner",
+    },
+    SECRET,
+    "access-token",
+  );
+}
 
 const GATED: SecurityConfig = {
   allowedHosts: [],
   allowedOrigins: [],
-  token: TOKEN,
+  oauth: { issuer: ISSUER, resource: RESOURCE, secret: SECRET },
 };
 
 const OPEN: SecurityConfig = { allowedHosts: [], allowedOrigins: [] };
@@ -58,7 +79,10 @@ function post(body: string, headers: Record<string, string> = {}): Request {
 function authorized(
   headers: Record<string, string> = {},
 ): Record<string, string> {
-  return { authorization: `Bearer ${TOKEN}`, ...headers };
+  return {
+    authorization: `Bearer ${accessToken(ALL_SCOPES_HEADER)}`,
+    ...headers,
+  };
 }
 
 beforeEach(() => {
@@ -281,9 +305,8 @@ describe("session capacity", () => {
 
 describe("browser origins", () => {
   const BROWSER: SecurityConfig = {
-    allowedHosts: [],
+    ...GATED,
     allowedOrigins: ["https://claude.ai"],
-    token: TOKEN,
   };
 
   beforeEach(() => {
@@ -493,36 +516,15 @@ describe("unknown routes", () => {
 });
 
 describe("OAuth", () => {
-  const ISSUER = "https://box.tail1234.ts.net";
-  const RESOURCE = `${ISSUER}/mcp`;
-  const SECRET = "s".repeat(64);
-
-  const OAUTH: SecurityConfig = {
-    allowedHosts: [],
-    allowedOrigins: [],
-    oauth: { issuer: ISSUER, resource: RESOURCE, secret: SECRET },
-  };
+  // The same config the rest of this file drives through `GATED`, named
+  // locally because these tests are about the gate itself rather than about
+  // what sits behind it.
+  const OAUTH = GATED;
 
   let oauthHandler: FetchHandler;
 
-  function token(scope: string): string {
-    return signToken(
-      {
-        aud: RESOURCE,
-        exp: Math.floor(Date.now() / 1000) + 3600,
-        iat: Math.floor(Date.now() / 1000),
-        iss: ISSUER,
-        jti: "id",
-        scope,
-        sub: "owner",
-      },
-      SECRET,
-      "access-token",
-    );
-  }
-
   function bearer(scope: string): Record<string, string> {
-    return { authorization: `Bearer ${token(scope)}` };
+    return { authorization: `Bearer ${accessToken(scope)}` };
   }
 
   function get(path: string): Request {
@@ -567,8 +569,10 @@ describe("OAuth", () => {
     });
 
     it("does not mount the routes while OAuth is unconfigured", async () => {
-      // The gated handler from the outer `beforeEach` has no OAuth config, so
-      // an existing install is unchanged by all of this.
+      // A LAN install that never configures OAuth is unchanged by all of this:
+      // the documents are not served at all rather than served empty. The
+      // outer `afterEach` shuts this handler down.
+      handler = createFetchHandler({ security: OPEN });
       const response = await handler.fetch(
         get("/.well-known/oauth-protected-resource"),
       );

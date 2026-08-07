@@ -826,9 +826,7 @@ function formatSettings(
  * situation is the honest answer, and the model can relay it.
  */
 function writeToolDisabled(action: string): ErrorReply | undefined {
-  const config = loadSecurityConfig();
-  if (config.oauth !== undefined || config.token !== undefined)
-    return undefined;
+  if (loadSecurityConfig().oauth !== undefined) return undefined;
   return {
     isError: true,
     text: `${action} is disabled because this server has no way to authenticate anyone: its /mcp endpoint is open. Every tool here other than the two that change the machine only reads. Ask the user to configure OAuth by setting MCP_PUBLIC_URL and MCP_OAUTH_SECRET (see the README's 'Securing the endpoint' section) and restart the server, or to make the change on the machine itself.`,
@@ -1175,7 +1173,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   defineTool({
     annotations: WRITES_MACHINE,
     description:
-      "Switch the machine to a different brew profile. This changes the machine, so confirm the profile with the user before calling it — do not select one on your own initiative from dial-in advice. Takes the id from list_profiles (either the documented id or the machineProfileId). The profile must already be on the machine; this cannot create one. Refuses unless this server is configured with an auth token, since an unauthenticated server exposed over a tunnel would let anyone reach it.",
+      "Switch the machine to a different brew profile. This changes the machine, so confirm the profile with the user before calling it — do not select one on your own initiative from dial-in advice. Takes the id from list_profiles (either the documented id or the machineProfileId). The profile must already be on the machine; this cannot create one. Refuses unless this server has an authorization server configured, since an unauthenticated server exposed over a tunnel would let anyone reach it.",
     handler: async (input) => {
       const denied = writeToolDisabled("Profile selection");
       if (denied) return denied;
@@ -1217,7 +1215,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   defineTool({
     annotations: CREATES_ON_MACHINE,
     description:
-      "Save a new brew profile to the machine. This creates something the user will see on the machine's own screen, so before calling it, show them the whole profile you intend to write — name, brew temperature, and every phase's target and stop conditions — and get an explicit yes. Do not upload a profile you invented while giving dial-in advice. It creates and never updates: the machine assigns a fresh id and ignores any id you send, so calling this twice leaves two profiles, and this server deliberately will not retry it for you — if a call fails without a clear answer, call list_profiles to see whether it landed before trying again. The reliable way to build one is to take a profile that already works, change only what you mean to change, and give it a new name; get_profile_info's `definition` field is exactly this shape. Uploading does not load the profile — call select_profile afterwards, again with the user's agreement. Times are in milliseconds and temperatures in degrees Celsius; these are NOT the x10-scaled values shot datapoints use. Refuses unless this server is configured with an auth token, since an unauthenticated server exposed over a tunnel would let anyone reach it.",
+      "Save a new brew profile to the machine. This creates something the user will see on the machine's own screen, so before calling it, show them the whole profile you intend to write — name, brew temperature, and every phase's target and stop conditions — and get an explicit yes. Do not upload a profile you invented while giving dial-in advice. It creates and never updates: the machine assigns a fresh id and ignores any id you send, so calling this twice leaves two profiles, and this server deliberately will not retry it for you — if a call fails without a clear answer, call list_profiles to see whether it landed before trying again. The reliable way to build one is to take a profile that already works, change only what you mean to change, and give it a new name; get_profile_info's `definition` field is exactly this shape. Uploading does not load the profile — call select_profile afterwards, again with the user's agreement. Times are in milliseconds and temperatures in degrees Celsius; these are NOT the x10-scaled values shot datapoints use. Refuses unless this server has an authorization server configured, since an unauthenticated server exposed over a tunnel would let anyone reach it.",
     handler: async (input) => {
       const denied = writeToolDisabled("Profile upload");
       if (denied) return denied;

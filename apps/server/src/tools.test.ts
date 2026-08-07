@@ -14,6 +14,18 @@ import { handleToolCall } from "./server";
 import { mockServer } from "./test-setup";
 import { describeUploadFailure } from "./tools";
 
+/**
+ * Configure OAuth for the duration of a test, which is what `writeToolDisabled`
+ * now checks. All three variables are needed: `loadSecurityConfig` treats a
+ * partial configuration as a startup error rather than as a mode, so stubbing
+ * two of them makes the tool throw instead of returning its refusal.
+ */
+function configureOAuth(): void {
+  vi.stubEnv("MCP_PUBLIC_URL", "https://box.tail1234.ts.net");
+  vi.stubEnv("MCP_OAUTH_SECRET", "s".repeat(64));
+  vi.stubEnv("MCP_OAUTH_PASSPHRASE_HASH", TEST_PASSPHRASE_HASH);
+}
+
 describe("tool dispatch", () => {
   beforeEach(() => {
     // Reset client before each test to ensure fresh MSW interception
@@ -799,7 +811,7 @@ describe("tool dispatch", () => {
     let requests = 0;
 
     beforeEach(() => {
-      vi.stubEnv("MCP_AUTH_TOKEN", "test-token");
+      configureOAuth();
       received = undefined;
       requests = 0;
     });
@@ -828,7 +840,6 @@ describe("tool dispatch", () => {
     }
 
     it("refuses when no credential is configured, and makes no request", async () => {
-      vi.stubEnv("MCP_AUTH_TOKEN", "");
       vi.stubEnv("MCP_PUBLIC_URL", "");
       vi.stubEnv("MCP_OAUTH_SECRET", "");
       machineAccepts();
@@ -841,14 +852,10 @@ describe("tool dispatch", () => {
       expect(requests).toBe(0);
     });
 
-    it("is allowed when OAuth is configured, with no shared secret", async () => {
-      // The state that mattered when OAuth arrived: a server whose only
-      // credential is OAuth must not be treated as unauthenticated, or the two
-      // write tools stay refused on exactly the deployment they were built for.
-      vi.stubEnv("MCP_AUTH_TOKEN", "");
-      vi.stubEnv("MCP_PUBLIC_URL", "https://box.tail1234.ts.net");
-      vi.stubEnv("MCP_OAUTH_SECRET", "s".repeat(64));
-      vi.stubEnv("MCP_OAUTH_PASSPHRASE_HASH", TEST_PASSPHRASE_HASH);
+    it("is allowed when OAuth is configured", async () => {
+      // OAuth is now the only thing that can enable a write, so this is the
+      // deployment the two write tools exist for rather than one case of two.
+      configureOAuth();
       machineAccepts();
       const result = await handleToolCall("upload_profile", { profile: valid });
 
@@ -1190,8 +1197,8 @@ describe("tool dispatch", () => {
 
   describe("select_profile", () => {
     // `vi.stubEnv` outlives the test that set it, and this suite shares a
-    // process with the auth tests — leaving MCP_AUTH_TOKEN set would silently
-    // change what they are testing.
+    // process with the auth tests — leaving the OAuth variables set would
+    // silently change what they are testing.
     afterEach(() => {
       vi.unstubAllEnvs();
     });
@@ -1217,7 +1224,6 @@ describe("tool dispatch", () => {
     it("refuses when the server has no credential configured", async () => {
       // The gate is the whole reason this tool waited on #19: an open /mcp
       // over a tunnel would let anyone drive the machine.
-      vi.stubEnv("MCP_AUTH_TOKEN", "");
       vi.stubEnv("MCP_PUBLIC_URL", "");
       vi.stubEnv("MCP_OAUTH_SECRET", "");
       machineHolding([{ id: "15", name: "Zer0" }]);
@@ -1231,7 +1237,7 @@ describe("tool dispatch", () => {
 
     describe("with the endpoint authenticated", () => {
       beforeEach(() => {
-        vi.stubEnv("MCP_AUTH_TOKEN", "test-secret");
+        configureOAuth();
       });
 
       it("selects by documented id, posting the machine's own id", async () => {

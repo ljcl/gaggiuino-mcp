@@ -109,9 +109,40 @@ export function parsePublicUrl(value: string | undefined): string | undefined {
   return url.origin;
 }
 
+/**
+ * Refuse to start while the removed shared secret is still set.
+ *
+ * `MCP_AUTH_TOKEN` was deleted in 2.0.0 because a Claude connector has no way
+ * to present it. Deleting the code that read it would have been silent in the
+ * one direction that matters: an unread variable is an ignored variable, so a
+ * deployment that set the token deliberately — and the README told exactly
+ * those users to, before putting the server behind a tunnel — would go from a
+ * 401-gated `/mcp` to an open one with nothing in the logs to say so.
+ *
+ * The major version is not the protection. `docker.yml` publishes `latest` on
+ * every push to the default branch, and `docker-compose.yml` defaults to
+ * `${GAGGIUINO_MCP_TAG:-latest}`, so the documented deployment follows `main`
+ * and receives this change before a 2.0.0 tag exists to warn anyone. Failing
+ * to start is what protects them, and it is a startup failure rather than a
+ * warning precisely because a warning scrolls past in a container log.
+ *
+ * This is a tombstone with an expiry: #114 removes it one release later, by
+ * which point a still-set variable is somebody's stale `.env` rather than a
+ * live control that just stopped working.
+ */
+function assertLegacyTokenUnset(value: string | undefined): void {
+  if (!value?.trim()) return;
+  throw new ConfigError(
+    "MCP_AUTH_TOKEN is set, but it was removed in 2.0.0 and no longer authenticates anything — a Claude connector could never present it, since the custom-connector dialog has no request-header field. Rather than serve /mcp unauthenticated while your .env still says otherwise, this server refuses to start. Configure OAuth instead (MCP_PUBLIC_URL, MCP_OAUTH_SECRET and MCP_OAUTH_PASSPHRASE_HASH — see README > Securing the endpoint), then delete the MCP_AUTH_TOKEN line.",
+  );
+}
+
 export function loadServerConfig(
   env: Record<string, string | undefined> = process.env,
 ): ServerConfig {
+  // Before anything is parsed: the answer is "stop", so there is nothing to be
+  // gained by first reporting that PORT is also wrong.
+  assertLegacyTokenUnset(env.MCP_AUTH_TOKEN);
   return {
     host: env.HOST?.trim() || DEFAULT_HOST,
     machineUrl: parseMachineUrl(env.GAGGIUINO_URL),
