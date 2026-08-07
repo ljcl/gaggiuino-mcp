@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/ljcl/gaggiuino-mcp/compare/v1.7.0...v2.0.0) (2026-08-07)
+
+
+### ⚠ BREAKING CHANGES
+
+* **server:** remove MCP_AUTH_TOKEN in favour of OAuth ([#123](https://github.com/ljcl/gaggiuino-mcp/issues/123))
+
+### Features
+
+* **server:** remove MCP_AUTH_TOKEN in favour of OAuth ([#123](https://github.com/ljcl/gaggiuino-mcp/issues/123)) ([2e9d04f](https://github.com/ljcl/gaggiuino-mcp/commit/2e9d04f80b82ac6157932408382973868f8d4ab0))
+
 ## [1.7.0](https://github.com/ljcl/gaggiuino-mcp/compare/v1.6.0...v1.7.0) (2026-08-06)
 
 
