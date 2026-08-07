@@ -12,8 +12,8 @@ import { type TokenFailure, verifyToken } from "./oauth/tokens";
  * The documented deployment publishes this port to the public internet through
  * a tunnel, so the endpoint needs two independent guards:
  *
- * - **A shared secret.** Anyone who learns the tunnel URL otherwise gets the
- *   full tool surface against a machine on the LAN.
+ * - **An OAuth access token.** Anyone who learns the tunnel URL otherwise gets
+ *   the full tool surface against a machine on the LAN.
  * - **Origin validation.** Even on a purely local install, any web page the
  *   user visits can POST to `http://localhost:8000/mcp` from their browser.
  *   That is the DNS-rebinding case the Streamable HTTP spec requires guarding,
@@ -27,9 +27,6 @@ import { type TokenFailure, verifyToken } from "./oauth/tokens";
  * before the body is read and before a session or transport is allocated, so a
  * rejected request costs nothing.
  */
-
-/** Advertised in `WWW-Authenticate` on a 401. */
-const REALM = "gaggiuino-mcp";
 
 export interface SecurityConfig {
   /**
@@ -55,8 +52,6 @@ export interface SecurityConfig {
    * as unconfigured rather than half-mounted.
    */
   oauth?: OAuthConfig;
-  /** Shared secret, or `undefined` to serve `/mcp` unauthenticated. */
-  token?: string;
 }
 
 function parseList(value: string | undefined): string[] {
@@ -147,12 +142,10 @@ function loadOAuthConfig(
 export function loadSecurityConfig(
   env: Record<string, string | undefined> = process.env,
 ): SecurityConfig {
-  const token = env.MCP_AUTH_TOKEN?.trim();
   return {
     allowedHosts: parseList(env.MCP_ALLOWED_HOSTS),
     allowedOrigins: parseList(env.MCP_ALLOWED_ORIGINS),
     oauth: loadOAuthConfig(env),
-    token: token ? token : undefined,
   };
 }
 
@@ -172,16 +165,15 @@ export function loadSecurityConfig(
  * storage, which is what this function keeps being mistaken for.
  *
  * **It is a comparison, and it must not become password storage.** Putting
- * scrypt or argon2 here would run a deliberately slow KDF on the
- * unauthenticated path of every request — roughly 100 ms of CPU per attempt on
- * the hardware this ships to, which hands a denial-of-service primitive to
- * anyone who can reach the port. The inputs are machine-generated secrets
- * (`openssl rand -hex 32`) rather than human passwords, and nothing is
- * persisted, so neither of the things a slow KDF buys applies.
+ * scrypt or argon2 here would run a deliberately slow KDF on top of one that
+ * has already run: the sole caller is `verifyPassphrase`, which passes the two
+ * *scrypt outputs* it has just derived. Both inputs are already fixed-length
+ * hex digests of a slow KDF, and nothing here is persisted, so neither thing a
+ * KDF buys — slowness against guessing, a salt against precomputation — has
+ * anything left to add.
  *
- * A *stored* passphrase hash is the opposite case and does need a real KDF:
- * that is `MCP_OAUTH_PASSPHRASE_HASH`, which uses scrypt. Its derived key is
- * then compared here — scrypt to derive, this to compare.
+ * The stored side is where the real KDF belongs, and that is
+ * `MCP_OAUTH_PASSPHRASE_HASH`: scrypt to derive, this to compare.
  */
 export function secretsMatch(a: string, b: string): boolean {
   const key = randomBytes(32);
@@ -190,7 +182,7 @@ export function secretsMatch(a: string, b: string): boolean {
   return timingSafeEqual(mac(a), mac(b));
 }
 
-/** Extract the credential from `Authorization: Bearer <token>`. */
+/** Extract the access token from `Authorization: Bearer <token>`. */
 function bearerToken(header: string | null): string | undefined {
   if (!header) return undefined;
   const match = /^Bearer[ ]+(.+)$/i.exec(header.trim());
@@ -316,12 +308,11 @@ function checkHost(req: Request, allowed: string[]): Response | undefined {
 /** How a caller got through the gate, and what it is allowed to ask for. */
 export interface AuthGrant {
   /**
-   * `none` — no credential is configured, so `/mcp` is open. Writes are still
-   * refused, by `writeToolDisabled`, with text that explains why.
-   * `bearer` — the legacy `MCP_AUTH_TOKEN` matched.
+   * `none` — no authorization server is configured, so `/mcp` is open. Writes
+   * are still refused, by `writeToolDisabled`, with text that explains why.
    * `oauth` — a verified access token.
    */
-  mode: "none" | "bearer" | "oauth";
+  mode: "none" | "oauth";
   /** Scopes the caller holds. Empty on a refusal. */
   scopes: readonly string[];
   /** Token subject, when there was one. Logged; never sent to the caller. */
@@ -349,19 +340,21 @@ export interface AuthOutcome {
    * *badly signed* confirms half of a guess. The person who has to fix a real
    * misconfiguration is reading the log, not the response body.
    */
-  reason?: TokenFailure | "missing" | "malformed-header" | "bad-token";
+  reason?: TokenFailure | "missing" | "malformed-header";
 }
 
-/** Every scope, for the modes that are not scope-aware. */
+/** Every scope, for the one mode that is not scope-aware. */
 const FULL_GRANT: readonly string[] = ALL_SCOPES;
 
 /**
  * Authenticate a request. Never throws; an unusable credential is a refusal.
  *
- * OAuth takes precedence over the legacy shared secret when both are
- * configured, because OAuth is the mechanism a host can actually complete. The
- * shared secret remains for LAN installs that already depend on it, and is
- * removed in its own change once OAuth is proven end to end.
+ * There is one credential now. A shared secret used to be accepted alongside
+ * this, and it went because nothing that matters could present it: a connector
+ * is added at the account level so it works on claude.ai, Desktop and iOS, and
+ * that dialog offers an OAuth client id and secret and no request-header
+ * field. Keeping it meant two gate orderings to reason about in exchange for a
+ * control the owner could not use.
  */
 export function authenticate(
   req: Request,
@@ -409,25 +402,10 @@ export function authenticate(
     };
   }
 
-  if (config.token) {
-    const presented = bearerToken(header);
-    if (presented !== undefined && secretsMatch(presented, config.token)) {
-      return { grant: { mode: "bearer", scopes: FULL_GRANT } };
-    }
-    return {
-      grant: { mode: "bearer", scopes: [] },
-      reason: presented === undefined ? "missing" : "bad-token",
-      refusal: jsonRpcError(
-        401,
-        "Unauthorized: a valid bearer token is required",
-        { "WWW-Authenticate": `Bearer realm="${REALM}"` },
-      ),
-    };
-  }
-
-  // No credential configured. Every scope is granted because there is no way to
-  // obtain one, and a 403 pointing at an authorization server that does not
-  // exist is worse than the honest tool-level refusal `writeToolDisabled` gives.
+  // No authorization server configured. Every scope is granted because there is
+  // no way to obtain one, and a 403 pointing at an authorization server that
+  // does not exist is worse than the honest tool-level refusal
+  // `writeToolDisabled` gives.
   return { grant: { mode: "none", scopes: FULL_GRANT } };
 }
 
@@ -465,8 +443,9 @@ export interface SecurityReport {
  *
  * Returning records rather than printing them keeps this testable and keeps
  * every write to stderr inside `index.ts`. Each carries a `message` an operator
- * can read directly, because the two conditions worth noticing here — no token,
- * and a wildcard origin — are ones somebody needs to act on, not grep for.
+ * can read directly, because the two conditions worth noticing here — no
+ * authorization server, and a wildcard origin — are ones somebody needs to act
+ * on, not grep for.
  */
 export function describeSecurity(config: SecurityConfig): SecurityReport[] {
   const reports: SecurityReport[] = [];
@@ -486,18 +465,12 @@ export function describeSecurity(config: SecurityConfig): SecurityReport[] {
       },
       level: "info",
     });
-  } else if (config.token) {
-    reports.push({
-      event: "security.auth",
-      fields: { message: "Bearer token required on /mcp", mode: "bearer" },
-      level: "info",
-    });
   } else {
     reports.push({
       event: "security.unauthenticated",
       fields: {
         message:
-          "WARNING: /mcp is unauthenticated — anyone who can reach this port can control the machine. Set MCP_PUBLIC_URL and MCP_OAUTH_SECRET to enable OAuth before exposing it beyond your LAN (Tailscale Funnel, cloudflared, ngrok). MCP_AUTH_TOKEN still works for clients that can set their own headers, but a Claude connector cannot.",
+          "WARNING: /mcp is unauthenticated — anyone who can reach this port can control the machine. Enable OAuth before exposing it beyond your LAN (Tailscale Funnel, cloudflared, ngrok): set MCP_PUBLIC_URL, MCP_OAUTH_SECRET and MCP_OAUTH_PASSPHRASE_HASH. This is the only way to authenticate; the shared secret MCP_AUTH_TOKEN was removed in 2.0.0 because no Claude connector could present it.",
         mode: "none",
       },
       level: "warn",

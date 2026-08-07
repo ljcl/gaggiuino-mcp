@@ -103,11 +103,26 @@ describe(".env.example", () => {
     ).toEqual([]);
   });
 
-  it("leaves MCP_AUTH_TOKEN commented out rather than set", () => {
-    // `loadSecurityConfig` treats any non-blank string as a real secret, so a
-    // placeholder value would be worse than no line at all.
+  it("documents MCP_AUTH_TOKEN as removed rather than as a setting", () => {
+    // The variable is still read — by `loadServerConfig`, solely to refuse to
+    // start — so the two-directional check above keeps it in this template.
+    // That makes the wording load-bearing: a reader who takes the line at face
+    // value and fills it in gets a server that will not boot.
     expect(template).toMatch(/^#MCP_AUTH_TOKEN=/m);
     expect(template).not.toMatch(/^MCP_AUTH_TOKEN=/m);
+
+    // The unbroken run of comment lines above the tombstone — its section
+    // heading and every word of explanation, which is the text a reader
+    // actually has in front of them. Blank lines separate sections, so walking
+    // back over `#` lines lands exactly on this one.
+    const lines = template.split("\n");
+    const at = lines.findIndex((line) => line.startsWith("#MCP_AUTH_TOKEN="));
+    let opensAt = at;
+    while (opensAt > 0 && lines[opensAt - 1]?.startsWith("#")) opensAt -= 1;
+    const section = lines.slice(opensAt, at).join("\n");
+
+    expect(section).toContain("REMOVED");
+    expect(section).toContain("REFUSES TO START");
   });
 
   it("leaves the OAuth variables commented out rather than set", () => {

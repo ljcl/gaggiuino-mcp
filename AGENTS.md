@@ -54,8 +54,8 @@ via symlinks in `.claude/skills/`. Externally-sourced skills are tracked in `ski
 | `get_profile_info`      | One profile: the machine's own definition plus docs |
 | `get_machine_settings`  | Boiler/steam/scale config as the firmware sends it  |
 | `get_maintenance_status`| Descale/backflush service log the machine keeps itself |
-| `select_profile`        | **Write.** Switch profile; needs `MCP_AUTH_TOKEN`   |
-| `upload_profile`        | **Write, not idempotent.** Save a new profile; needs `MCP_AUTH_TOKEN` |
+| `select_profile`        | **Write.** Switch profile; needs OAuth configured   |
+| `upload_profile`        | **Write, not idempotent.** Save a new profile; needs OAuth configured |
 | `get_dial_in_guidance`  | Expert dial-in system prompt                        |
 
 App-only (`visibility: ["app"]`, not advertised to the model): `get_shot_raw_json`
@@ -1025,7 +1025,7 @@ curl -X POST http://localhost:8000/mcp \
 | `MCP_PUBLIC_URL`      | _(unset)_                | Public https origin, no path. With `MCP_OAUTH_SECRET`, enables OAuth and is advertised as the `resource` |
 | `MCP_OAUTH_SECRET`    | _(unset)_                | ≥32-char signing key for self-issued tokens; keep it stable across restarts |
 | `MCP_OAUTH_PASSPHRASE_HASH` | _(unset)_          | scrypt hash for the consent page. Required when OAuth is on; `bun run hash-passphrase` |
-| `MCP_AUTH_TOKEN`      | _(unset)_                | Legacy bearer secret for `/mcp`; a Claude connector cannot present it. OAuth wins when both are set |
+| `MCP_AUTH_TOKEN`      | _(removed)_              | Removed in 2.0.0. Still read, only to fail startup while it is set — see the tombstone below |
 | `MCP_ALLOWED_ORIGINS` | _(empty)_                | Browser origins allowed on `/mcp`; `*` allows any |
 | `MCP_ALLOWED_HOSTS`   | _(empty)_                | `Host` values to accept; empty disables the check |
 | `LOG_LEVEL`           | `info`                   | `debug`/`info`/`warn`/`error`/`silent`            |
@@ -1055,7 +1055,8 @@ Five things about the gate are load-bearing:
   credential and no `Origin`; a liveness probe that needs a token reports the
   token's health.
 - **Origin is checked before the token.** Otherwise the 401/403 split tells an
-  unauthenticated cross-origin prober whether a token is configured at all.
+  unauthenticated cross-origin prober whether authentication is configured at
+  all.
 - **An absent `Origin` always passes.** Non-browser clients (Claude Desktop,
   `curl`) send none, so the empty default allowlist blocks exactly the
   browser-initiated cross-origin case and nothing else. That is what lets the
@@ -1085,7 +1086,10 @@ decoration — `timingSafeEqual` throws on a length mismatch, and the obvious
 guard (`a.length !== b.length`) leaks the secret's length. Two HMAC-SHA256
 digests are always 32 bytes, and the key is random per call and discarded, so
 the digest is evidence only within the call and cannot be password storage —
-which is what CodeQL keeps mistaking it for.
+which is what CodeQL keeps mistaking it for. With `MCP_AUTH_TOKEN` gone its
+only caller is `verifyPassphrase`, which passes the two scrypt outputs it has
+just derived; that makes "do not put a KDF in here" easier to argue, not
+harder, since one has already run.
 
 `scripts/test-auth.sh` is the **OAuth discovery probe**, and it is meant to run
 from **outside the LAN**. It automates Anthropic's own diagnostic checklist: both
@@ -1099,12 +1103,33 @@ the status-code checks still run without it.
 
 ### OAuth, and why an auth refusal is not a tool result
 
-`MCP_AUTH_TOKEN` is a control the owner cannot use. The connector is added at the
-account level so it works on claude.ai, Desktop and iOS, and on a personal plan
-the "Add custom connector" dialog exposes only an OAuth Client ID and Secret —
-there is no request-header field, and a local stdio bridge cannot run on iOS. So
-the token can never leave the client and the two write tools are permanently
-refused on the one deployment this repo is built for. OAuth is the replacement.
+**OAuth is the only credential.** `MCP_AUTH_TOKEN` was a control the owner could
+not use: the connector is added at the account level so it works on claude.ai,
+Desktop and iOS, and on a personal plan the "Add custom connector" dialog
+exposes only an OAuth Client ID and Secret — there is no request-header field,
+and a local stdio bridge cannot run on iOS. The token could never leave the
+client, so the two write tools were permanently refused on the one deployment
+this repo is built for. It went in 2.0.0, and `authenticate` now has one
+credential path rather than a precedence rule between two.
+
+**Its removal is guarded by a tombstone, and the tombstone is the actual safety
+mechanism.** `loadServerConfig` still reads `env.MCP_AUTH_TOKEN`, solely to
+throw a `ConfigError` when it has a value. A hard delete would have been silent
+in the only direction that matters: an unread variable is an ignored variable,
+so a deployment that gated `/mcp` with the token — which is what the README told
+those users to do — would have come up open on the next image pull with nothing
+in the log. The major version does not protect them either, because `docker.yml`
+publishes `latest` on every default-branch push and `docker-compose.yml`
+defaults to it, so the documented deployment receives the change before a 2.0.0
+tag exists. Refusing to start is what protects them. #114 removes it one release
+later.
+
+That is also why the variable is still in `.env.example` and in `turbo.json`'s
+`globalPassThroughEnv`: the code reads it, so `envExample.test.ts` requires the
+template entry, and the pass-through is what lets the value reach the process
+under turbo at all. Both go with the tombstone, not before it. The template
+entry's *wording* is therefore load-bearing and asserted — a reader who takes it
+for a live setting gets a server that will not boot.
 
 `oauth/` holds the resource-server half: `metadata.ts` (RFC 9728 document and the
 `WWW-Authenticate` challenges), `tokens.ts` (sign/verify), `scopes.ts`, and
@@ -1206,10 +1231,11 @@ unauthenticated consent page hands a token to anyone who finds the URL, so it is
 a startup failure rather than a degraded mode. It is the one place a real KDF
 belongs: scrypt to derive, `secretsMatch` to compare.
 
-`writeToolDisabled` (`tools.ts`) now answers only the third state — no
-credential configured at all. That one must stay an `isError`: a 401 pointing at
-metadata that does not exist produces Anthropic's documented "Couldn't reach the
-MCP server."
+`writeToolDisabled` (`tools.ts`) answers only the third state — no authorization
+server configured at all — and with the shared secret gone it is a single check
+on `oauth` rather than a question about which of two credentials is present.
+That state must stay an `isError`: a 401 pointing at metadata that does not
+exist produces Anthropic's documented "Couldn't reach the MCP server."
 
 ### Session lifetime
 
