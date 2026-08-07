@@ -8,8 +8,17 @@ services:
     network_mode: host
     restart: unless-stopped
     env_file:
-      # Put MCP_AUTH_TOKEN here before exposing this through a tunnel — without
-      # it /mcp is unauthenticated (see README > Securing the endpoint).
+      # Put MCP_PUBLIC_URL, MCP_OAUTH_SECRET and MCP_OAUTH_PASSPHRASE_HASH here
+      # before exposing this through a tunnel — without them /mcp is
+      # unauthenticated (see README > Securing the endpoint).
+      #
+      # AFTER EDITING THESE FILES, RECREATE THE CONTAINER:
+      #   docker compose up -d --force-recreate
+      # A plain `up -d` or `restart` can reuse the existing container, which
+      # keeps the environment it was created with — so the new variables never
+      # reach the process and the server comes up unauthenticated as if you had
+      # not set them. Compose tracks the env_file *list*, not its contents.
+      #
       # `.env` first so a standalone deploy (this file alone, no repo checkout)
       # works; `apps/server/.env` keeps existing repo-based setups working.
       - path: .env
