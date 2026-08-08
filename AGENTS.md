@@ -199,6 +199,63 @@ Anything that is *not* a 404 propagates. A partial list that quietly dropped the
 shots a broken machine could not serve would be indistinguishable from a
 complete one.
 
+### An event is a measurement, and its threshold is measured too
+
+`events.ts` fills the `events` array `get_shot_data` has always advertised and
+always returned empty. It detects one thing so far — pressure falling faster
+than the profile asked for — and everything about how it is written follows from
+two rules.
+
+**Report what was measured, never what it means.** An event reads
+`pressure fell 2.8 bar in 1.1s from 11.5s while the target held at 9.0 bar`. It
+does not say "channeling". The model calling this tool has
+`get_dial_in_guidance` in context and is the thing qualified to draw that
+conclusion; a threshold in a server is not, and a diagnostic that names a cause
+it cannot know is one the user stops believing the first time it is wrong.
+
+**The threshold is derived from real curves, not inherited.** The idea comes
+from `mxkissnr/gaggiuino-local-profiler`, which flags a drop of more than 1.5
+bar between two *adjacent* samples. That number is not portable: it has no
+window, so its sensitivity moves with the sample interval, and upstream feeds
+the same constant both ~10 Hz recorded shots and 1 Hz live-accumulated ones. On
+this machine's ~0.15 s cadence it works out at ~10 bar/s — about twice what the
+pump does when a shot *ends*, so it would essentially never fire. The shipped
+rule is **2.5 bar/s sustained over at least 0.5 s**, which is ~3× the worst
+target-steady fall measured across three real captures on two profiles
+(0.67, 0.83 and 0.86 bar/s). The minimum window is doing as much work as the
+rate: a single noisy sample pair on a Zer0 plateau reaches 2.58 bar/s on its
+own, and half a second is at least three samples at this cadence.
+
+Four gates decide whether a window counts, and **each was kept because a real
+capture fails without it**:
+
+- `targetPressure` must be **commanded** at both ends. It is `0` while a profile
+  drives flow instead, which is how Londinium spends its first five seconds —
+  and reading `0` as "a steady target of zero" turns the fill-to-extraction
+  handover into a 4.0 bar/s collapse on every shot.
+- The target must not have **moved**. Zer0 steps its target 6 bar → 2.5 mid-shot
+  and the pressure obediently follows.
+- The fall must **begin** from a pressure that was tracking its target, which is
+  what rejects the tail of that step: the decay takes ~2.5 s, runs at 2.2 bar/s
+  — only 12% under the threshold — and can undershoot the new target on the way.
+- The fall must **end** below the target.
+
+They overlap deliberately, and the docblock says which regime each one is the
+only defence for, because three of the four survive being deleted individually
+against the current suite.
+
+The series' **final sample is never a window end**. A shot finishing dumps
+pressure at 5.8 bar/s, twice the threshold; that is the stop condition being
+met, not the puck failing.
+
+Overlapping windows **merge into one event**. A fall lasting a second trips
+every window along the way, and a model handed nine events describes nine
+problems.
+
+`normalize.ts` exists as of this work: `SCALE_BY_10` and `normalizeValue` used
+to live in `analysis.ts`, which `events.ts` cannot import without a cycle. This
+file is what AGENTS.md already claimed was there.
+
 ### The machine owns what exists; the YAML owns what it means
 
 `profileCatalog.ts` joins `/api/profiles/all` to `data/profiles.yaml` on the
