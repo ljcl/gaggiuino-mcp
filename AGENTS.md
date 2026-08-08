@@ -1211,6 +1211,10 @@ and the hosted surfaces rely on the header.
 factory, so codes, failed-attempt counters and refresh generations belong to a
 handler rather than a process and two tests cannot see each other's state.
 
+`codes.ts` holds authorization codes and nothing else. Filling it requires the
+passphrase, which is what makes its cap survivable — see the consent-token entry
+below for the store that did not have that property.
+
 **It is small because of CIMD.** The `client_id` *is* a URL; `/oauth/authorize`
 fetches it, checks the document is self-referential, and checks `redirect_uri`
 against its `redirect_uris`. No client registry, no `POST /register`, no client
@@ -1247,9 +1251,47 @@ Things worth not re-breaking:
   which is **bounded detection and not revocation**: a restart forgets it. A
   deliberate weakening for a single-user server, named in the code so it is not
   quietly undone.
-- **Access and refresh tokens are domain-separated by HKDF `info`**, so a
-  refresh token can never be replayed as an access token even though one secret
-  mints both.
+- **Every signed thing is domain-separated by HKDF `info`**, so a refresh token
+  can never be replayed as an access token and a consent token can never be
+  redeemed as either, even though one secret mints all three. `signToken` and
+  `verifyToken` are typed against `BearerTokenKind` rather than `TokenKind`, so
+  the split is a compile error as well as a different key. The separation test
+  asserts the *reason* is `bad-signature`, not merely that the token was refused:
+  a consent payload carries no `aud`/`iss`/`sub`, so it fails `decodeClaims` as
+  `malformed` whatever key signed it — meaning a bare `ok: false` passes just as
+  happily when the two share one key, which is the thing being tested.
+- **The consent page's `request_token` is stateless, and that is an availability
+  fix rather than a style choice.** It used to be a key into a bounded map that
+  `GET /oauth/authorize` filled *before* checking any credential, so anyone who
+  could reach that route could park 65 requests, evict the consent page the owner
+  had open, and turn their submit into "this page has expired" (#119). The GET
+  path never consults the rate limiter — deliberately; a page that has asked for
+  nothing yet should be free — so the flood was unmetered. Raising the cap moves
+  the number without changing the shape, so the store went instead:
+  `signConsentToken` HMACs the pending authorization plus an expiry under a third
+  HKDF `info`, and there is nothing left to evict.
+
+  This is the same bounded-map question `mcpSession.ts` answers the opposite way,
+  and the difference is the recovery path, not the capacity. An evicted MCP
+  session gets the spec's 404 and re-handshakes on its own; an evicted consent
+  page gets a dead end and a human who has to start over. Eviction is survivable
+  there and *is* the attack here.
+
+  **The stated cost is that a consent token is no longer single-use**, so a
+  captured submission can be replayed inside its TTL. Acceptable, and the reason
+  is worth keeping: the token carries no authority on its own, the passphrase is
+  checked on every submission, and a submission an attacker captured *contains*
+  that passphrase — so single-use never protected against the one attacker it
+  looked like it did. A replay yields a fresh authorization code, and the code is
+  where single-use actually lives. `jti` is in the payload so a seen-set could
+  restore it later without putting a store back on the unauthenticated path — and
+  it is what makes the retry page's token differ from the one just submitted,
+  which would otherwise be byte-identical on a fast clock.
+
+  `verifyConsentToken` rebuilds the `PendingAuthorization` field by field rather
+  than spreading the payload. The store it replaced got that wrong in the quiet
+  direction: `recall` was declared to return a `PendingAuthorization` and actually
+  handed back the map entry with the store's own `expiresAt` still attached.
 - **An unrecognised scope is dropped, not refused.** Claude appends
   `offline_access`; refusing the whole request over a scope this server does not
   model would break the flow it exists for.

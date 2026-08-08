@@ -1,9 +1,14 @@
-import { createHmac, hkdfSync, timingSafeEqual } from "node:crypto";
+import {
+  createHmac,
+  hkdfSync,
+  randomBytes,
+  timingSafeEqual,
+} from "node:crypto";
 import { checkResourceAllowed } from "@modelcontextprotocol/sdk/shared/auth-utils.js";
+import { type PendingAuthorization } from "./codes";
 
 /**
- * Self-issued access and refresh tokens, signed with a key derived from one
- * environment secret.
+ * Every signed blob this server mints, from one environment secret.
  *
  * The format is a compact JWS (`header.payload.signature`, HS256) because that
  * is what every OAuth client already knows how to carry, not because anything
@@ -17,9 +22,10 @@ import { checkResourceAllowed } from "@modelcontextprotocol/sdk/shared/auth-util
  *   owner out of their phone. The alternative — a generated key held in memory —
  *   invalidates every token on every restart, which on a home server that
  *   restarts for a firmware flash is a fresh consent prompt each time.
- * - **Domain-separated by HKDF `info`.** An access token and a refresh token are
- *   signed with different derived keys, so a refresh token can never be replayed
- *   as an access token even though both are minted from the same secret.
+ * - **Domain-separated by HKDF `info`.** Each kind is signed with a different
+ *   derived key, so a refresh token can never be replayed as an access token and
+ *   a consent token can never be redeemed as either, even though one secret
+ *   mints all three.
  */
 
 /** HKDF salt. Fixed and public; the secret is the entropy, the salt is not. */
@@ -28,7 +34,24 @@ const HKDF_SALT = "gaggiuino-mcp/oauth/v1";
 /** HMAC-SHA256 output length. Not secret — it is the same for every token. */
 const SIGNATURE_BYTES = 32;
 
-export type TokenKind = "access-token" | "refresh-token";
+/**
+ * The three domains, and the HKDF `info` that separates them.
+ *
+ * Adding a kind here is adding a key. Reusing one across two purposes is what
+ * the separation exists to prevent, so a new signed thing gets a new value
+ * rather than borrowing the nearest one.
+ */
+export type TokenKind = "access-token" | "consent" | "refresh-token";
+
+/**
+ * The two kinds that are OAuth bearer tokens.
+ *
+ * `signToken`/`verifyToken` are typed against this rather than `TokenKind` so
+ * the separation is a compile error as well as a different key: an
+ * `AccessTokenClaims` cannot be signed into the consent domain by passing the
+ * wrong string, and a consent token cannot be handed to `verifyToken` at all.
+ */
+export type BearerTokenKind = Exclude<TokenKind, "consent">;
 
 export interface AccessTokenClaims {
   /** RFC 8707 resource indicator: the MCP endpoint this token is good for. */
@@ -72,14 +95,68 @@ function sign(signingInput: string, secret: string, kind: TokenKind): string {
     .digest("base64url");
 }
 
+/** Serialize claims as a compact JWS. The payload is echoed verbatim. */
+function mint(claims: unknown, secret: string, kind: TokenKind): string {
+  const signingInput = `${encodeSegment({ alg: "HS256", typ: "JWT" })}.${encodeSegment(claims)}`;
+  return `${signingInput}.${sign(signingInput, secret, kind)}`;
+}
+
+type SignatureVerdict =
+  | { ok: false; reason: "bad-signature" | "malformed" }
+  | { ok: true; payload: string };
+
+/**
+ * Check a token's signature and hand back its still-encoded payload.
+ *
+ * Every caller reads claims only from what this returns. That ordering is the
+ * whole safety argument: an unverified payload is attacker-controlled text, and
+ * a check against it proves nothing.
+ */
+function verifySignature(
+  token: string,
+  secret: string,
+  kind: TokenKind,
+): SignatureVerdict {
+  const segments = token.split(".");
+  if (segments.length !== 3) return { ok: false, reason: "malformed" };
+  const [header, payload, signature] = segments as [string, string, string];
+
+  const presented = Buffer.from(signature, "base64url");
+  // Length is compared before `timingSafeEqual` because that function throws on
+  // a mismatch. Unlike `secretsMatch`, no hashing is needed to make this safe:
+  // an HMAC-SHA256 digest is always 32 bytes, so the length reveals nothing
+  // about the key.
+  if (presented.length !== SIGNATURE_BYTES) {
+    return { ok: false, reason: "bad-signature" };
+  }
+  const expected = Buffer.from(
+    sign(`${header}.${payload}`, secret, kind),
+    "base64url",
+  );
+  if (!timingSafeEqual(presented, expected)) {
+    return { ok: false, reason: "bad-signature" };
+  }
+  return { ok: true, payload };
+}
+
+function decodeSegment(segment: string): Record<string, unknown> | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(segment, "base64url").toString("utf8"));
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+  return parsed as Record<string, unknown>;
+}
+
 /** Mint a signed token. The claims are echoed verbatim into the payload. */
 export function signToken(
   claims: AccessTokenClaims,
   secret: string,
-  kind: TokenKind,
+  kind: BearerTokenKind,
 ): string {
-  const signingInput = `${encodeSegment({ alg: "HS256", typ: "JWT" })}.${encodeSegment(claims)}`;
-  return `${signingInput}.${sign(signingInput, secret, kind)}`;
+  return mint(claims, secret, kind);
 }
 
 /**
@@ -112,14 +189,8 @@ export interface VerifyOptions {
 }
 
 function decodeClaims(segment: string): AccessTokenClaims | undefined {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(Buffer.from(segment, "base64url").toString("utf8"));
-  } catch {
-    return undefined;
-  }
-  if (typeof parsed !== "object" || parsed === null) return undefined;
-  const claims = parsed as Record<string, unknown>;
+  const claims = decodeSegment(segment);
+  if (!claims) return undefined;
   if (
     typeof claims.aud !== "string" ||
     typeof claims.exp !== "number" ||
@@ -149,31 +220,14 @@ function decodeClaims(segment: string): AccessTokenClaims | undefined {
 export function verifyToken(
   token: string,
   options: VerifyOptions,
-  kind: TokenKind = "access-token",
+  kind: BearerTokenKind = "access-token",
 ): TokenVerdict {
   const { audience, expectedIssuer, now = Date.now, secret } = options;
 
-  const segments = token.split(".");
-  if (segments.length !== 3) return { ok: false, reason: "malformed" };
-  const [header, payload, signature] = segments as [string, string, string];
+  const verdict = verifySignature(token, secret, kind);
+  if (!verdict.ok) return verdict;
 
-  const presented = Buffer.from(signature, "base64url");
-  // Length is compared before `timingSafeEqual` because that function throws on
-  // a mismatch. Unlike `secretsMatch`, no hashing is needed to make this safe:
-  // an HMAC-SHA256 digest is always 32 bytes, so the length reveals nothing
-  // about the key.
-  if (presented.length !== SIGNATURE_BYTES) {
-    return { ok: false, reason: "bad-signature" };
-  }
-  const expected = Buffer.from(
-    sign(`${header}.${payload}`, secret, kind),
-    "base64url",
-  );
-  if (!timingSafeEqual(presented, expected)) {
-    return { ok: false, reason: "bad-signature" };
-  }
-
-  const claims = decodeClaims(payload);
+  const claims = decodeClaims(verdict.payload);
   if (!claims) return { ok: false, reason: "malformed" };
 
   if (claims.iss !== expectedIssuer)
@@ -194,4 +248,104 @@ export function verifyToken(
   if (!audienceAllowed) return { ok: false, reason: "wrong-audience" };
 
   return { claims, ok: true };
+}
+
+/** How long a consent page stays submittable. The owner is reading it and
+ *  typing a passphrase, not following a redirect. */
+const CONSENT_TTL_MS = 10 * 60_000;
+
+/**
+ * Mint the `request_token` a consent page carries, over the request it was
+ * rendered for.
+ *
+ * **Stateless, and therefore not single-use.** What this replaced was a key into
+ * a bounded map, and that map was the defect: this request is served *before*
+ * any passphrase is checked, so anyone who could reach `GET /oauth/authorize`
+ * could park 65 entries, evict the consent page the owner had open, and turn
+ * their submit into "this page has expired" (#119). Nothing is stored now, so
+ * there is nothing to evict — the fix removes a store rather than adding a guard
+ * in front of one.
+ *
+ * The cost is that a captured consent submission can be replayed inside the TTL,
+ * which is worth stating rather than assuming away. It is acceptable because the
+ * token carries no authority on its own: the passphrase is checked on every
+ * submission, and a submission an attacker captured *contains* that passphrase —
+ * so single-use never protected against the one attacker it looked like it did.
+ * A replay produces a fresh authorization code, which is still single-use and
+ * still bound to the PKCE challenge and redirect URI the owner was shown.
+ *
+ * If single-use is wanted later, `jti` is there to key a seen-set on, and only
+ * submissions that passed the passphrase would ever be recorded — so it would
+ * not put a store back on the unauthenticated path.
+ */
+export function signConsentToken(
+  request: PendingAuthorization,
+  secret: string,
+  now: () => number = Date.now,
+): string {
+  return mint(
+    {
+      ...request,
+      exp: now() + CONSENT_TTL_MS,
+      // Random per mint, so two tokens for the same request are never equal.
+      // `authorize.ts` re-renders the page with a fresh token after a wrong
+      // passphrase, and without this the retry would be handed back a token
+      // byte-identical to the one it just submitted.
+      jti: randomBytes(16).toString("base64url"),
+    },
+    secret,
+    "consent",
+  );
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+/**
+ * Read a consent token back, or `undefined` if it is forged, expired or
+ * malformed.
+ *
+ * The three are one answer on purpose — the page they produce says only that it
+ * expired, because telling an unauthenticated caller which of the three it hit
+ * tells them which half of a guess was right.
+ */
+export function verifyConsentToken(
+  token: string,
+  secret: string,
+  now: () => number = Date.now,
+): PendingAuthorization | undefined {
+  const verdict = verifySignature(token, secret, "consent");
+  if (!verdict.ok) return undefined;
+
+  const claims = decodeSegment(verdict.payload);
+  if (!claims) return undefined;
+  if (typeof claims.exp !== "number" || claims.exp <= now()) return undefined;
+
+  const scopes = claims.scopes;
+  if (
+    typeof claims.clientId !== "string" ||
+    typeof claims.codeChallenge !== "string" ||
+    typeof claims.redirectUri !== "string" ||
+    !Array.isArray(scopes) ||
+    scopes.some((scope: unknown) => typeof scope !== "string")
+  ) {
+    return undefined;
+  }
+
+  // Rebuilt field by field rather than spread, so nothing the payload happens to
+  // carry rides along into the object an authorization code is then bound to —
+  // not the expiry, not the `jti`, not a key some future version adds. The store
+  // this replaced got that wrong in the quiet direction: `recall` was declared to
+  // return a `PendingAuthorization` and actually handed back the map entry, with
+  // the store's own `expiresAt` still attached.
+  return {
+    clientId: claims.clientId,
+    clientName: optionalString(claims.clientName),
+    codeChallenge: claims.codeChallenge,
+    redirectUri: claims.redirectUri,
+    resource: optionalString(claims.resource),
+    scopes: scopes as string[],
+    state: optionalString(claims.state),
+  };
 }

@@ -10,6 +10,7 @@ import { type AuthServerConfig } from "./metadata";
 import { verifyPassphrase } from "./passphrase";
 import { type RateLimiter } from "./rateLimit";
 import { ALL_SCOPES, parseScopes } from "./scopes";
+import { signConsentToken, verifyConsentToken } from "./tokens";
 
 /**
  * `/oauth/authorize` — the only endpoint a human's browser touches.
@@ -189,7 +190,10 @@ async function handleGet(req: Request, deps: AuthorizeDeps): Promise<Response> {
 
   return html(
     renderConsentPage({
-      csrfToken: deps.codes.remember(validated.request),
+      // Signed rather than parked in a map. This request arrives before any
+      // credential has been checked, so anything it *stored* would be a store an
+      // unauthenticated caller controls the contents of — see `signConsentToken`.
+      csrfToken: signConsentToken(validated.request, deps.config.secret),
       // The URI *this request* will use, not every URI the client declares.
       // A local process that publishes a document listing one hosted address
       // alongside a loopback one, and then asks for the loopback, is exactly
@@ -205,10 +209,11 @@ async function handlePost(
   req: Request,
   deps: AuthorizeDeps,
 ): Promise<Response> {
-  // A cross-site POST cannot carry a valid `request_token`, so CSRF is already
-  // covered by the one-time token. This is the cheap second lock: the consent
-  // form is same-origin by construction, so any Origin that is not this server
-  // is a forgery attempt regardless of what it carries. Scoped to this route —
+  // A cross-site POST cannot carry a valid `request_token`: it is HMAC-signed,
+  // so another site cannot mint one, and same-origin policy stops it reading one
+  // out of a rendered page. This is the cheap second lock: the consent form is
+  // same-origin by construction, so any Origin that is not this server is a
+  // forgery attempt regardless of what it carries. Scoped to this route —
   // `MCP_ALLOWED_ORIGINS` governs `/mcp` only and is untouched.
   const origin = req.headers.get("origin");
   if (origin !== null && origin !== deps.config.issuer) {
@@ -236,9 +241,10 @@ async function handlePost(
   }
 
   const requestToken = form.get("request_token") ?? "";
-  const pending = deps.codes.recall(requestToken);
+  const pending = verifyConsentToken(requestToken, deps.config.secret);
   if (!pending) {
-    // Also the expiry path: a consent page left open past its TTL.
+    // Expired, forged, or signed by a secret this server no longer holds. All
+    // one page, deliberately — see `verifyConsentToken`.
     return html(
       renderErrorPage(
         "This page has expired",
@@ -264,11 +270,13 @@ async function handlePost(
   if (!verifyPassphrase(passphrase, deps.config.passphraseHash)) {
     deps.limiter.fail(key);
     logger.warn("oauth.consent_failed", { clientId: pending.clientId, key });
-    // Re-parked under a fresh token: `recall` is single-use, so the page the
-    // owner is looking at has already spent the one it was rendered with.
+    // Re-signed rather than echoed back. The token the owner submitted is still
+    // valid — it is stateless — but minting a fresh one is free, and it keeps
+    // the retry page indistinguishable from a first render, so nothing
+    // downstream has to reason about which kind of page it is looking at.
     return html(
       renderConsentPage({
-        csrfToken: deps.codes.remember(pending),
+        csrfToken: signConsentToken(pending, deps.config.secret),
         error: "That passphrase was not correct.",
         // Recomputed, not hardcoded false. The retry page is where the owner
         // actually types the passphrase most of the time, so dropping the
