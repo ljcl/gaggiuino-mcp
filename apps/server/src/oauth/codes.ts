@@ -1,26 +1,30 @@
 import { randomBytes } from "node:crypto";
 
 /**
- * Authorization codes, and the pending requests a consent page is rendered for.
+ * Authorization codes: the one thing standing between a granted consent page and
+ * a token.
  *
- * Both are in-memory and short-lived by design. A restart drops them, and that
- * is fine: an authorization code is worth at most sixty seconds and a consent
- * page the owner has open is worth one page reload. Nothing here is the thing
- * that keeps somebody signed in — that is the refresh token, which is stateless
- * and survives restarts precisely so this does not have to.
+ * In-memory and short-lived by design. A restart drops them, and that is fine:
+ * an authorization code is worth at most sixty seconds. Nothing here is what
+ * keeps somebody signed in — that is the refresh token, which is stateless and
+ * survives restarts precisely so this does not have to.
  *
  * Bounded as well as expiring, for the same reason `mcpSession.ts` is: the TTL
  * reclaims entries whose flow was abandoned, and the cap bounds anything that
  * outruns it. The clock is injected so the expiry tests assert "sixty-one
  * seconds later" without waiting.
+ *
+ * The consent page's `request_token` used to be parked here too, in a second map
+ * behind the same cap. It is a signed, stateless token now (`signConsentToken`
+ * in `tokens.ts`) because that map was the one store an *unauthenticated* caller
+ * could fill — `GET /oauth/authorize` parked an entry before any passphrase was
+ * checked (#119). Filling this map requires the passphrase, so the same flood
+ * does not reach it.
  */
 
 /** RFC 6749 §4.1.2 recommends a maximum of ten minutes; sixty seconds is ample
  *  for a redirect the browser performs immediately. */
 const CODE_TTL_MS = 60_000;
-
-/** A consent page the owner may sit on for a while before submitting. */
-const PENDING_TTL_MS = 10 * 60_000;
 
 const MAX_ENTRIES = 64;
 
@@ -57,64 +61,44 @@ export interface CodeStore {
    * checked earlier.
    */
   redeem(code: string): IssuedCode | undefined;
-  /** Park a validated authorization request while the owner is asked. */
-  remember(request: PendingAuthorization): string;
-  /** Recall a parked request by its CSRF token. Single-use, like a code. */
-  recall(token: string): PendingAuthorization | undefined;
   readonly size: number;
-}
-
-function newSecret(): string {
-  return randomBytes(32).toString("base64url");
 }
 
 export function createCodeStore({
   now = Date.now,
 }: CodeStoreOptions = {}): CodeStore {
   const codes = new Map<string, IssuedCode>();
-  const pending = new Map<string, IssuedCode>();
 
-  function sweep(store: Map<string, IssuedCode>): void {
-    for (const [key, entry] of store) {
-      if (entry.expiresAt <= now()) store.delete(key);
+  function sweep(): void {
+    for (const [key, entry] of codes) {
+      if (entry.expiresAt <= now()) codes.delete(key);
     }
     // Insertion order is oldest-first, so this drops the coldest entries.
-    for (const key of store.keys()) {
-      if (store.size <= MAX_ENTRIES) break;
-      store.delete(key);
+    for (const key of codes.keys()) {
+      if (codes.size <= MAX_ENTRIES) break;
+      codes.delete(key);
     }
-  }
-
-  function put(
-    store: Map<string, IssuedCode>,
-    request: PendingAuthorization,
-    ttlMs: number,
-  ): string {
-    const key = newSecret();
-    store.set(key, { ...request, expiresAt: now() + ttlMs });
-    sweep(store);
-    return key;
-  }
-
-  function take(
-    store: Map<string, IssuedCode>,
-    key: string,
-  ): IssuedCode | undefined {
-    const entry = store.get(key);
-    // Deleted whether or not it was still live: a code is one-time even when
-    // the attempt that presents it fails.
-    store.delete(key);
-    if (!entry) return undefined;
-    return entry.expiresAt <= now() ? undefined : entry;
   }
 
   return {
-    issue: (request) => put(codes, request, CODE_TTL_MS),
-    recall: (token) => take(pending, token),
-    redeem: (code) => take(codes, code),
-    remember: (request) => put(pending, request, PENDING_TTL_MS),
+    issue(request) {
+      // 32 bytes of randomness: a code is a bearer credential for the whole
+      // grant, so a short or predictable one is the entire attack.
+      const code = randomBytes(32).toString("base64url");
+      codes.set(code, { ...request, expiresAt: now() + CODE_TTL_MS });
+      sweep();
+      return code;
+    },
+    redeem(code) {
+      const entry = codes.get(code);
+      // Deleted whether or not it was still live: a code is one-time even when
+      // the attempt that presents it fails.
+      codes.delete(code);
+      if (!entry) return undefined;
+      return entry.expiresAt <= now() ? undefined : entry;
+    },
     get size() {
-      return codes.size + pending.size;
+      return codes.size;
     },
   };
 }

@@ -361,8 +361,10 @@ describe("consent", () => {
     expect(response.status).toBe(401);
     const html = await response.text();
     expect(html).toContain("not correct");
-    // `recall` is single-use, so the page the owner is looking at has already
-    // spent its token — without a fresh one, a typo would end the flow.
+    // The retry page mints its own token rather than echoing the submitted one,
+    // so the page the owner is looking at is indistinguishable from a first
+    // render. (It held before for a different reason: the token used to be
+    // single-use, and re-rendering the spent one would have ended the flow.)
     const second = requestTokenFrom(html);
     expect(second).not.toBe(first);
 
@@ -370,20 +372,88 @@ describe("consent", () => {
     expect(retry.status).toBe(302);
   });
 
-  it("refuses a request token that was already spent", async () => {
-    const challenge = pkce().challenge;
+  it("survives a flood of consent pages from an unauthenticated caller", async () => {
+    // #119. The consent token used to be a key into a 64-entry map that `GET
+    // /oauth/authorize` filled *before* checking any credential, so a stranger
+    // could park 65 requests, evict the page the owner had open, and turn their
+    // submit into "this page has expired". The token is signed and stateless
+    // now, so there is nothing left to evict.
+    const page = await handler.fetch(
+      new Request(authorizeUrl(authorizeParams(pkce().challenge))),
+    );
+    const owner = requestTokenFrom(await page.text());
+
+    for (let flood = 0; flood < 65; flood += 1) {
+      const response = await handler.fetch(
+        new Request(authorizeUrl(authorizeParams(pkce().challenge))),
+      );
+      expect(response.status, `flood ${flood}`).toBe(200);
+    }
+
+    expect(
+      (await handler.fetch(consentPost(owner, TEST_PASSPHRASE))).status,
+    ).toBe(302);
+  });
+
+  it("accepts a replayed request token, and still spends the code once", async () => {
+    // The stated cost of statelessness: a consent token is no longer single-use,
+    // so a captured submission can be replayed inside its TTL. Acceptable
+    // because the token carries no authority on its own — a submission an
+    // attacker captured contains the passphrase, so single-use never protected
+    // against the one attacker it looked like it did. What a replay yields is a
+    // *fresh* code, and the code is where single-use actually lives.
+    const { challenge, verifier } = pkce();
     const page = await handler.fetch(
       new Request(authorizeUrl(authorizeParams(challenge))),
     );
     const requestToken = requestTokenFrom(await page.text());
 
-    expect(
-      (await handler.fetch(consentPost(requestToken, TEST_PASSPHRASE))).status,
-    ).toBe(302);
-    const replayed = await handler.fetch(
-      consentPost(requestToken, TEST_PASSPHRASE),
+    const codes: string[] = [];
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const response = await handler.fetch(
+        consentPost(requestToken, TEST_PASSPHRASE),
+      );
+      expect(response.status).toBe(302);
+      const location = new URL(response.headers.get("Location") ?? "");
+      codes.push(location.searchParams.get("code") ?? "");
+    }
+    expect(codes[0]).not.toBe(codes[1]);
+
+    const exchange = (code: string) =>
+      handler.fetch(
+        tokenPost({
+          client_id: CLIENT_ID,
+          code,
+          code_verifier: verifier,
+          grant_type: "authorization_code",
+        }),
+      );
+    expect((await exchange(codes[1] as string)).status).toBe(200);
+    expect((await exchange(codes[1] as string)).status).toBe(400);
+  });
+
+  it("refuses a consent token as an authorization code", async () => {
+    // Same secret, different HKDF `info`. A consent token is handed to a browser
+    // before any passphrase is checked, so redeeming one here would skip consent
+    // entirely.
+    const { challenge, verifier } = pkce();
+    const page = await handler.fetch(
+      new Request(authorizeUrl(authorizeParams(challenge))),
     );
-    expect(replayed.status).toBe(400);
+    const requestToken = requestTokenFrom(await page.text());
+
+    const response = await handler.fetch(
+      tokenPost({
+        client_id: CLIENT_ID,
+        code: requestToken,
+        code_verifier: verifier,
+        grant_type: "authorization_code",
+      }),
+    );
+    expect(response.status).toBe(400);
+    expect((await response.json()) as { error: string }).toMatchObject({
+      error: "invalid_grant",
+    });
   });
 
   it("refuses a form submitted from another site", async () => {

@@ -18,7 +18,6 @@ function fakeClock(start = 1_000_000) {
 }
 
 const CODE_TTL_MS = 60_000;
-const PENDING_TTL_MS = 10 * 60_000;
 const MAX_ENTRIES = 64;
 
 function request(
@@ -102,80 +101,6 @@ describe("issue and redeem", () => {
   });
 });
 
-describe("remember and recall", () => {
-  it("hands back the request the consent page was rendered for", () => {
-    const clock = fakeClock();
-    const store = createCodeStore({ now: clock.now });
-    const token = store.remember(request());
-
-    expect(store.recall(token)).toEqual({
-      ...request(),
-      expiresAt: clock.now() + PENDING_TTL_MS,
-    });
-  });
-
-  it("mints a distinct, unguessable token for every parked request", () => {
-    const store = createCodeStore();
-    const first = store.remember(request());
-    const second = store.remember(request());
-
-    expect(first).not.toBe(second);
-    expect(first).toMatch(/^[\w-]{43}$/);
-  });
-
-  it("returns undefined for a token it never parked", () => {
-    expect(createCodeStore().recall("not-a-token")).toBeUndefined();
-  });
-
-  it("recalls a parked request only once", () => {
-    // The token is the CSRF defence for the consent form; a replayable one
-    // would let a submission captured once be replayed forever. `authorize.ts`
-    // re-parks under a fresh token after a wrong passphrase for this reason.
-    const store = createCodeStore();
-    const token = store.remember(request());
-
-    expect(store.recall(token)).toBeDefined();
-    expect(store.recall(token)).toBeUndefined();
-  });
-
-  it("holds a consent page for the full ten minutes", () => {
-    const clock = fakeClock();
-    const store = createCodeStore({ now: clock.now });
-    const live = store.remember(request());
-    const dead = store.remember(request());
-
-    // Well past a code's sixty seconds: the owner is reading the page and
-    // typing a passphrase, not following a redirect.
-    clock.advance(PENDING_TTL_MS - 1);
-    expect(store.recall(live)).toBeDefined();
-
-    clock.advance(1);
-    expect(store.recall(dead)).toBeUndefined();
-  });
-});
-
-describe("codes and parked requests are separate", () => {
-  it("will not redeem a consent token as an authorization code", () => {
-    // The two secrets look identical and grant very different things: a CSRF
-    // token is handed to a browser before any passphrase has been checked, so
-    // redeeming one at /oauth/token would skip consent entirely.
-    const store = createCodeStore();
-    const token = store.remember(request());
-
-    expect(store.redeem(token)).toBeUndefined();
-    // And the failed probe must not spend the real entry either.
-    expect(store.recall(token)).toBeDefined();
-  });
-
-  it("will not recall an authorization code as a parked request", () => {
-    const store = createCodeStore();
-    const code = store.issue(request());
-
-    expect(store.recall(code)).toBeUndefined();
-    expect(store.redeem(code)).toBeDefined();
-  });
-});
-
 describe("bounds", () => {
   it("drops the oldest code once the cap is exceeded", () => {
     const store = createCodeStore();
@@ -206,47 +131,24 @@ describe("bounds", () => {
     expect(store.redeem(abandoned[0] as string)).toBeUndefined();
     expect(store.redeem(live[0] as string)).toBeDefined();
   });
-
-  it("bounds codes and parked requests independently", () => {
-    // A burst of authorization codes must not evict the consent page the owner
-    // currently has open, so each map carries its own cap rather than sharing
-    // one — which is why `size` can exceed MAX_ENTRIES.
-    const store = createCodeStore();
-    const token = store.remember(request());
-    for (let i = 0; i < MAX_ENTRIES + 1; i += 1) store.issue(request());
-
-    expect(store.recall(token)).toBeDefined();
-  });
-
-  it("drops the oldest parked request once the cap is exceeded", () => {
-    const store = createCodeStore();
-    const parked = Array.from({ length: MAX_ENTRIES + 1 }, () =>
-      store.remember(request()),
-    );
-
-    expect(store.recall(parked[0] as string)).toBeUndefined();
-    expect(store.recall(parked[MAX_ENTRIES] as string)).toBeDefined();
-  });
 });
 
 describe("size", () => {
-  it("counts codes and parked requests together", () => {
+  it("counts the codes outstanding", () => {
     const store = createCodeStore();
     expect(store.size).toBe(0);
 
     store.issue(request());
-    store.remember(request());
+    store.issue(request());
     expect(store.size).toBe(2);
   });
 
-  it("falls as entries are spent", () => {
+  it("falls as codes are spent", () => {
     const store = createCodeStore();
     const code = store.issue(request());
-    const token = store.remember(request());
 
-    store.redeem(code);
     expect(store.size).toBe(1);
-    store.recall(token);
+    store.redeem(code);
     expect(store.size).toBe(0);
   });
 });
