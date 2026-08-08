@@ -1,6 +1,10 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { ConfigError, parsePublicUrl } from "./config";
+import { ConfigError, parseIssuerUrl, parsePublicUrl } from "./config";
 import { type LogFields } from "./logging";
+import {
+  createExternalIssuer,
+  type ExternalIssuerOptions,
+} from "./oauth/externalIssuer";
 import { invalidTokenChallenge, type OAuthConfig } from "./oauth/metadata";
 import { isWellFormedHash } from "./oauth/passphrase";
 import { ALL_SCOPES, parseScopes } from "./oauth/scopes";
@@ -84,25 +88,65 @@ const MIN_SECRET_LENGTH = 32;
 
 function loadOAuthConfig(
   env: Record<string, string | undefined>,
+  externalOptions?: ExternalIssuerOptions,
 ): OAuthConfig | undefined {
-  const issuer = parsePublicUrl(env.MCP_PUBLIC_URL);
+  const publicOrigin = parsePublicUrl(env.MCP_PUBLIC_URL);
   const secret = env.MCP_OAUTH_SECRET?.trim();
+  const externalIssuer = parseIssuerUrl(env.MCP_OAUTH_ISSUER);
+
+  /**
+   * Resource-server-only mode: an external IdP mints the tokens and this server
+   * only verifies them.
+   *
+   * Checked before the secret rules below, because it removes the reason for
+   * both of the credentials they demand. Nothing here signs anything — the IdP
+   * holds the private key — so `MCP_OAUTH_SECRET` would be a secret with no
+   * purpose and `MCP_OAUTH_PASSPHRASE_HASH` a passphrase for a consent page
+   * that is never rendered.
+   */
+  if (externalIssuer) {
+    if (!publicOrigin) {
+      throw new ConfigError(
+        "MCP_OAUTH_ISSUER is set but MCP_PUBLIC_URL is not, so this server does not know the resource its tokens must be audienced for. Set MCP_PUBLIC_URL to the public origin clients reach it on, or unset MCP_OAUTH_ISSUER.",
+      );
+    }
+    // Refused rather than ignored. Both of these are only used by the built-in
+    // authorization server, which does not mount in this mode — so a deployment
+    // that set them is one whose operator believes something about this server
+    // that is not true, and silently dropping them is how that belief survives.
+    for (const [name, value] of [
+      ["MCP_OAUTH_SECRET", secret],
+      ["MCP_OAUTH_PASSPHRASE_HASH", env.MCP_OAUTH_PASSPHRASE_HASH?.trim()],
+    ] as const) {
+      if (value) {
+        throw new ConfigError(
+          `${name} is set alongside MCP_OAUTH_ISSUER, but they configure two different things. MCP_OAUTH_ISSUER delegates token issuing to ${externalIssuer}, so this server runs no authorization server and signs nothing — ${name} would have no effect. Unset one of them.`,
+        );
+      }
+    }
+    return {
+      external: createExternalIssuer(externalIssuer, externalOptions),
+      issuer: externalIssuer,
+      publicOrigin,
+      resource: `${publicOrigin}${MCP_PATH}`,
+    };
+  }
 
   // Half a configuration is a deployment mistake, not a mode. Silently falling
   // back to the previous behaviour is how somebody exposes a tunnel believing
   // it is OAuth-gated, so this fails at startup and names what is missing —
   // the same contract `config.ts` has for PORT and GAGGIUINO_URL.
-  if (issuer && !secret) {
+  if (publicOrigin && !secret) {
     throw new ConfigError(
-      "MCP_PUBLIC_URL is set but MCP_OAUTH_SECRET is not, so OAuth cannot be enabled. Generate one with `openssl rand -hex 32`, or unset MCP_PUBLIC_URL.",
+      "MCP_PUBLIC_URL is set but MCP_OAUTH_SECRET is not, so OAuth cannot be enabled. Generate one with `openssl rand -hex 32`, or unset MCP_PUBLIC_URL. To delegate to an external identity provider instead, set MCP_OAUTH_ISSUER.",
     );
   }
-  if (secret && !issuer) {
+  if (secret && !publicOrigin) {
     throw new ConfigError(
       "MCP_OAUTH_SECRET is set but MCP_PUBLIC_URL is not, so this server does not know the URL its tokens are issued for. Set MCP_PUBLIC_URL to the public origin clients reach it on, or unset MCP_OAUTH_SECRET.",
     );
   }
-  if (!issuer || !secret) return undefined;
+  if (!publicOrigin || !secret) return undefined;
 
   if (secret.length < MIN_SECRET_LENGTH) {
     throw new ConfigError(
@@ -132,20 +176,24 @@ function loadOAuthConfig(
   }
 
   return {
-    issuer,
+    // With the built-in authorization server the two are the same value: this
+    // server both mints the tokens and answers as the resource.
+    issuer: publicOrigin,
     passphraseHash,
-    resource: `${issuer}${MCP_PATH}`,
+    publicOrigin,
+    resource: `${publicOrigin}${MCP_PATH}`,
     secret,
   };
 }
 
 export function loadSecurityConfig(
   env: Record<string, string | undefined> = process.env,
+  externalOptions?: ExternalIssuerOptions,
 ): SecurityConfig {
   return {
     allowedHosts: parseList(env.MCP_ALLOWED_HOSTS),
     allowedOrigins: parseList(env.MCP_ALLOWED_ORIGINS),
-    oauth: loadOAuthConfig(env),
+    oauth: loadOAuthConfig(env, externalOptions),
   };
 }
 
@@ -356,11 +404,11 @@ const FULL_GRANT: readonly string[] = ALL_SCOPES;
  * field. Keeping it meant two gate orderings to reason about in exchange for a
  * control the owner could not use.
  */
-export function authenticate(
+export async function authenticate(
   req: Request,
   config: SecurityConfig,
   now: () => number = Date.now,
-): AuthOutcome {
+): Promise<AuthOutcome> {
   const header = req.headers.get("authorization");
 
   if (config.oauth) {
@@ -376,12 +424,20 @@ export function authenticate(
         ),
       };
     }
-    const verdict = verifyToken(presented, {
-      audience: config.oauth.resource,
-      expectedIssuer: config.oauth.issuer,
-      now,
-      secret: config.oauth.secret,
-    });
+    // The only asynchronous step in the gate, and only in the delegated mode:
+    // an external issuer's key has to be fetched before an asymmetric signature
+    // can be checked. The built-in path stays a synchronous HMAC.
+    const verdict = config.oauth.external
+      ? await config.oauth.external.verify(presented, {
+          audience: config.oauth.resource,
+          now,
+        })
+      : verifyToken(presented, {
+          audience: config.oauth.resource,
+          expectedIssuer: config.oauth.issuer,
+          now,
+          secret: config.oauth.secret,
+        });
     if (!verdict.ok) {
       return {
         grant: { mode: "oauth", scopes: [] },
@@ -417,18 +473,24 @@ export function authenticate(
  * whether authentication is configured at all.
  *
  * `auth` is a parameter so a caller that already authenticated the request can
- * pass the result in rather than have it recomputed; it defaults to doing the
- * work, which is what every test and every non-`/mcp` caller wants.
+ * pass the result in rather than have it recomputed; omitting it does the work
+ * here, which is what every test and every non-`/mcp` caller wants.
+ *
+ * When it is omitted, authentication is now reached only *after* Origin and Host
+ * have passed, where it used to be evaluated eagerly as a default argument. That
+ * is a real improvement with an external issuer: verifying a token there can
+ * mean a JWKS fetch, and a cross-origin probe should never be able to make this
+ * server call out to its IdP.
  */
-export function checkRequest(
+export async function checkRequest(
   req: Request,
   config: SecurityConfig,
-  auth: AuthOutcome = authenticate(req, config),
-): Response | undefined {
+  auth?: AuthOutcome,
+): Promise<Response | undefined> {
   return (
     checkOrigin(req, config.allowedOrigins) ??
     checkHost(req, config.allowedHosts) ??
-    auth.refusal
+    (auth ?? (await authenticate(req, config))).refusal
   );
 }
 

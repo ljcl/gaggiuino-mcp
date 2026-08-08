@@ -269,8 +269,8 @@ export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
         // Authenticated once, here, and the result is used for both the gate
         // and the scope check below — rather than verifying the same token
         // twice on every call.
-        const auth = authenticate(req, options.security);
-        const rejection = checkRequest(req, options.security, auth);
+        const auth = await authenticate(req, options.security);
+        const rejection = await checkRequest(req, options.security, auth);
         if (rejection) {
           // Rejections used to be silent, which made the two failures an
           // operator actually hits — a host whose Origin is not on the

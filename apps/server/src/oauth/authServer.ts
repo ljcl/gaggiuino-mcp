@@ -1,5 +1,5 @@
 import { OAuthMetadataSchema } from "@modelcontextprotocol/sdk/shared/auth.js";
-import { type OAuthConfig } from "./metadata";
+import { type AuthServerConfig } from "./metadata";
 import { ALL_SCOPES } from "./scopes";
 
 /**
@@ -24,11 +24,18 @@ export const TOKEN_PATH = "/oauth/token";
  */
 export const SCOPE_OFFLINE_ACCESS = "offline_access";
 
+/**
+ * Only ever called for the built-in authorization server, where `issuer` and
+ * `publicOrigin` are the same value. The endpoints are still built from
+ * `publicOrigin`, because that is the field that means "a path on this server" —
+ * with an external issuer this document is not served at all, and reading
+ * `issuer` here would be correct only by coincidence.
+ */
 export function authorizationServerMetadata(
-  config: OAuthConfig,
+  config: AuthServerConfig,
 ): Record<string, unknown> {
   return OAuthMetadataSchema.parse({
-    authorization_endpoint: `${config.issuer}${AUTHORIZE_PATH}`,
+    authorization_endpoint: `${config.publicOrigin}${AUTHORIZE_PATH}`,
     // Both of these are what makes Claude choose CIMD over hunting for a
     // `registration_endpoint`. It requires *both*: the flag alone, or `"none"`
     // alone, sends it looking for an endpoint this server deliberately does not
@@ -42,7 +49,7 @@ export function authorizationServerMetadata(
     issuer: config.issuer,
     response_types_supported: ["code"],
     scopes_supported: [...ALL_SCOPES, SCOPE_OFFLINE_ACCESS],
-    token_endpoint: `${config.issuer}${TOKEN_PATH}`,
+    token_endpoint: `${config.publicOrigin}${TOKEN_PATH}`,
     token_endpoint_auth_methods_supported: ["none"],
   });
 }
