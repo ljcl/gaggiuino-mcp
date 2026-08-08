@@ -269,19 +269,43 @@ describe("/mcp routing", () => {
 });
 
 describe("session capacity", () => {
-  it("refuses a new session with 503 once the cap is reached", async () => {
+  it("admits a new session at the cap by evicting, never by refusing", async () => {
+    // #122: Claude opens a session per tool call and never DELETEs, so at the
+    // cap a 503 would end a working conversation — and its "retry shortly" is
+    // another initialize, which is what filled the map.
     handler = createFetchHandler({
       security: GATED,
       sessions: { maxSessions: 1 },
     });
     const first = await handler.fetch(post(initializeBody(), authorized()));
     expect(first.status).toBe(200);
+    const evicted = first.headers.get("mcp-session-id");
 
     const second = await handler.fetch(post(initializeBody(), authorized()));
-    expect(second.status).toBe(503);
-    const body = (await second.json()) as { error: { message: string } };
-    expect(body.error.message).toContain("capacity");
+    expect(second.status).toBe(200);
     expect(handler.sessions.size).toBe(1);
+    expect(second.headers.get("mcp-session-id")).not.toBe(evicted);
+  });
+
+  it("answers the evicted session's next request with 404, not 400", async () => {
+    // The eviction is only survivable because of this: 404 is the Streamable
+    // HTTP signal to re-handshake, so a client whose slot was taken recovers
+    // on its own. 400 would strand it.
+    handler = createFetchHandler({
+      security: GATED,
+      sessions: { maxSessions: 1 },
+    });
+    const first = await handler.fetch(post(initializeBody(), authorized()));
+    const evicted = first.headers.get("mcp-session-id") ?? "";
+    await handler.fetch(post(initializeBody(), authorized()));
+
+    const stranded = await handler.fetch(
+      post(
+        JSON.stringify({ id: 2, jsonrpc: "2.0", method: "tools/list" }),
+        authorized({ "mcp-session-id": evicted }),
+      ),
+    );
+    expect(stranded.status).toBe(404);
   });
 
   it("admits a new session once an abandoned one ages out", async () => {

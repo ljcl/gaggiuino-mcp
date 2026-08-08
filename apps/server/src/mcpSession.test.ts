@@ -144,19 +144,17 @@ describe("idle expiry", () => {
 });
 
 describe("capacity", () => {
-  it("admits sessions up to the cap", async () => {
+  it("does nothing while there is room under the cap", async () => {
     const manager = createSessionManager({ maxSessions: 2 });
-    expect(await manager.tryReserve()).toBe(true);
     manager.add("a", fakeSession());
-    expect(await manager.tryReserve()).toBe(true);
-    manager.add("b", fakeSession());
-    expect(await manager.tryReserve()).toBe(false);
+    await manager.reserve();
+    expect(manager.size).toBe(1);
   });
 
-  it("reclaims idle sessions before refusing a new one", async () => {
-    // A burst of abandoned sessions must not lock out a client that arrives
-    // later, which is the whole reason tryReserve sweeps instead of just
-    // comparing against the cap.
+  it("reclaims idle sessions before touching a live one", async () => {
+    // Closing a session whose client has vanished costs nobody anything;
+    // closing a live one costs its client a re-handshake. So the sweep runs
+    // first and the LRU eviction is the fallback, not the mechanism.
     const clock = fakeClock();
     const manager = createSessionManager({
       idleTimeoutMs: 1_000,
@@ -164,28 +162,114 @@ describe("capacity", () => {
       now: clock.now,
     });
     const abandoned = fakeSession();
+    const live = fakeSession();
     manager.add("a", abandoned);
-    manager.add("b", fakeSession());
-    expect(await manager.tryReserve()).toBe(false);
-
     clock.advance(2_000);
-    expect(await manager.tryReserve()).toBe(true);
+    manager.add("b", live);
+
+    await manager.reserve();
     expect(abandoned.closed).toBe(true);
-    expect(manager.size).toBe(0);
+    expect(live.closed).toBe(false);
+    expect(manager.size).toBe(1);
   });
 
-  it("still refuses when every session is active", async () => {
+  it("evicts the least recently seen session when every one is active", async () => {
+    // The #122 case: Claude opens a session per tool call and never DELETEs,
+    // so nothing is sweepable and the cap would otherwise end a working
+    // conversation with a 503 whose advised retry is another initialize.
     const clock = fakeClock();
     const manager = createSessionManager({
       idleTimeoutMs: 10_000,
-      maxSessions: 1,
+      maxSessions: 2,
       now: clock.now,
     });
-    manager.add("a", fakeSession());
-    clock.advance(5_000);
-    manager.get("a");
-    expect(await manager.tryReserve()).toBe(false);
+    const oldest = fakeSession();
+    const newer = fakeSession();
+    manager.add("a", oldest);
+    clock.advance(1_000);
+    manager.add("b", newer);
+
+    await manager.reserve();
+    expect(oldest.closed).toBe(true);
+    expect(newer.closed).toBe(false);
+    expect(manager.get("a")).toBeUndefined();
     expect(manager.size).toBe(1);
+  });
+
+  it("counts a request as recency, not just when the session was opened", async () => {
+    // Otherwise the oldest *session* is evicted rather than the quietest one,
+    // and the session doing the work is the one that gets closed.
+    const clock = fakeClock();
+    const manager = createSessionManager({
+      idleTimeoutMs: 10_000,
+      maxSessions: 2,
+      now: clock.now,
+    });
+    const busy = fakeSession();
+    const quiet = fakeSession();
+    manager.add("a", busy);
+    clock.advance(1_000);
+    manager.add("b", quiet);
+    clock.advance(1_000);
+    manager.get("a");
+
+    await manager.reserve();
+    expect(quiet.closed).toBe(true);
+    expect(busy.closed).toBe(false);
+  });
+
+  it("frees enough slots when the map is already over the cap", async () => {
+    // A cap lowered between restarts leaves the map above the new ceiling, and
+    // a single eviction would not be enough to admit anyone. Nothing here is
+    // idle — the default TTL is 30 minutes and the clock has barely moved — so
+    // the loop, not the sweep, is what has to close all three.
+    const clock = fakeClock();
+    const manager = createSessionManager({ maxSessions: 1, now: clock.now });
+    for (const id of ["a", "b", "c"]) {
+      manager.add(id, fakeSession());
+      clock.advance(1);
+    }
+
+    await manager.reserve();
+    expect(manager.size).toBe(0);
+  });
+
+  it("clamps a zero cap rather than becoming unable to admit anyone", async () => {
+    // `reserve()` promises to always succeed, and a cap of zero is the one
+    // value that could break that promise. It is also not a configuration
+    // anyone wants — it means "serve nobody".
+    const manager = createSessionManager({ maxSessions: 0 });
+    await manager.reserve();
+    manager.add("a", fakeSession());
+    expect(manager.size).toBe(1);
+    await manager.reserve();
+    expect(manager.size).toBe(0);
+  });
+
+  it("reports why each session was closed", async () => {
+    // A run of `capacity` evictions is the signature of a host that is not
+    // reusing its sessions; `idle` is a client that went away. Same callback,
+    // different diagnosis, so the reason has to survive to the log.
+    const clock = fakeClock();
+    const reasons: Array<[string, string]> = [];
+    const manager = createSessionManager({
+      idleTimeoutMs: 1_000,
+      maxSessions: 1,
+      now: clock.now,
+      onEvicted: (sessionId, reason) => reasons.push([sessionId, reason]),
+    });
+
+    manager.add("gone", fakeSession());
+    clock.advance(2_000);
+    await manager.reserve();
+
+    manager.add("live", fakeSession());
+    await manager.reserve();
+
+    expect(reasons).toEqual([
+      ["gone", "idle"],
+      ["live", "capacity"],
+    ]);
   });
 });
 
