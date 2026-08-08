@@ -3,11 +3,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createFetchHandler, type FetchHandler } from "../http";
 import { type SecurityConfig } from "../mcpAuth";
 import {
+  delegatedConfig,
+  TEST_EXTERNAL_ISSUER,
   TEST_ISSUER,
+  TEST_OAUTH_CONFIG,
   TEST_PASSPHRASE,
-  TEST_PASSPHRASE_HASH,
   TEST_RESOURCE,
-  TEST_SECRET,
 } from "./__fixtures__";
 import { type ClientMetadata } from "./clients";
 
@@ -42,12 +43,17 @@ const LOOPBACK: ClientMetadata = {
 const OAUTH: SecurityConfig = {
   allowedHosts: [],
   allowedOrigins: [],
-  oauth: {
-    issuer: TEST_ISSUER,
-    passphraseHash: TEST_PASSPHRASE_HASH,
-    resource: TEST_RESOURCE,
-    secret: TEST_SECRET,
-  },
+  oauth: TEST_OAUTH_CONFIG,
+};
+
+/**
+ * An external issuer that refuses everything. These two tests exercise routing
+ * and metadata, never verification — a real `createExternalIssuer` would put
+ * discovery on the path of a test about which URLs are mounted.
+ */
+const NEVER_VERIFIES = {
+  verify: () =>
+    Promise.resolve({ ok: false as const, reason: "unknown-key" as const }),
 };
 
 let handler: FetchHandler;
@@ -186,6 +192,52 @@ describe("discovery", () => {
     // Claude appends offline_access only when the metadata lists it. Without a
     // refresh token the owner re-consents constantly on iOS.
     expect(doc.scopes_supported).toContain("offline_access");
+  });
+
+  it("unmounts the authorization server entirely for an external issuer", async () => {
+    // Resource-server-only mode. Serving an authorization endpoint while
+    // advertising somebody else's would give a client two answers to the same
+    // question, so these must be gone rather than merely unadvertised.
+    const delegated = createFetchHandler({
+      security: {
+        allowedHosts: [],
+        allowedOrigins: [],
+        oauth: delegatedConfig(NEVER_VERIFIES),
+      },
+    });
+    for (const path of [
+      "/.well-known/oauth-authorization-server",
+      "/oauth/authorize",
+      "/oauth/token",
+    ]) {
+      const response = await delegated.fetch(
+        new Request(`${TEST_ISSUER}${path}`),
+      );
+      expect(response.status, path).toBe(404);
+    }
+    await delegated.shutdown();
+  });
+
+  it("points protected-resource metadata at the external issuer", async () => {
+    // The one document this server still publishes in that mode, and the only
+    // thing that tells Claude where to go instead.
+    const delegated = createFetchHandler({
+      security: {
+        allowedHosts: [],
+        allowedOrigins: [],
+        oauth: delegatedConfig(NEVER_VERIFIES),
+      },
+    });
+    const response = await delegated.fetch(
+      new Request(`${TEST_ISSUER}/.well-known/oauth-protected-resource`),
+    );
+    expect(response.status).toBe(200);
+    const doc = (await response.json()) as Record<string, unknown>;
+    expect(doc.authorization_servers).toEqual([TEST_EXTERNAL_ISSUER]);
+    // Still this server's own resource: the IdP mints the token, this server is
+    // what the token is *for*.
+    expect(doc.resource).toBe(TEST_RESOURCE);
+    await delegated.shutdown();
   });
 
   it("keeps the authorization server off an unconfigured deployment", async () => {

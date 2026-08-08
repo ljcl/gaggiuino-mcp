@@ -5,6 +5,7 @@ import {
   DEFAULT_MACHINE_URL,
   DEFAULT_PORT,
   loadServerConfig,
+  parseIssuerUrl,
   parsePublicUrl,
 } from "./config";
 
@@ -77,6 +78,61 @@ describe("parsePublicUrl", () => {
     expect(() => parsePublicUrl("https://example.test/mcp")).toThrow(
       /https:\/\/example\.test/,
     );
+  });
+});
+
+describe("parseIssuerUrl", () => {
+  it("treats absent and blank as unset", () => {
+    expect(parseIssuerUrl(undefined)).toBeUndefined();
+    expect(parseIssuerUrl("   ")).toBeUndefined();
+  });
+
+  it("keeps the path, unlike MCP_PUBLIC_URL", () => {
+    // The difference that matters: Keycloak and Authentik issuers always carry
+    // a path, and `parsePublicUrl` rejects one. Stripping it here would make
+    // every `iss` comparison fail against exactly the IdPs this targets.
+    expect(parseIssuerUrl("https://idp.example.test/realms/home")).toBe(
+      "https://idp.example.test/realms/home",
+    );
+  });
+
+  it("drops a trailing slash so `iss` compares byte-for-byte", () => {
+    // The claim is compared with `===`, so the slash has to be settled once
+    // here rather than at each comparison.
+    expect(parseIssuerUrl("https://idp.example.test/realms/home/")).toBe(
+      "https://idp.example.test/realms/home",
+    );
+    expect(parseIssuerUrl("https://idp.example.test/")).toBe(
+      "https://idp.example.test",
+    );
+  });
+
+  it("rejects a value that is not a URL at all", () => {
+    expect(() => parseIssuerUrl("idp.example.test")).toThrow(ConfigError);
+    expect(() => parseIssuerUrl("idp.example.test")).toThrow(/valid URL/);
+  });
+
+  it("rejects plain HTTP", () => {
+    // It decides which public keys authenticate every request, so over HTTP
+    // anyone on the network path substitutes their own JWKS.
+    expect(() => parseIssuerUrl("http://idp.example.test")).toThrow(/https/);
+  });
+
+  it("rejects embedded credentials", () => {
+    expect(() => parseIssuerUrl("https://user:pw@idp.example.test")).toThrow(
+      /credentials/,
+    );
+  });
+
+  it("rejects a query or fragment", () => {
+    for (const written of [
+      "https://idp.example.test/realms/home?realm=home",
+      "https://idp.example.test/realms/home#frag",
+    ]) {
+      expect(() => parseIssuerUrl(written), written).toThrow(
+        /query or fragment/,
+      );
+    }
   });
 });
 

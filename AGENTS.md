@@ -1062,7 +1062,8 @@ curl -X POST http://localhost:8000/mcp \
 | `HOST`                | `0.0.0.0`                | Bind address                                      |
 | `MCP_PUBLIC_URL`      | _(unset)_                | Public https origin, no path. With `MCP_OAUTH_SECRET`, enables OAuth and is advertised as the `resource` |
 | `MCP_OAUTH_SECRET`    | _(unset)_                | ≥32-char signing key for self-issued tokens; keep it stable across restarts |
-| `MCP_OAUTH_PASSPHRASE_HASH` | _(unset)_          | scrypt hash for the consent page. Required when OAuth is on; `bun run hash-passphrase` |
+| `MCP_OAUTH_PASSPHRASE_HASH` | _(unset)_          | scrypt hash for the consent page. Required when the built-in AS runs; `bun run hash-passphrase` |
+| `MCP_OAUTH_ISSUER`    | _(unset)_                | External issuer to delegate to. Resource-server-only mode; refuses the two above |
 | `MCP_ALLOWED_ORIGINS` | _(empty)_                | Browser origins allowed on `/mcp`; `*` allows any |
 | `MCP_ALLOWED_HOSTS`   | _(empty)_                | `Host` values to accept; empty disables the check |
 | `LOG_LEVEL`           | `info`                   | `debug`/`info`/`warn`/`error`/`silent`            |
@@ -1303,10 +1304,70 @@ document's author typed. `apps/server` has no dependency on
 `@gaggiuino/design-system` and must not gain one; if the page grows a template
 engine, that is a signal it is doing too much.
 
-`MCP_OAUTH_PASSPHRASE_HASH` is **mandatory** whenever OAuth is on — an
-unauthenticated consent page hands a token to anyone who finds the URL, so it is
-a startup failure rather than a degraded mode. It is the one place a real KDF
-belongs: scrypt to derive, `secretsMatch` to compare.
+`MCP_OAUTH_PASSPHRASE_HASH` is **mandatory** whenever the built-in authorization
+server runs — an unauthenticated consent page hands a token to anyone who finds
+the URL, so it is a startup failure rather than a degraded mode. It is the one
+place a real KDF belongs: scrypt to derive, `secretsMatch` to compare.
+
+### Delegating to an external issuer
+
+`MCP_OAUTH_ISSUER` puts the server in **resource-server-only mode**: the
+built-in AS does not mount, protected-resource metadata advertises the external
+issuer, and `externalIssuer.ts` verifies RS256/ES256 tokens against the issuer's
+JWKS. Unset, nothing changes — the built-in AS is still the default.
+
+**The rename is the change.** `OAuthConfig.issuer` used to mean two things at
+once — this server's public origin *and* the token issuer — which was invisible
+while they were the same string. They are now `publicOrigin` and `issuer`, and
+the distinction is load-bearing in one place above all: `metadataUrl` builds the
+401's `resource_metadata` pointer, and building it from `issuer` would send a
+client to the *IdP* for a document only this server publishes, breaking the exact
+discovery path that header exists to fix. Rule of thumb: anything describing
+*this server* takes `publicOrigin`, anything describing *who mints tokens* takes
+`issuer`.
+
+`OAuthConfig` is a **discriminated union** on `external`, not one interface with
+optional fields. That is what lets `authenticate` reach `config.oauth.secret` in
+the built-in branch without a `?? ""` fallback — which would have quietly
+verified tokens against an empty key — and it makes `asAuthServer` a one-line
+narrowing instead of a cast.
+
+Five things in `externalIssuer.ts` are load-bearing:
+
+- **The algorithm allowlist is a security control.** Only RS256 and ES256 reach a
+  key import, and the check happens *before* the key lookup. That is what makes
+  algorithm confusion unreachable: an attacker who signs `HS256` with the
+  issuer's public key — which is public by design — presents an `alg` this server
+  will not look up at all. `alg: "none"` dies in the same branch. A test asserts
+  no network call is made for such a token, because the ordering is the property.
+- **A `kid` miss may refetch, but not on demand.** Rotation has to work without a
+  restart, so an unrecognised `kid` refetches the JWKS — and unauthenticated
+  callers reach that path, since a token is checked before anything knows it is
+  real. `REFETCH_COOLDOWN_MS` bounds it to one refetch a minute, turning a flood
+  of random `kid`s into a no-op.
+- **The discovery document's own `issuer` is checked** (RFC 8414 §3.3). Without
+  it a redirect, or a typo landing on another tenant, silently substitutes a
+  different key set for the one the operator named.
+- **RFC 8414 inserts its well-known segment before the issuer's path; OIDC
+  appends after.** For `https://idp/realms/home` those are genuinely different
+  URLs, not a suffix apart, and Keycloak and Authentik issuers always carry a
+  path. `parseIssuerUrl` therefore permits a path where `parsePublicUrl` rejects
+  one, and normalises the trailing slash once so `iss` compares byte-for-byte.
+- **No private-address guard, deliberately** — the opposite of `clients.ts`. A
+  `client_id` arrives from the caller, so fetching it is an SSRF sink; this
+  arrives from the operator's own environment, and pointing it at Authentik on
+  the LAN or a tailnet is the intended deployment.
+
+`MCP_OAUTH_SECRET` and `MCP_OAUTH_PASSPHRASE_HASH` alongside `MCP_OAUTH_ISSUER`
+are a **startup failure, not an ignored setting**. Both belong to the AS that no
+longer mounts, so a deployment carrying them holds a belief about this server
+that is false, and silently dropping them is how that belief survives to the day
+it matters.
+
+`authenticate` and `checkRequest` are async now, because fetching a key is. One
+consequence worth keeping: `checkRequest` no longer evaluates `authenticate` as a
+default argument, so Origin and Host are checked *first* and a cross-origin probe
+can never make this server call out to its IdP.
 
 `writeToolDisabled` (`tools.ts`) answers only the third state — no authorization
 server configured at all — and with the shared secret gone it is a single check

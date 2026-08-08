@@ -101,7 +101,8 @@ docker compose pull && docker compose up -d
 | `HOST` | `0.0.0.0` | Host to bind to |
 | `MCP_PUBLIC_URL` | _(unset)_ | Public `https` origin clients reach this server on, with no path (e.g. `https://box.tailnet.ts.net`). Set together with `MCP_OAUTH_SECRET` to enable OAuth. It is advertised as the OAuth `resource`, so it must match the URL you enter in the client exactly. |
 | `MCP_OAUTH_SECRET` | _(unset)_ | Signing key for self-issued OAuth tokens, at least 32 characters (`openssl rand -hex 32`). Keep it stable across restarts so clients stay signed in. Setting only one of these two fails at startup. |
-| `MCP_OAUTH_PASSPHRASE_HASH` | _(unset)_ | scrypt hash of the passphrase you type on the consent page when connecting a client. Required whenever OAuth is on — without it the consent page would grant a token to anyone who reached it, so the server refuses to start. Generate with `cd apps/server && bun run hash-passphrase`; never store the passphrase itself. |
+| `MCP_OAUTH_PASSPHRASE_HASH` | _(unset)_ | scrypt hash of the passphrase you type on the consent page when connecting a client. Required whenever the built-in authorization server is on — without it the consent page would grant a token to anyone who reached it, so the server refuses to start. Generate with `cd apps/server && bun run hash-passphrase`; never store the passphrase itself. |
+| `MCP_OAUTH_ISSUER` | _(unset)_ | Delegate token issuing to an identity provider you already run (Authentik, Keycloak, Authelia, Zitadel, Kanidm, `tsidp`). Set it and this server serves no OAuth endpoints of its own, verifying RS256/ES256 tokens against the issuer's JWKS instead. Requires `MCP_PUBLIC_URL`; refuses to start alongside `MCP_OAUTH_SECRET` or `MCP_OAUTH_PASSPHRASE_HASH`. See [Using an external identity provider](#using-an-external-identity-provider). |
 | `MCP_ALLOWED_ORIGINS` | _(empty)_ | Comma-separated browser origins allowed to call `/mcp`. `*` allows any (unsafe). |
 | `MCP_ALLOWED_HOSTS` | _(empty)_ | Comma-separated `Host` header values to accept. Empty disables the check. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, or `silent`. Logs are one JSON object per line on stderr. |
@@ -361,10 +362,62 @@ canonicalise across hosts (see the redirect note above), and it must pass the
 
 ### Using an external identity provider
 
-Not yet supported — the built-in authorization server is the only mode. If you
-already run Authentik, Authelia, Keycloak, Zitadel, Kanidm or `tsidp` and would
-rather point at it, that is tracked in
-[#110](https://github.com/ljcl/gaggiuino-mcp/issues/110).
+If you already run Authentik, Authelia, Keycloak, Zitadel, Kanidm or `tsidp`,
+set `MCP_OAUTH_ISSUER` to its issuer URL and this server stops being an
+authorization server at all:
+
+```bash
+MCP_PUBLIC_URL=https://gaggiuino.tail1234.ts.net
+MCP_OAUTH_ISSUER=https://idp.example.com/realms/home
+```
+
+`/oauth/authorize`, `/oauth/token` and
+`/.well-known/oauth-authorization-server` stop being served entirely, and
+protected-resource metadata points Claude at your issuer instead. Nothing is
+signed here any more, so `MCP_OAUTH_SECRET` and `MCP_OAUTH_PASSPHRASE_HASH`
+have no purpose — setting either alongside `MCP_OAUTH_ISSUER` is **refused at
+startup** rather than ignored, because ignoring it would leave you believing in
+a consent page that is never rendered.
+
+`MCP_PUBLIC_URL` is still required: it is what the token's audience is checked
+against.
+
+Four things have to be true on the identity provider, whatever the product:
+
+1. **S256 PKCE** advertised in `code_challenge_methods_supported`.
+2. **Discovery reachable from Anthropic's egress range**, `160.79.104.0/21`. A
+   WAF in front of your identity provider breaks the flow even when this server
+   is perfectly reachable.
+3. **Token audience equal to `MCP_PUBLIC_URL` + `/mcp`.** Keycloak needs an
+   Audience-mapper client scope for this — it has no RFC 8707 support for the
+   current spec versions, so the property the spec insists on hardest is manual
+   configuration there.
+4. **Redirect URI `https://claude.ai/api/mcp/auth_callback`**, plus
+   port-agnostic `http://localhost/callback` and `http://127.0.0.1/callback` if
+   you use Claude Code.
+
+**Dynamic client registration is not required**, which is worth stating
+plainly because it changes the compatibility story: Claude accepts a
+pre-registered client ID pasted into the connector dialog, so Authelia,
+Authentik, Zitadel and Kanidm — none of which do DCR — are all perfectly usable
+with one manually created client.
+
+Tokens must be signed **RS256 or ES256**. No other algorithm is verified, and
+that is a deliberate limit rather than an omission: accepting `HS256` against a
+key fetched from a JWKS is the classic algorithm-confusion attack, in which an
+attacker signs a token with the issuer's *public* key.
+
+Discovery follows RFC 8414 first and falls back to
+`/.well-known/openid-configuration`, so issuers that publish only the OpenID
+document work unchanged. `scripts/test-auth.sh` already probes that chain
+against whatever `authorization_servers` points at, so it diagnoses an external
+issuer as readily as the built-in one.
+
+`tsidp` deserves a note on cost rather than a recommendation: it means a second
+container, a persistent `/data` volume, a tailnet ACL grant for `allow_dcr`,
+`TAILSCALE_USE_WIP_CODE=1`, and an upstream that describes itself as
+experimental and pre-1.0. Reach for it if you are already deep in Tailscale;
+otherwise the built-in authorization server is less moving parts.
 
 ### Local Network Only
 

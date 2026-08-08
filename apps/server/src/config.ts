@@ -109,6 +109,61 @@ export function parsePublicUrl(value: string | undefined): string | undefined {
   return url.origin;
 }
 
+/**
+ * Validate `MCP_OAUTH_ISSUER` — an external authorization server to delegate to.
+ *
+ * Deliberately laxer than `parsePublicUrl` in one way and identical in the rest:
+ * **a path is allowed**, because real self-hosted IdPs put the issuer under one
+ * (`https://idp.example/realms/home` on Keycloak, `https://idp.example/application/o/gaggiuino/`
+ * on Authentik). That is also why `discoveryUrls` has to implement RFC 8414's
+ * path-insertion properly rather than appending a suffix — with a path the two
+ * discovery URLs are genuinely different, not a suffix apart.
+ *
+ * https is required and not negotiable. This value decides which public keys are
+ * trusted to authenticate every request; over plain HTTP anyone on the path
+ * substitutes their own JWKS and mints themselves a token.
+ *
+ * There is deliberately **no private-address check** here, though `clients.ts`
+ * refuses exactly those for `client_id`. The two differ in who supplies the
+ * value: a `client_id` arrives from the caller, so fetching it is an SSRF sink,
+ * whereas this comes from the operator's own environment and pointing it at
+ * Authentik on the LAN or on a tailnet is the intended deployment.
+ */
+export function parseIssuerUrl(value: string | undefined): string | undefined {
+  if (value === undefined || value.trim() === "") return undefined;
+  const raw = value.trim();
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new ConfigError(
+      `MCP_OAUTH_ISSUER must be a valid URL, got ${JSON.stringify(raw)} (did you omit the https:// prefix?)`,
+    );
+  }
+  if (url.protocol !== "https:") {
+    throw new ConfigError(
+      `MCP_OAUTH_ISSUER must be https, got ${JSON.stringify(url.protocol)}. It decides which signing keys are trusted to authenticate every request, and over plain HTTP anyone on the network path can substitute their own.`,
+    );
+  }
+  if (url.username !== "" || url.password !== "") {
+    throw new ConfigError(
+      "MCP_OAUTH_ISSUER must not contain credentials; it is published in discovery metadata",
+    );
+  }
+  if (url.search !== "" || url.hash !== "") {
+    throw new ConfigError(
+      `MCP_OAUTH_ISSUER must not have a query or fragment, got ${JSON.stringify(raw)}`,
+    );
+  }
+  // An issuer identifier is compared byte-for-byte against the `iss` claim and
+  // against the discovery document's own `issuer`, so the trailing slash has to
+  // be settled here rather than at each comparison. Dropping it matches what
+  // every IdP publishes.
+  return url.pathname === "/"
+    ? url.origin
+    : `${url.origin}${url.pathname.replace(/\/$/, "")}`;
+}
+
 export function loadServerConfig(
   env: Record<string, string | undefined> = process.env,
 ): ServerConfig {

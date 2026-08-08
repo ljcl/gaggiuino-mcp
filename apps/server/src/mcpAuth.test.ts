@@ -10,7 +10,12 @@ import {
   type SecurityConfig,
   secretsMatch,
 } from "./mcpAuth";
-import { TEST_OAUTH_ENV, TEST_PASSPHRASE_HASH } from "./oauth/__fixtures__";
+import {
+  TEST_EXTERNAL_ISSUER,
+  TEST_OAUTH_CONFIG,
+  TEST_OAUTH_ENV,
+  TEST_PASSPHRASE_HASH,
+} from "./oauth/__fixtures__";
 import { signToken } from "./oauth/tokens";
 
 const OPEN: SecurityConfig = { allowedHosts: [], allowedOrigins: [] };
@@ -20,10 +25,7 @@ const RESOURCE = `${ISSUER}/mcp`;
 const SECRET = "s".repeat(64);
 const NOW_MS = 1_000_000_000;
 
-const OAUTH: SecurityConfig = {
-  ...OPEN,
-  oauth: { issuer: ISSUER, resource: RESOURCE, secret: SECRET },
-};
+const OAUTH: SecurityConfig = { ...OPEN, oauth: TEST_OAUTH_CONFIG };
 
 function accessToken(scope = "espresso:read espresso:write"): string {
   return signToken(
@@ -56,7 +58,7 @@ function preflight(headers: Record<string, string> = {}): Request {
 }
 
 describe("loadSecurityConfig", () => {
-  it("serves unauthenticated when OAuth is not configured", () => {
+  it("serves unauthenticated when OAuth is not configured", async () => {
     expect(loadSecurityConfig({})).toEqual({
       allowedHosts: [],
       allowedOrigins: [],
@@ -64,7 +66,7 @@ describe("loadSecurityConfig", () => {
     });
   });
 
-  it("ignores MCP_AUTH_TOKEN entirely", () => {
+  it("ignores MCP_AUTH_TOKEN entirely", async () => {
     // Nothing reads the removed shared secret any more — the 2.0.x startup
     // tombstone is gone too (#114) — so a stale value in a long-lived `.env`
     // must be an ignored variable, never something that re-gates `/mcp`.
@@ -75,7 +77,7 @@ describe("loadSecurityConfig", () => {
     });
   });
 
-  it("splits and trims the comma-separated allowlists", () => {
+  it("splits and trims the comma-separated allowlists", async () => {
     const config = loadSecurityConfig({
       MCP_ALLOWED_HOSTS: "gaggiuino.local:8000",
       MCP_ALLOWED_ORIGINS: "https://claude.ai, https://example.test ,",
@@ -89,12 +91,12 @@ describe("loadSecurityConfig", () => {
 });
 
 describe("secretsMatch", () => {
-  it("accepts an exact match and rejects anything else", () => {
+  it("accepts an exact match and rejects anything else", async () => {
     expect(secretsMatch("s3cret", "s3cret")).toBe(true);
     expect(secretsMatch("s3cret", "s3crey")).toBe(false);
   });
 
-  it("compares values of different lengths without throwing", () => {
+  it("compares values of different lengths without throwing", async () => {
     // node's timingSafeEqual throws on a length mismatch, and guarding with an
     // early length check is what leaks the secret's length. Hashing first is
     // the reason this case is a plain `false`.
@@ -104,14 +106,14 @@ describe("secretsMatch", () => {
 });
 
 describe("checkRequest — origin", () => {
-  it("allows requests with no Origin header", () => {
+  it("allows requests with no Origin header", async () => {
     // curl, Claude Desktop, the container healthcheck: not browsers, so not
     // the confused-deputy case the allowlist exists for.
-    expect(checkRequest(request(), OPEN)).toBeUndefined();
+    expect(await checkRequest(request(), OPEN)).toBeUndefined();
   });
 
   it("rejects a browser origin when the allowlist is empty", async () => {
-    const response = checkRequest(
+    const response = await checkRequest(
       request({ origin: "https://evil.example" }),
       OPEN,
     );
@@ -120,38 +122,41 @@ describe("checkRequest — origin", () => {
     expect(body.error.message).toContain("https://evil.example");
   });
 
-  it("allows an origin on the allowlist", () => {
+  it("allows an origin on the allowlist", async () => {
     const config = { ...OPEN, allowedOrigins: ["https://claude.ai"] };
     expect(
-      checkRequest(request({ origin: "https://claude.ai" }), config),
+      await checkRequest(request({ origin: "https://claude.ai" }), config),
     ).toBeUndefined();
     expect(
-      checkRequest(request({ origin: "https://claude.ai.evil.test" }), config),
+      await checkRequest(
+        request({ origin: "https://claude.ai.evil.test" }),
+        config,
+      ),
     ).toBeDefined();
   });
 
-  it("honours the explicit wildcard escape hatch", () => {
+  it("honours the explicit wildcard escape hatch", async () => {
     const config = { ...OPEN, allowedOrigins: ["*"] };
     expect(
-      checkRequest(request({ origin: "https://anything.test" }), config),
+      await checkRequest(request({ origin: "https://anything.test" }), config),
     ).toBeUndefined();
   });
 });
 
 describe("checkRequest — host", () => {
-  it("skips host validation when no allowlist is configured", () => {
+  it("skips host validation when no allowlist is configured", async () => {
     expect(
-      checkRequest(request({ host: "whatever.test" }), OPEN),
+      await checkRequest(request({ host: "whatever.test" }), OPEN),
     ).toBeUndefined();
   });
 
-  it("rejects a host outside the allowlist", () => {
+  it("rejects a host outside the allowlist", async () => {
     const config = { ...OPEN, allowedHosts: ["gaggiuino.local:8000"] };
     expect(
-      checkRequest(request({ host: "attacker.test" }), config)?.status,
+      (await checkRequest(request({ host: "attacker.test" }), config))?.status,
     ).toBe(403);
     expect(
-      checkRequest(request({ host: "gaggiuino.local:8000" }), config),
+      await checkRequest(request({ host: "gaggiuino.local:8000" }), config),
     ).toBeUndefined();
   });
 
@@ -160,7 +165,7 @@ describe("checkRequest — host", () => {
     // it. Worth asserting separately because the absent case reaches a
     // different arm — the message has to name something, and `undefined`
     // interpolated into it would read as a host called "undefined".
-    const response = checkRequest(request(), {
+    const response = await checkRequest(request(), {
       ...OPEN,
       allowedHosts: ["gaggiuino.local:8000"],
     });
@@ -171,12 +176,12 @@ describe("checkRequest — host", () => {
 });
 
 describe("checkRequest — credential", () => {
-  it("lets every request through when OAuth is not configured", () => {
-    expect(checkRequest(request(), OPEN)).toBeUndefined();
+  it("lets every request through when OAuth is not configured", async () => {
+    expect(await checkRequest(request(), OPEN)).toBeUndefined();
   });
 
   it("challenges a request with no Authorization header", async () => {
-    const response = checkRequest(request(), OAUTH);
+    const response = await checkRequest(request(), OAUTH);
     expect(response?.status).toBe(401);
     expect(response?.headers.get("WWW-Authenticate")).toContain(
       "resource_metadata=",
@@ -186,9 +191,10 @@ describe("checkRequest — credential", () => {
     expect(body.jsonrpc).toBe("2.0");
   });
 
-  it("rejects a bare credential with no scheme", () => {
+  it("rejects a bare credential with no scheme", async () => {
     expect(
-      checkRequest(request({ authorization: "correct-horse" }), OAUTH)?.status,
+      (await checkRequest(request({ authorization: "correct-horse" }), OAUTH))
+        ?.status,
     ).toBe(401);
   });
 });
@@ -201,7 +207,7 @@ describe("checkRequest — ordering", () => {
       ...OAUTH,
       allowedOrigins: ["https://claude.ai"],
     };
-    const response = checkRequest(
+    const response = await checkRequest(
       request({ origin: "https://evil.test" }),
       config,
     );
@@ -215,19 +221,19 @@ describe("corsHeaders", () => {
     allowedOrigins: ["https://claude.ai"],
   };
 
-  it("says nothing when there is no Origin to answer", () => {
+  it("says nothing when there is no Origin to answer", async () => {
     // A non-browser client needs no CORS headers, and emitting them anyway
     // would advertise the allowlist to anything that asks.
     expect(corsHeaders(request(), ALLOWED)).toEqual({});
   });
 
-  it("says nothing to an origin outside the allowlist", () => {
+  it("says nothing to an origin outside the allowlist", async () => {
     expect(
       corsHeaders(request({ origin: "https://evil.test" }), ALLOWED),
     ).toEqual({});
   });
 
-  it("echoes an allowed origin and exposes the session header", () => {
+  it("echoes an allowed origin and exposes the session header", async () => {
     // Passing the origin check is only half a cross-origin request: without
     // these the browser discards a reply the server was happy to send, and
     // `mcp-session-id` is not CORS-safelisted, so a client that cannot read it
@@ -241,7 +247,7 @@ describe("corsHeaders", () => {
     });
   });
 
-  it("echoes the caller's origin under the wildcard rather than returning *", () => {
+  it("echoes the caller's origin under the wildcard rather than returning *", async () => {
     const config: SecurityConfig = { allowedHosts: [], allowedOrigins: ["*"] };
     expect(
       corsHeaders(request({ origin: "https://anything.test" }), config)[
@@ -257,13 +263,13 @@ describe("handlePreflight", () => {
     allowedOrigins: ["https://claude.ai"],
   };
 
-  it("ignores anything that is not an OPTIONS request", () => {
+  it("ignores anything that is not an OPTIONS request", async () => {
     expect(
       handlePreflight(request({ origin: "https://claude.ai" }), ALLOWED),
     ).toBe(undefined);
   });
 
-  it("answers an allowed origin without requiring the token", () => {
+  it("answers an allowed origin without requiring the token", async () => {
     // A browser sends the preflight with no Authorization header by design, so
     // gating it on the token rejects every credentialed cross-origin request
     // before it is ever made.
@@ -280,7 +286,7 @@ describe("handlePreflight", () => {
     );
   });
 
-  it("permits every header a Streamable HTTP client sends", () => {
+  it("permits every header a Streamable HTTP client sends", async () => {
     // Omitting one makes the browser fail the preflight for a request the
     // allowlist was meant to permit.
     const allowed = handlePreflight(
@@ -298,7 +304,7 @@ describe("handlePreflight", () => {
     }
   });
 
-  it("refuses a preflight from an origin outside the allowlist", () => {
+  it("refuses a preflight from an origin outside the allowlist", async () => {
     const response = handlePreflight(
       preflight({ origin: "https://evil.test" }),
       ALLOWED,
@@ -311,21 +317,25 @@ describe("handlePreflight", () => {
 describe("loadSecurityConfig — OAuth", () => {
   const COMPLETE = TEST_OAUTH_ENV;
 
-  it("stays unconfigured when neither variable is set", () => {
+  it("stays unconfigured when neither variable is set", async () => {
     expect(loadSecurityConfig({}).oauth).toBeUndefined();
   });
 
-  it("derives the resource by appending /mcp to the public origin", () => {
+  it("derives the resource by appending /mcp to the public origin", async () => {
     // This must equal the URL the user types into Claude, path included.
     expect(loadSecurityConfig(COMPLETE).oauth).toEqual({
+      // Equal on purpose: with the built-in authorization server this server
+      // both mints the tokens and answers as the resource. The delegated tests
+      // below are where the two come apart.
       issuer: ISSUER,
       passphraseHash: TEST_PASSPHRASE_HASH,
+      publicOrigin: ISSUER,
       resource: RESOURCE,
       secret: SECRET,
     });
   });
 
-  it("refuses to enable OAuth with no consent passphrase", () => {
+  it("refuses to enable OAuth with no consent passphrase", async () => {
     // Without one, /oauth/authorize would hand a token to anyone who reached
     // the URL — so this is a startup failure rather than a degraded mode.
     const { MCP_OAUTH_PASSPHRASE_HASH: _omitted, ...rest } = COMPLETE;
@@ -333,7 +343,7 @@ describe("loadSecurityConfig — OAuth", () => {
     expect(() => loadSecurityConfig(rest)).toThrow(/PASSPHRASE/);
   });
 
-  it("refuses a passphrase hash that is not a scrypt hash", () => {
+  it("refuses a passphrase hash that is not a scrypt hash", async () => {
     // The likely mistake is pasting the passphrase itself into the variable.
     expect(() =>
       loadSecurityConfig({
@@ -343,7 +353,7 @@ describe("loadSecurityConfig — OAuth", () => {
     ).toThrow(ConfigError);
   });
 
-  it("fails startup when only half of it is configured", () => {
+  it("fails startup when only half of it is configured", async () => {
     // Silently falling back to the previous behaviour is how somebody exposes
     // a tunnel believing it is OAuth-gated.
     expect(() => loadSecurityConfig({ MCP_PUBLIC_URL: ISSUER })).toThrow(
@@ -357,14 +367,14 @@ describe("loadSecurityConfig — OAuth", () => {
     );
   });
 
-  it("treats a blank value as unset on both variables", () => {
+  it("treats a blank value as unset on both variables", async () => {
     expect(
       loadSecurityConfig({ MCP_OAUTH_SECRET: "  ", MCP_PUBLIC_URL: "  " })
         .oauth,
     ).toBeUndefined();
   });
 
-  it("refuses a secret short enough to have been typed by hand", () => {
+  it("refuses a secret short enough to have been typed by hand", async () => {
     expect(() =>
       loadSecurityConfig({ ...COMPLETE, MCP_OAUTH_SECRET: "hunter2" }),
     ).toThrow(ConfigError);
@@ -376,8 +386,12 @@ describe("authenticate — OAuth", () => {
     return request({ authorization: `Bearer ${token}` });
   }
 
-  it("grants the token's scopes and names its subject", () => {
-    const outcome = authenticate(withToken(accessToken()), OAUTH, () => NOW_MS);
+  it("grants the token's scopes and names its subject", async () => {
+    const outcome = await authenticate(
+      withToken(accessToken()),
+      OAUTH,
+      () => NOW_MS,
+    );
     expect(outcome.refusal).toBeUndefined();
     expect(outcome.grant).toEqual({
       mode: "oauth",
@@ -386,8 +400,8 @@ describe("authenticate — OAuth", () => {
     });
   });
 
-  it("grants only what the token carries", () => {
-    const outcome = authenticate(
+  it("grants only what the token carries", async () => {
+    const outcome = await authenticate(
       withToken(accessToken("espresso:read")),
       OAUTH,
       () => NOW_MS,
@@ -395,17 +409,17 @@ describe("authenticate — OAuth", () => {
     expect(outcome.grant.scopes).toEqual(["espresso:read"]);
   });
 
-  it("refuses a request with no Authorization header", () => {
-    const outcome = authenticate(request(), OAUTH, () => NOW_MS);
+  it("refuses a request with no Authorization header", async () => {
+    const outcome = await authenticate(request(), OAUTH, () => NOW_MS);
     expect(outcome.refusal?.status).toBe(401);
     expect(outcome.reason).toBe("missing");
     expect(outcome.grant.scopes).toEqual([]);
   });
 
-  it("distinguishes a malformed header from an absent one, for the log", () => {
+  it("distinguishes a malformed header from an absent one, for the log", async () => {
     // The field that separates "the client never sent it" from "it sent
     // something unusable" — which is the evidence an upstream bug report needs.
-    const outcome = authenticate(
+    const outcome = await authenticate(
       request({ authorization: "Basic abc" }),
       OAUTH,
       () => NOW_MS,
@@ -413,7 +427,7 @@ describe("authenticate — OAuth", () => {
     expect(outcome.reason).toBe("malformed-header");
   });
 
-  it("carries the verification failure into the log and not the response", () => {
+  it("carries the verification failure into the log and not the response", async () => {
     const expired = signToken(
       {
         aud: RESOURCE,
@@ -427,17 +441,15 @@ describe("authenticate — OAuth", () => {
       SECRET,
       "access-token",
     );
-    const outcome = authenticate(withToken(expired), OAUTH, () => NOW_MS);
+    const outcome = await authenticate(withToken(expired), OAUTH, () => NOW_MS);
     expect(outcome.reason).toBe("expired");
     expect(outcome.refusal?.status).toBe(401);
   });
 
-  it("points every refusal at the metadata document", () => {
+  it("points every refusal at the metadata document", async () => {
     for (const req of [request(), withToken("garbage")]) {
-      const header = authenticate(
-        req,
-        OAUTH,
-        () => NOW_MS,
+      const header = (
+        await authenticate(req, OAUTH, () => NOW_MS)
       ).refusal?.headers.get("WWW-Authenticate");
       expect(header).toContain(
         'resource_metadata="https://box.tail1234.ts.net/.well-known/oauth-protected-resource/mcp"',
@@ -446,11 +458,11 @@ describe("authenticate — OAuth", () => {
     }
   });
 
-  it("refuses a credential that is not one of its own access tokens", () => {
+  it("refuses a credential that is not one of its own access tokens", async () => {
     // The shape a deployment that never migrated would present: whatever it
     // used to send as MCP_AUTH_TOKEN. There is no second credential path left
     // for it to fall into, so it fails verification like any other bad token.
-    const outcome = authenticate(
+    const outcome = await authenticate(
       request({ authorization: "Bearer correct-horse-battery-staple" }),
       OAUTH,
       () => NOW_MS,
@@ -459,53 +471,147 @@ describe("authenticate — OAuth", () => {
     expect(outcome.grant).toEqual({ mode: "oauth", scopes: [] });
   });
 
-  it("grants every scope when nothing is configured", () => {
+  it("grants every scope when nothing is configured", async () => {
     // Not a hole: the write tools are refused by `writeToolDisabled` with text
     // that explains there is no way to authenticate. A 403 here would point at
     // an authorization server that does not exist.
-    expect(authenticate(request(), OPEN).grant).toEqual({
+    expect((await authenticate(request(), OPEN)).grant).toEqual({
       mode: "none",
       scopes: ["espresso:read", "espresso:write"],
     });
   });
 
-  it("ignores an Authorization header when nothing is configured", () => {
+  it("ignores an Authorization header when nothing is configured", async () => {
     // An unconfigured server has nothing to check a credential against, so a
     // presented one is neither honoured nor a reason to refuse.
     expect(
-      authenticate(request({ authorization: "Bearer anything" }), OPEN).grant,
+      (await authenticate(request({ authorization: "Bearer anything" }), OPEN))
+        .grant,
     ).toEqual({ mode: "none", scopes: ["espresso:read", "espresso:write"] });
   });
 
-  it("defaults its clock to the real one", () => {
-    expect(authenticate(withToken(accessToken()), OAUTH).refusal?.status).toBe(
-      401,
-    );
+  it("defaults its clock to the real one", async () => {
+    expect(
+      (await authenticate(withToken(accessToken()), OAUTH)).refusal?.status,
+    ).toBe(401);
   });
 });
 
 describe("checkRequest — OAuth", () => {
-  it("still checks Origin before the credential", () => {
+  it("still checks Origin before the credential", async () => {
     // Otherwise the 401/403 split tells an unauthenticated cross-origin prober
     // whether authentication is configured at all.
     const config = { ...OAUTH, allowedOrigins: ["https://claude.ai"] };
     expect(
-      checkRequest(request({ origin: "https://evil.test" }), config)?.status,
+      (await checkRequest(request({ origin: "https://evil.test" }), config))
+        ?.status,
     ).toBe(403);
   });
 
-  it("refuses an unauthenticated request with a discoverable 401", () => {
-    const response = checkRequest(request(), OAUTH);
+  it("refuses an unauthenticated request with a discoverable 401", async () => {
+    const response = await checkRequest(request(), OAUTH);
     expect(response?.status).toBe(401);
     expect(response?.headers.get("WWW-Authenticate")).toContain(
       "resource_metadata=",
     );
   });
 
-  it("accepts a precomputed authentication rather than redoing it", () => {
+  it("accepts a precomputed authentication rather than redoing it", async () => {
     const req = request({ authorization: `Bearer ${accessToken()}` });
-    const auth = authenticate(req, OAUTH, () => NOW_MS);
-    expect(checkRequest(req, OAUTH, auth)).toBeUndefined();
+    const auth = await authenticate(req, OAUTH, () => NOW_MS);
+    expect(await checkRequest(req, OAUTH, auth)).toBeUndefined();
+  });
+});
+
+describe("loadSecurityConfig — an external issuer", () => {
+  const DELEGATED = {
+    MCP_OAUTH_ISSUER: TEST_EXTERNAL_ISSUER,
+    MCP_PUBLIC_URL: ISSUER,
+  };
+
+  it("advertises the IdP as the issuer while still answering as the resource", async () => {
+    // The split the whole feature turns on: `issuer` is who mints tokens,
+    // `publicOrigin` is this server. With the built-in AS they are equal; here
+    // they must not be, or protected-resource metadata would point Claude at
+    // this server for an authorization endpoint it no longer serves.
+    const oauth = loadSecurityConfig(DELEGATED).oauth;
+    expect(oauth?.issuer).toBe(TEST_EXTERNAL_ISSUER);
+    expect(oauth?.publicOrigin).toBe(ISSUER);
+    expect(oauth?.resource).toBe(RESOURCE);
+    expect(oauth?.external).toBeDefined();
+    // Nothing is signed here, so neither credential is carried.
+    expect(oauth?.secret).toBeUndefined();
+    expect(oauth?.passphraseHash).toBeUndefined();
+  });
+
+  it("still requires a public URL, because that is what the audience is", async () => {
+    expect(() =>
+      loadSecurityConfig({ MCP_OAUTH_ISSUER: TEST_EXTERNAL_ISSUER }),
+    ).toThrow(/MCP_PUBLIC_URL/);
+  });
+
+  it("refuses the credentials of the mode it is replacing", async () => {
+    // Refused rather than ignored. Both belong to the built-in authorization
+    // server, which does not mount here — so a deployment that set them holds a
+    // belief about this server that is not true, and silently dropping them is
+    // exactly how that belief survives to the day it matters.
+    for (const extra of [
+      { MCP_OAUTH_SECRET: SECRET },
+      { MCP_OAUTH_PASSPHRASE_HASH: TEST_PASSPHRASE_HASH },
+    ]) {
+      expect(() => loadSecurityConfig({ ...DELEGATED, ...extra })).toThrow(
+        ConfigError,
+      );
+    }
+  });
+
+  it("rejects an issuer that is not https", async () => {
+    // It decides which public keys authenticate every request; over plain HTTP
+    // anyone on the path substitutes their own JWKS.
+    expect(() =>
+      loadSecurityConfig({
+        ...DELEGATED,
+        MCP_OAUTH_ISSUER: "http://idp.example.test",
+      }),
+    ).toThrow(/https/);
+  });
+
+  it("verifies against the issuer's keys rather than a local secret", async () => {
+    // The end-to-end shape, with discovery stubbed: a token this server could
+    // not possibly have signed is accepted because the IdP vouches for it.
+    const config = loadSecurityConfig(DELEGATED, {
+      fetchImpl: (() =>
+        Promise.reject(new Error("unreachable"))) as unknown as typeof fetch,
+    });
+    // A well-formed RS256 header, so verification gets past decoding and
+    // reaches the key lookup — which is the step that only exists on the
+    // external path.
+    const header = Buffer.from(
+      JSON.stringify({ alg: "RS256", kid: "k1", typ: "JWT" }),
+    ).toString("base64url");
+    const outcome = await authenticate(
+      request({ authorization: `Bearer ${header}.e30.c2ln` }),
+      { ...OPEN, oauth: config.oauth },
+      () => NOW_MS,
+    );
+    // Unreachable IdP, so the verdict is a refusal — but `unknown-key` is a
+    // reason only `externalIssuer` produces. The local HS256 path has no
+    // concept of fetching a key, and would have said `bad-signature`.
+    expect(outcome.reason).toBe("unknown-key");
+    expect(outcome.refusal?.status).toBe(401);
+  });
+
+  it("points the 401 at this server's metadata, not the IdP's", async () => {
+    // The pointer names where *this* server publishes protected-resource
+    // metadata. Sending a client to the IdP for it breaks the exact discovery
+    // path the header exists to fix.
+    const config = loadSecurityConfig(DELEGATED);
+    const outcome = await authenticate(request(), { ...OPEN, ...config });
+    const challenge = outcome.refusal?.headers.get("WWW-Authenticate") ?? "";
+    expect(challenge).toContain(
+      `${ISSUER}/.well-known/oauth-protected-resource/mcp`,
+    );
+    expect(challenge).not.toContain(TEST_EXTERNAL_ISSUER);
   });
 });
 
@@ -514,7 +620,7 @@ describe("describeSecurity", () => {
     return describeSecurity(config).find((entry) => entry.event === event);
   }
 
-  it("warns at warn level when the endpoint is unauthenticated", () => {
+  it("warns at warn level when the endpoint is unauthenticated", async () => {
     const entry = report(OPEN, "security.unauthenticated");
     expect(entry?.level).toBe("warn");
     // Every variable needed to act on the warning, including the passphrase
@@ -529,7 +635,7 @@ describe("describeSecurity", () => {
     }
   });
 
-  it("says the removed shared secret is not an alternative", () => {
+  it("says the removed shared secret is not an alternative", async () => {
     // The warning used to end by offering MCP_AUTH_TOKEN to clients that can
     // set their own headers. Someone following that now writes a variable that
     // stops the server from booting at all.
@@ -539,12 +645,12 @@ describe("describeSecurity", () => {
     expect(message).toContain("MCP_AUTH_TOKEN was removed");
   });
 
-  it("reports the gate instead of warning once OAuth is set", () => {
+  it("reports the gate instead of warning once OAuth is set", async () => {
     expect(report(OAUTH, "security.unauthenticated")).toBeUndefined();
     expect(report(OAUTH, "security.auth")?.fields.mode).toBe("oauth");
   });
 
-  it("prints the advertised resource verbatim under OAuth", () => {
+  it("prints the advertised resource verbatim under OAuth", async () => {
     // The one value that has to be right and fails silently when it is not:
     // a `resource` that disagrees with the URL the user typed into Claude
     // still completes discovery and still issues a token, and then 401s every
@@ -556,7 +662,7 @@ describe("describeSecurity", () => {
     expect(String(entry?.fields.message)).toContain(RESOURCE);
   });
 
-  it("warns about the wildcard, the one unsafe origin setting", () => {
+  it("warns about the wildcard, the one unsafe origin setting", async () => {
     const entry = report(
       { ...OAUTH, allowedOrigins: ["*"] },
       "security.origins",
@@ -565,7 +671,7 @@ describe("describeSecurity", () => {
     expect(entry?.fields.allowed).toBe("*");
   });
 
-  it("lists the configured origins so they can be read back", () => {
+  it("lists the configured origins so they can be read back", async () => {
     const entry = report(
       { ...OAUTH, allowedOrigins: ["https://claude.ai", "https://a.test"] },
       "security.origins",
@@ -576,13 +682,13 @@ describe("describeSecurity", () => {
     );
   });
 
-  it("explains the empty allowlist rather than looking like a misconfiguration", () => {
+  it("explains the empty allowlist rather than looking like a misconfiguration", async () => {
     const entry = report(OAUTH, "security.origins");
     expect(entry?.level).toBe("info");
     expect(String(entry?.fields.message)).toContain("without an Origin header");
   });
 
-  it("mentions the host allowlist only when one is configured", () => {
+  it("mentions the host allowlist only when one is configured", async () => {
     expect(report(OPEN, "security.hosts")).toBeUndefined();
     expect(
       report({ ...OPEN, allowedHosts: ["a.test"] }, "security.hosts")?.fields

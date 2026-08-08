@@ -1,5 +1,6 @@
 import { OAuthProtectedResourceMetadataSchema } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { describe, expect, it } from "vitest";
+import { TEST_OAUTH_CONFIG } from "./__fixtures__";
 import {
   handleMetadataRequest,
   insufficientScopeChallenge,
@@ -9,11 +10,7 @@ import {
   protectedResourceMetadata,
 } from "./metadata";
 
-const CONFIG: OAuthConfig = {
-  issuer: "https://box.tail1234.ts.net",
-  resource: "https://box.tail1234.ts.net/mcp",
-  secret: "s".repeat(64),
-};
+const CONFIG: OAuthConfig = TEST_OAUTH_CONFIG;
 
 /**
  * Parse a `WWW-Authenticate: Bearer k="v", k="v"` header into its parameters,
@@ -116,9 +113,12 @@ describe("insufficientScopeChallenge", () => {
 
 describe("challenge encoding", () => {
   it("escapes quotes so a value cannot terminate its own parameter", () => {
+    // `publicOrigin`, not `issuer`: the pointer names where *this server*
+    // publishes its protected-resource metadata, and with an external issuer
+    // those are different hosts.
     const header = invalidTokenChallenge({
       ...CONFIG,
-      issuer: 'https://evil.test/"x\\y',
+      publicOrigin: 'https://evil.test/"x\\y',
     });
     expect(header).toContain('\\"');
     expect(challengeParams(header).resource_metadata).toBe(

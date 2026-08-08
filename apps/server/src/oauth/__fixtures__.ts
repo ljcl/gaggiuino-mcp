@@ -1,3 +1,6 @@
+import { type ExternalIssuer } from "./externalIssuer";
+import { type AuthServerConfig, type DelegatedOAuthConfig } from "./metadata";
+
 /**
  * Shared OAuth test fixtures.
  *
@@ -22,3 +25,43 @@ export const TEST_OAUTH_ENV = {
   MCP_OAUTH_SECRET: TEST_SECRET,
   MCP_PUBLIC_URL: TEST_ISSUER,
 };
+
+/**
+ * A self-issuing `OAuthConfig`, in one place.
+ *
+ * Four test files used to build this literal by hand, so adding `publicOrigin`
+ * to the type was a four-file edit that said nothing. `issuer` and
+ * `publicOrigin` are the same value here precisely because that is what the
+ * built-in authorization server means — the delegated mode is the one that
+ * separates them, and its tests set them apart deliberately.
+ */
+export const TEST_OAUTH_CONFIG: AuthServerConfig = {
+  issuer: TEST_ISSUER,
+  passphraseHash: TEST_PASSPHRASE_HASH,
+  publicOrigin: TEST_ISSUER,
+  resource: TEST_RESOURCE,
+  secret: TEST_SECRET,
+};
+
+/** An external issuer, deliberately on a different host with a path. */
+export const TEST_EXTERNAL_ISSUER = "https://idp.example.test/realms/home";
+
+/**
+ * A delegated `OAuthConfig`. `verify` is injected rather than a real
+ * `createExternalIssuer`, so a test that only cares about routing or metadata
+ * never touches discovery.
+ *
+ * The stub is required rather than defaulted here on purpose: this file is
+ * production-adjacent enough to be in the coverage set, and a default nobody
+ * invokes is an uncovered function sitting in `src/`. Callers keep their own.
+ */
+export function delegatedConfig(
+  external: ExternalIssuer,
+): DelegatedOAuthConfig {
+  return {
+    external,
+    issuer: TEST_EXTERNAL_ISSUER,
+    publicOrigin: TEST_ISSUER,
+    resource: TEST_RESOURCE,
+  };
+}

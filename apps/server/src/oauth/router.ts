@@ -38,9 +38,20 @@ export interface OAuthRouterOptions {
   resolve?: AuthorizeDeps["resolve"];
 }
 
-/** Whether this configuration can run the built-in authorization server. */
+/**
+ * Whether this configuration can run the built-in authorization server.
+ *
+ * An external issuer takes precedence and is checked first: `MCP_OAUTH_ISSUER`
+ * puts this server in resource-server-only mode, where `/oauth/*` and
+ * `/.well-known/oauth-authorization-server` must not mount at all. Serving an
+ * authorization endpoint while advertising somebody else's would give a client
+ * two answers to the same question.
+ *
+ * `loadOAuthConfig` already refuses the combination at startup, so this is the
+ * second of two locks rather than the only one.
+ */
 function asAuthServer(config: OAuthConfig): AuthServerConfig | undefined {
-  return config.passphraseHash ? (config as AuthServerConfig) : undefined;
+  return config.external ? undefined : config;
 }
 
 export function createOAuthRouter({
@@ -55,15 +66,16 @@ export function createOAuthRouter({
   return {
     handle(req, pathname) {
       // Protected-resource metadata is served whether or not this server is
-      // also the authorization server — with an external issuer (#110) it is
-      // the only document this server publishes.
+      // also the authorization server — with an external issuer it is the only
+      // document this server publishes, and `authorization_servers` points at
+      // the IdP instead of here.
       const prm = handleMetadataRequest(pathname, config);
       if (prm) return prm;
 
       if (!authServer) return undefined;
 
       if (pathname === AUTHORIZATION_SERVER_PATH) {
-        return Response.json(authorizationServerMetadata(config), {
+        return Response.json(authorizationServerMetadata(authServer), {
           headers: { "Cache-Control": "public, max-age=300" },
         });
       }
@@ -76,7 +88,7 @@ export function createOAuthRouter({
         });
       }
       if (pathname === TOKEN_PATH) {
-        return handleToken(req, { codes, config, generations });
+        return handleToken(req, { codes, config: authServer, generations });
       }
       return undefined;
     },

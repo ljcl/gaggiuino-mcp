@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { logger } from "../logging";
 import { type CodeStore } from "./codes";
-import { type OAuthConfig } from "./metadata";
+import { type AuthServerConfig } from "./metadata";
 import { ALL_SCOPES_HEADER } from "./scopes";
 import { type AccessTokenClaims, signToken, verifyToken } from "./tokens";
 
@@ -18,7 +18,7 @@ const REFRESH_TOKEN_TTL_SECONDS = 90 * 24 * 60 * 60;
 
 export interface TokenDeps {
   codes: CodeStore;
-  config: OAuthConfig;
+  config: AuthServerConfig;
   now?: () => number;
   /** Highest refresh generation seen per client. See `AccessTokenClaims.gen`. */
   generations?: Map<string, number>;
@@ -42,7 +42,7 @@ function oauthError(
 }
 
 function issue(
-  config: OAuthConfig,
+  config: AuthServerConfig,
   audience: string,
   scopes: string[],
   subject: string,
@@ -97,7 +97,7 @@ function issue(
  * token is good for. When it does not, this server's own resource is the only
  * sensible answer — it is the only thing these tokens are ever presented to.
  */
-function audienceFor(config: OAuthConfig, requested?: string): string {
+function audienceFor(config: AuthServerConfig, requested?: string): string {
   return requested && requested.length > 0 ? requested : config.resource;
 }
 

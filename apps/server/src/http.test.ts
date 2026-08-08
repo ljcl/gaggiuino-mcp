@@ -5,7 +5,7 @@ import { getClient, resetClient } from "./client";
 import { createFetchHandler, type FetchHandler } from "./http";
 import { setLogLevel } from "./logging";
 import { type SecurityConfig } from "./mcpAuth";
-import { TEST_PASSPHRASE_HASH } from "./oauth/__fixtures__";
+import { TEST_OAUTH_CONFIG, TEST_PASSPHRASE_HASH } from "./oauth/__fixtures__";
 import { ALL_SCOPES_HEADER } from "./oauth/scopes";
 import { signToken } from "./oauth/tokens";
 import { mockServer } from "./test-setup";
@@ -44,7 +44,7 @@ function accessToken(scope: string): string {
 const GATED: SecurityConfig = {
   allowedHosts: [],
   allowedOrigins: [],
-  oauth: { issuer: ISSUER, resource: RESOURCE, secret: SECRET },
+  oauth: TEST_OAUTH_CONFIG,
 };
 
 const OPEN: SecurityConfig = { allowedHosts: [], allowedOrigins: [] };

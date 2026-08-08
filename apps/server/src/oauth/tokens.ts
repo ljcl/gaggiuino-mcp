@@ -173,7 +173,13 @@ export type TokenFailure =
   | "bad-signature"
   | "expired"
   | "wrong-issuer"
-  | "wrong-audience";
+  | "wrong-audience"
+  // Only reachable with an external issuer (`externalIssuer.ts`). Both are
+  // operator-actionable in a way the others are not: "unknown-key" usually means
+  // discovery or the JWKS fetch failed, and "unsupported-algorithm" means the
+  // IdP signs with something other than RS256 or ES256.
+  | "unknown-key"
+  | "unsupported-algorithm";
 
 export type TokenVerdict =
   | { claims: AccessTokenClaims; ok: true }
