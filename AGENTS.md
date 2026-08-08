@@ -256,6 +256,17 @@ problems.
 to live in `analysis.ts`, which `events.ts` cannot import without a cycle. This
 file is what AGENTS.md already claimed was there.
 
+**There is deliberately no flow-based event**, and
+`docs/plans/2026-08-08-flow-based-extraction-events.md` records why so the
+question does not get re-asked from scratch. The short version is that the pump
+hides it: in a pressure-targeted phase the machine answers falling puck
+resistance by pushing more flow, so resistance only becomes visible once the
+pump stops being able to compensate — and that is a pressure deviation, which
+the collapse detector already reports. Measured against the same captures, a
+`pressure / pumpFlow` resistance proxy falls 42%/s on a *good* shot and does not
+agree in direction between two consecutive good ones, so there is no room to put
+a threshold anywhere.
+
 ### A spread is not an accuracy
 
 `tempStability` answers "did the boiler wobble" and nothing else, so a shot held
