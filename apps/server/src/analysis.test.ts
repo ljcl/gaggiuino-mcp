@@ -12,6 +12,7 @@ import {
 } from "./__fixtures__/api-responses";
 import {
   extractOutcomeMetrics,
+  formatOutcomeMetrics,
   formatShotSummary,
   generateShotSummary,
 } from "./analysis";
@@ -141,7 +142,10 @@ describe("formatShotSummary", () => {
     const text = formatShotSummary(summary);
 
     expect(text).toContain("Final Weight: 38.1g");
-    expect(text).not.toContain("target:");
+    // Scoped to the weight line rather than the whole block: other lines
+    // legitimately mention a target, so a bare "target:" search would pass or
+    // fail for reasons that have nothing to do with the weight.
+    expect(text).not.toMatch(/Final Weight:.*target/);
   });
 });
 
@@ -161,6 +165,74 @@ describe("extractOutcomeMetrics edge cases", () => {
   it("returns null targetWeight when not set", () => {
     const metrics = extractOutcomeMetrics(mockShotNoTargetWeight);
     expect(metrics.targetWeightG).toBeNull();
+  });
+});
+
+describe("deviation from the profile's own targets", () => {
+  it("measures pressure against the target on a real tapering shot", () => {
+    // Londinium lowers its target 8.8 bar -> 6.3 across the shot, so a fixed
+    // band would call this shot wrong for tracking it correctly. Measured
+    // against its own target it runs ~1 bar under, consistently.
+    const m33 = extractOutcomeMetrics(ShotDataSchema.parse(londiniumShot33));
+    const m32 = extractOutcomeMetrics(ShotDataSchema.parse(londiniumShot32));
+
+    expect(m33.pressureDeviationBar).toBeCloseTo(0.99, 1);
+    expect(m32.pressureDeviationBar).toBeCloseTo(1.12, 1);
+  });
+
+  it("ignores the samples where the profile commanded no pressure target", () => {
+    // Londinium drives flow for its first five seconds with targetPressure 0.
+    // Counting those as "asked for 0 bar, got 4" would swamp the answer.
+    const shot = ShotDataSchema.parse(londiniumShot33);
+    const uncommanded = (shot.datapoints.targetPressure ?? []).filter(
+      (v) => v <= 0,
+    ).length;
+
+    expect(uncommanded).toBeGreaterThan(0);
+    // 65 of 191 samples are uncommanded; including them would push the mean
+    // well past 1 bar rather than leaving it just under.
+    expect(extractOutcomeMetrics(shot).pressureDeviationBar).toBeLessThan(1.5);
+  });
+
+  it("reports null when the shot record carries no target for the metric", () => {
+    // Neither captured shot records targetTemperature at all.
+    const metrics = extractOutcomeMetrics(
+      ShotDataSchema.parse(londiniumShot33),
+    );
+
+    expect(metrics.tempDeviationC).toBeNull();
+    expect(formatOutcomeMetrics(metrics)).not.toContain("off target");
+  });
+
+  it("measures temperature against a commanded target", () => {
+    const shot = {
+      ...mockShotData,
+      datapoints: {
+        ...mockShotData.datapoints,
+        temperature: [930, 940, 950, 960, 950],
+        targetTemperature: [950, 950, 950, 950, 950],
+      },
+    };
+
+    // |93-95| + |94-95| + 0 + |96-95| + 0, over five samples.
+    expect(extractOutcomeMetrics(shot).tempDeviationC).toBeCloseTo(0.8, 5);
+  });
+
+  it("separates a steady-but-wrong boiler from a wobbling one", () => {
+    // The case the spread cannot see: held rock steady, three degrees cold.
+    const shot = {
+      ...mockShotData,
+      datapoints: {
+        ...mockShotData.datapoints,
+        temperature: [920, 920, 920, 920, 920],
+        targetTemperature: [950, 950, 950, 950, 950],
+      },
+    };
+    const metrics = extractOutcomeMetrics(shot);
+
+    expect(metrics.tempStability).toBe("stable");
+    expect(metrics.tempDeviationC).toBeCloseTo(3, 5);
+    expect(formatOutcomeMetrics(metrics)).toContain("stable, 3.0C off target");
   });
 });
 

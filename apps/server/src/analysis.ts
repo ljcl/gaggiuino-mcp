@@ -32,6 +32,12 @@ export const OutcomeMetricsSchema = z.object({
   peakPressureBar: z
     .number()
     .describe("Highest pressure reached during the shot, in bar"),
+  pressureDeviationBar: z
+    .number()
+    .nullable()
+    .describe(
+      "How far group pressure ran from what the profile asked for, averaged over the samples where a pressure target was commanded, in bar; null when the profile drove flow throughout and never commanded one",
+    ),
   profileName: z.string().describe("Name of the brew profile used"),
   shotId: z.string().describe("Id of the shot this summary describes"),
   targetWeightG: z
@@ -40,10 +46,16 @@ export const OutcomeMetricsSchema = z.object({
     .describe(
       "Weight the profile was set to stop at, in grams; null when the profile has no weight stop condition",
     ),
+  tempDeviationC: z
+    .number()
+    .nullable()
+    .describe(
+      "How far boiler temperature ran from what the profile asked for, averaged over the samples where a temperature target was commanded, in degrees Celsius; null when the shot record carries no target temperature",
+    ),
   tempStability: z
     .string()
     .describe(
-      'Human-readable temperature verdict: "stable", or "drifted +N.NC" when the spread exceeded 1°C',
+      'Human-readable temperature verdict: "stable", or "drifted +N.NC" when the spread exceeded 1°C. Answers whether the boiler wobbled, which is a different question from whether it was correct — see tempDeviationC',
     ),
   timeToFirstDripSec: z
     .number()
@@ -98,6 +110,47 @@ export const ShotSummarySchema = z.object({
 
 export type ShotSummary = z.output<typeof ShotSummarySchema>;
 
+/**
+ * How far a measured series ran from the target the profile commanded for it.
+ *
+ * Mean absolute deviation over the samples where a target was **commanded** —
+ * a target of `0` means the profile is not driving that quantity here, not that
+ * it asked for zero, and Londinium spends its first five seconds exactly there.
+ * Averaging those in would report a shot as ~4 bar off target for doing what it
+ * was told.
+ *
+ * This is the question `tempStability` cannot answer. A spread says whether the
+ * boiler wobbled; it says nothing about whether it wobbled around the right
+ * number, so a shot held rock-steady three degrees cold reads as "stable".
+ *
+ * Deliberately a plain mean over every commanded sample, including the moments
+ * just after the target steps, when the measured value is still catching up.
+ * Excluding a half-second either side of each target change was measured
+ * against both captured shots and moved the answer from 0.99 to 0.88 bar and
+ * from 1.12 to 0.98 — not enough to justify the extra rule.
+ */
+function meanDeviationFromTarget(
+  measured: number[],
+  target: number[],
+  fieldName: string,
+): number | null {
+  let total = 0;
+  let counted = 0;
+
+  for (const [i, rawTarget] of target.entries()) {
+    const commanded = normalizeValue(rawTarget, fieldName);
+    if (commanded <= 0) continue;
+
+    const rawMeasured = measured[i];
+    if (rawMeasured === undefined) continue;
+
+    total += Math.abs(normalizeValue(rawMeasured, fieldName) - commanded);
+    counted += 1;
+  }
+
+  return counted === 0 ? null : total / counted;
+}
+
 export function extractOutcomeMetrics(shotData: ShotData): OutcomeMetrics {
   const { datapoints, profile } = shotData;
 
@@ -141,6 +194,16 @@ export function extractOutcomeMetrics(shotData: ShotData): OutcomeMetrics {
     waterPumpedMl: getLastNormalized(waterPumped, "waterPumped"),
     timeToFirstDripSec,
     tempStability,
+    tempDeviationC: meanDeviationFromTarget(
+      temperatures,
+      datapoints.targetTemperature ?? [],
+      "temperature",
+    ),
+    pressureDeviationBar: meanDeviationFromTarget(
+      pressures,
+      datapoints.targetPressure ?? [],
+      "pressure",
+    ),
     targetWeightG: targetWeight,
   };
 }
@@ -329,6 +392,13 @@ function formatWeightLine(metrics: OutcomeMetrics): string {
  * Shared so `get_latest_shot_id` can fold a shot's outcome into its answer
  * without the phase-by-phase detail that makes `get_shot_data` a separate tool.
  */
+/** ", 0.4C off target" — or nothing at all when no target was commanded. */
+function formatDeviation(deviation: number | null, unit: string): string {
+  return deviation === null
+    ? ""
+    : `, ${deviation.toFixed(1)}${unit} off target`;
+}
+
 export function formatOutcomeMetrics(metrics: OutcomeMetrics): string {
   return [
     `Shot #${metrics.shotId} Summary`,
@@ -340,7 +410,12 @@ export function formatOutcomeMetrics(metrics: OutcomeMetrics): string {
     `  Time to First Drip: ${metrics.timeToFirstDripSec ?? "N/A"}s`,
     `  Peak Pressure: ${metrics.peakPressureBar.toFixed(1)} bar`,
     `  Water Pumped: ${metrics.waterPumpedMl.toFixed(1)}ml`,
-    `  Temperature: ${metrics.tempStability}`,
+    `  Temperature: ${metrics.tempStability}${formatDeviation(metrics.tempDeviationC, "C")}`,
+    `  Pressure vs target: ${
+      metrics.pressureDeviationBar === null
+        ? "no pressure target commanded"
+        : `${metrics.pressureDeviationBar.toFixed(1)} bar average deviation`
+    }`,
   ].join("\n");
 }
 
