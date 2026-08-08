@@ -1,25 +1,11 @@
 import { z } from "zod";
 import { type ShotData } from "./client";
-
-export const SCALE_BY_10 = new Set([
-  "pressure",
-  "targetPressure",
-  "temperature",
-  "targetTemperature",
-  "pumpFlow",
-  "weightFlow",
-  "targetPumpFlow",
-  "shotWeight",
-  "waterPumped",
-  "timeInShot",
-]);
-
-export function normalizeValue(value: number, fieldName: string): number {
-  if (SCALE_BY_10.has(fieldName)) {
-    return value / 10;
-  }
-  return value;
-}
+import {
+  describePressureCollapse,
+  detectPressureCollapses,
+  type PressureCollapse,
+} from "./events";
+import { normalizeValue } from "./normalize";
 
 function getLastNormalized(values: number[], fieldName: string): number {
   const last = values.at(-1);
@@ -255,6 +241,7 @@ function extractPhaseSummary(shotData: ShotData): PhaseSummary[] {
 
   const startIndexes = [0, ...boundaries];
   const lastIndex = times.length - 1;
+  const collapses = detectPressureCollapses(datapoints);
 
   return startIndexes.map((startIdx, i) => {
     const nextStart = startIndexes[i + 1];
@@ -281,9 +268,41 @@ function extractPhaseSummary(shotData: ShotData): PhaseSummary[] {
         mid: sampleAtIndex(datapoints, midIdx),
         exit: sampleAtIndex(datapoints, exitIdx),
       },
-      events: [],
+      events: eventsWithin(
+        collapses,
+        startTime,
+        endTime,
+        i === startIndexes.length - 1,
+      ),
     };
   });
+}
+
+/**
+ * The events that began inside one phase's span.
+ *
+ * Attribution is by **start** time, so a collapse that runs past a phase
+ * boundary is reported once, against the phase it started in, rather than
+ * twice. The last phase takes the closing boundary inclusively; every other
+ * phase ends where the next one begins, and a sample cannot belong to both.
+ */
+function eventsWithin(
+  collapses: PressureCollapse[],
+  startTime: number,
+  endTime: number,
+  isLastPhase: boolean,
+): string[] {
+  return collapses
+    .filter((collapse) => {
+      if (collapse.startSec < startTime) return false;
+      // Phases abut, so the boundary instant belongs to the phase starting
+      // there — otherwise a collapse landing exactly on one is reported twice.
+      // Only the final phase owns its closing instant, because nothing follows.
+      return isLastPhase
+        ? collapse.startSec <= endTime
+        : collapse.startSec < endTime;
+    })
+    .map(describePressureCollapse);
 }
 
 export function generateShotSummary(shotData: ShotData): ShotSummary {

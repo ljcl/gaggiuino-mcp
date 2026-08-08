@@ -6,9 +6,7 @@ import {
   formatShotLine,
   formatShotSummary,
   generateShotSummary,
-  normalizeValue,
   OutcomeMetricsSchema,
-  SCALE_BY_10,
   ShotSummarySchema,
 } from "./analysis";
 import {
@@ -25,6 +23,7 @@ import { MISSING_GUIDANCE_TEXT, renderDialInGuidance } from "./guidance";
 import { MAX_RECENT_SHOTS, walkShotsBack } from "./history";
 import { extractServiceHistory, formatMaintenance } from "./maintenance";
 import { loadSecurityConfig } from "./mcpAuth";
+import { normalizeValue, SCALE_BY_10 } from "./normalize";
 import {
   type CatalogEntry,
   findCatalogEntry,

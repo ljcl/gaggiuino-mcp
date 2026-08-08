@@ -14,9 +14,9 @@ import {
   extractOutcomeMetrics,
   formatShotSummary,
   generateShotSummary,
-  normalizeValue,
 } from "./analysis";
 import { ShotDataSchema } from "./client";
+import { normalizeValue } from "./normalize";
 
 describe("normalizeValue", () => {
   it("divides pressure by 10", () => {
@@ -315,6 +315,52 @@ describe("phase segmentation agrees with the chart", () => {
     for (const phase of phases) {
       expect(Number.isFinite(phase.durationSec)).toBe(true);
     }
+  });
+
+  it("leaves events empty for the real captured shots", () => {
+    for (const shot of [londiniumShot33, londiniumShot32]) {
+      const { phases } = generateShotSummary(ShotDataSchema.parse(shot));
+      expect(phases.flatMap((phase) => phase.events)).toEqual([]);
+    }
+  });
+
+  it("attributes a collapse to the phase it started in, exactly once", () => {
+    // 9 bar held through a two-phase profile, then 3 bar lost in ~0.9s well
+    // inside the second phase.
+    const pressure = [
+      9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 8.4, 7.6, 6.8, 6.2, 6, 6, 6, 6,
+    ];
+    const shot = {
+      id: "44",
+      duration: Math.round((10 + (pressure.length - 1) * 0.15) * 10),
+      datapoints: {
+        timeInShot: pressure.map((_, i) => Math.round((10 + i * 0.15) * 10)),
+        pressure: pressure.map((v) => Math.round(v * 10)),
+        // A flow handover at index 5 is the only boundary, so the collapse at
+        // index 10 lands unambiguously inside phase 2.
+        targetPressure: pressure.map(() => 90),
+        targetPumpFlow: pressure.map((_, i) => (i < 5 ? 20 : 0)),
+        shotWeight: pressure.map((_, i) => i * 10),
+        pumpFlow: pressure.map(() => 20),
+      },
+      profile: {
+        name: "Collapse",
+        phases: [{ type: "FLOW" }, { type: "PRESSURE" }],
+      },
+    };
+
+    const summary = generateShotSummary(shot);
+    const all = summary.phases.flatMap((phase) => phase.events);
+
+    expect(all).toHaveLength(1);
+    expect(summary.phases[1]?.events).toEqual(all);
+    expect(all[0]).toMatch(
+      /^pressure fell \d+\.\d bar in \d+\.\ds from \d+\.\ds while the target held at 9\.0 bar$/,
+    );
+    // The prose block renders it under its phase.
+    const text = formatShotSummary(summary);
+    expect(text).toContain("  Events:");
+    expect(text).toContain(`    - ${all[0]}`);
   });
 
   it("reports no phases, and says so, when the profile names none", () => {
