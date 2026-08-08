@@ -425,10 +425,22 @@ Two consequences worth keeping:
   measures would not be the one the browser is holding.
 
 Phase regions come from `phases.ts`, which segments on target-series transitions and
-lets `profile.phases.length` bound the count — the same detection rule `apps/server`'s
+lets `profile.phases.length` bound the count — the same rule `apps/server`'s
 `extractPhaseSummary` uses, so the chart and `get_shot_data` name the same phases. It
 replaced an inference that de-duplicated boundaries with a magic `MIN_GAP = 4` seconds
-and then threw the phase *names* away. Recharts hoists every `Label` into a shared
+and then threw the phase *names* away.
+
+**That sameness is now asserted rather than intended, because for a while it was
+only half true.** Both files detected candidates identically; only `phases.ts` ever
+*bounded* them, so on a real two-phase shot `get_shot_data` reported seven phases —
+five typed `"UNKNOWN"`, three of zero duration — while the chart drew two. The claim
+sat in this file and in `phases.ts`'s own docblock the whole time, which is the
+argument for the test rather than for a third careful reading: `analysis.test.ts`
+runs both implementations over `londiniumShot33`/`32` and compares count and
+boundaries. They are the shots `packages/shot-graph` already shipped for its
+stories, reachable from `apps/server` through the package's `./fixtures` export, and
+they matter because the divergence was invisible at `mockShotData`'s five points at
+ten-second spacing. Anything that re-forks the two rules fails there. Recharts hoists every `Label` into a shared
 z-index layer at the SVG root, which is why the labels carry `PHASE_LABEL_CLASS`: they
 do not stay inside their own `.recharts-reference-area` group.
 

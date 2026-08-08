@@ -16,9 +16,12 @@ import { type PhaseRegion, type ShotData } from "./types";
  * them from — but only the strongest `phases.length - 1` survive, and each
  * region takes its label from the phase at the same position.
  *
- * The detection rule is deliberately the same one `apps/server`'s
- * `extractPhaseSummary` uses, so the chart and `get_shot_data` describe the
- * same phases rather than two plausible different sets.
+ * The rule is deliberately the same one `apps/server`'s `extractPhaseSummary`
+ * uses, so the chart and `get_shot_data` describe the same phases rather than
+ * two plausible different sets. `apps/server/src/analysis.test.ts` asserts that
+ * over the captured shots in `__fixtures__/chart-data.ts`, which this package
+ * exports as `@gaggiuino/shot-graph/fixtures` for exactly that reason — saying
+ * it here twice is what let the two drift apart in the first place.
  */
 
 /** Raw units. A target-pressure step this large is a phase change, not noise. */

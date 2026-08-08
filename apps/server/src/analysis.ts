@@ -175,58 +175,111 @@ function sampleAtIndex(
   };
 }
 
+/** Raw units. A target-pressure step this large is a phase change, not noise. */
+const PRESSURE_STEP = 10;
+
+interface PhaseCandidate {
+  /** Index into the datapoint arrays where the new phase begins. */
+  index: number;
+  /** How decisively the target series moved; used to rank, never to threshold. */
+  strength: number;
+}
+
+/**
+ * Every point at which the target series changes character.
+ *
+ * Deliberately the same detection **and** selection rule as the chart's
+ * `derivePhaseRegions` (`packages/shot-graph/src/phases.ts`), down to the
+ * `phases.length - 1` cap — `analysis.test.ts` asserts the two agree phase for
+ * phase over the shots captured off a real machine.
+ *
+ * They were only ever the same in their *detection* half. This function used to
+ * keep every transition it found and label the overflow `"UNKNOWN"`, which on a
+ * real two-phase shot produced seven phases, five unnamed and three of zero
+ * duration, while the chart drew two. The profile is the authority on how many
+ * phases a shot has, so it is what bounds the count.
+ */
+function findPhaseCandidates(
+  datapoints: ShotData["datapoints"],
+): PhaseCandidate[] {
+  const targetPressure = datapoints.targetPressure ?? [];
+  const targetFlow = datapoints.targetPumpFlow ?? [];
+  // Both series are read, so the longer one bounds the walk. Taking the length
+  // from targetPressure alone drops every transition a profile makes after its
+  // pressure target stops being reported.
+  const length = Math.max(targetPressure.length, targetFlow.length);
+  const candidates: PhaseCandidate[] = [];
+
+  for (let i = 1; i < length; i += 1) {
+    const prevFlow = targetFlow[i - 1] ?? 0;
+    const flow = targetFlow[i] ?? 0;
+    const prevPressure = targetPressure[i - 1] ?? 0;
+    const pressure = targetPressure[i] ?? 0;
+
+    // A flow target switching on or off is the clearest phase change there is:
+    // it is how a fill or preinfusion phase hands over to extraction.
+    const flowTransition = (prevFlow === 0) !== (flow === 0);
+    const pressureDelta = Math.abs(pressure - prevPressure);
+
+    if (flowTransition || pressureDelta > PRESSURE_STEP) {
+      candidates.push({
+        index: i,
+        // A flow handover outranks any pressure step, so a profile that does
+        // both keeps the boundary that means the most.
+        strength: flowTransition ? Number.POSITIVE_INFINITY : pressureDelta,
+      });
+    }
+  }
+
+  return candidates;
+}
+
 function extractPhaseSummary(shotData: ShotData): PhaseSummary[] {
   const { datapoints, profile } = shotData;
   const times = datapoints.timeInShot ?? [];
-  const targetPressure = datapoints.targetPressure ?? [];
-  const targetFlow = datapoints.targetPumpFlow ?? [];
   const profilePhases = profile.phases ?? [];
 
-  if (times.length === 0) {
+  // Without a phase list there is nothing to name, and an unnamed phase is the
+  // thing this replaced. Better to report none than to invent them.
+  if (profilePhases.length === 0 || times.length === 0) {
     return [];
   }
 
-  const targets = targetPressure.length > 0 ? targetPressure : targetFlow;
-  const boundaries: Array<[number, number]> = [];
-  let phaseStart = 0;
+  const boundaries = findPhaseCandidates(datapoints)
+    // Rank by strength, keep what the profile has room for, then put the
+    // survivors back in time order.
+    .sort((a, b) => b.strength - a.strength)
+    .slice(0, profilePhases.length - 1)
+    .map((candidate) => candidate.index)
+    .sort((a, b) => a - b);
 
-  for (let i = 1; i < targets.length; i += 1) {
-    const prevP = targetPressure[i - 1] ?? 0;
-    const currP = targetPressure[i] ?? 0;
-    const prevF = targetFlow[i - 1] ?? 0;
-    const currF = targetFlow[i] ?? 0;
+  const startIndexes = [0, ...boundaries];
+  const lastIndex = times.length - 1;
 
-    const flowTransition = (prevF === 0) !== (currF === 0);
-    const pressureTransition = Math.abs(currP - prevP) > 10;
+  return startIndexes.map((startIdx, i) => {
+    const nextStart = startIndexes[i + 1];
+    // Phases abut in time, exactly as the chart draws them: a phase runs up to
+    // the sample where the next one takes over. But that sample already belongs
+    // to the next phase, so the last reading *within* this one is the one before
+    // it — which is what `exit` reports.
+    const boundaryIdx = nextStart ?? lastIndex;
+    const exitIdx =
+      nextStart === undefined ? lastIndex : Math.max(startIdx, nextStart - 1);
+    const midIdx = Math.floor((startIdx + exitIdx) / 2);
 
-    if (flowTransition || pressureTransition) {
-      boundaries.push([phaseStart, i - 1]);
-      phaseStart = i;
-    }
-  }
-  boundaries.push([phaseStart, targets.length - 1]);
-
-  return boundaries.map(([startIdx, endIdx], i) => {
-    const startTimeRaw = times[startIdx];
-    const endTimeRaw = times[endIdx];
-    const startTime =
-      startTimeRaw !== undefined
-        ? normalizeValue(startTimeRaw, "timeInShot")
-        : 0;
-    const endTime =
-      endTimeRaw !== undefined ? normalizeValue(endTimeRaw, "timeInShot") : 0;
-    const midIdx = Math.floor((startIdx + endIdx) / 2);
-
-    const phaseType = profilePhases[i]?.type ?? "UNKNOWN";
+    const startTime = normalizeValue(times[startIdx] ?? 0, "timeInShot");
+    const endTime = normalizeValue(times[boundaryIdx] ?? 0, "timeInShot");
 
     return {
       phaseNumber: i + 1,
-      type: phaseType,
+      // The cap above means the profile always has a phase at this position;
+      // the fallback is for a phase the firmware sent without a `type`.
+      type: profilePhases[i]?.type ?? "UNKNOWN",
       durationSec: endTime - startTime,
       samples: {
         entry: sampleAtIndex(datapoints, startIdx),
         mid: sampleAtIndex(datapoints, midIdx),
-        exit: sampleAtIndex(datapoints, endIdx),
+        exit: sampleAtIndex(datapoints, exitIdx),
       },
       events: [],
     };
@@ -291,6 +344,17 @@ export function formatShotLine(metrics: OutcomeMetrics): string {
 
 export function formatShotSummary(summary: ShotSummary): string {
   const { outcomeMetrics: metrics, phases } = summary;
+
+  if (phases.length === 0) {
+    // Either the shot carries no readings or its profile named no phases. Both
+    // are honest answers, and a bare heading over nothing reads like a bug.
+    return [
+      formatOutcomeMetrics(metrics),
+      "",
+      "=== Phase Breakdown ===",
+      "  Not available: this shot's profile does not name any phases.",
+    ].join("\n");
+  }
 
   const lines = [formatOutcomeMetrics(metrics), "", "=== Phase Breakdown ==="];
 

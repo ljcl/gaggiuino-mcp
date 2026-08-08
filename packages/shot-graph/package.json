@@ -5,7 +5,9 @@
   "type": "module",
   "exports": {
     "./global.css": "./src/global.css",
-    "./app.html": "./dist/app.html"
+    "./app.html": "./dist/app.html",
+    "./fixtures": "./src/__fixtures__/chart-data.ts",
+    "./phases": "./src/phases.ts"
   },
   "scripts": {
     "build": "INPUT=app.html vite build",
