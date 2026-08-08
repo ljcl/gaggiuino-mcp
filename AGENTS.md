@@ -256,6 +256,44 @@ problems.
 to live in `analysis.ts`, which `events.ts` cannot import without a cycle. This
 file is what AGENTS.md already claimed was there.
 
+### A spread is not an accuracy
+
+`tempStability` answers "did the boiler wobble" and nothing else, so a shot held
+rock steady three degrees cold reads as `stable`. `tempDeviationC` and
+`pressureDeviationBar` answer the question a dial-in conversation actually asks
+— **did the machine hit what the profile asked for** — as a mean absolute
+deviation from the machine's own target series. Both are `null` when no target
+was commanded, never `0`: "asked for nothing" and "was perfect" are different
+answers.
+
+Two rules carried over from `events.ts`, for the same reasons:
+
+- **A target of `0` means the profile is not driving that quantity**, not that
+  it asked for zero. Londinium spends its first five seconds there — 65 of its
+  191 samples — and averaging them in reports a shot as several bar off target
+  for doing exactly what it was told.
+- **The bands are the machine's, not a person's.** Upstream's equivalent falls
+  back to a generic 90–96 °C window when a shot has no target. That fallback is
+  deliberately *not* carried over: it encodes one person's taste as a machine
+  reading, and this server reports measurements and lets
+  `get_dial_in_guidance` supply the opinion.
+
+Deliberately a plain mean over every commanded sample, transitions included.
+Excluding half a second either side of each target change was measured against
+both captured shots and moved the answer from 0.99 to 0.88 bar and from 1.12 to
+0.98 — not enough to justify the extra rule.
+
+**This is the change that cost permission grants.** `OutcomeMetricsSchema` is the
+advertised output of three tools — `get_shot_data`, `get_latest_shot_id` and
+`list_recent_shots` — so adding two fields re-keyed all three. Numeric rather
+than prose was chosen knowing that: `list_recent_shots` returns an array of these
+records, and a trend across shots is only readable if the values are numbers.
+
+`ShotDatapointsSchema` gained `targetTemperature` in the same change. Real
+machines send it — verified on the firmware serving shot #347 — and
+`SCALE_BY_10` had listed it all along, so the parsed type was missing a field
+the normalizer already knew about.
+
 ### The machine owns what exists; the YAML owns what it means
 
 `profileCatalog.ts` joins `/api/profiles/all` to `data/profiles.yaml` on the

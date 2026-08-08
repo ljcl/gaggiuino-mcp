@@ -338,6 +338,12 @@ const ShotDatapointsSchema = z.looseObject({
   shotWeight: NumberSeries.optional(),
   targetPressure: NumberSeries.optional(),
   targetPumpFlow: NumberSeries.optional(),
+  // Real machines send this — verified on firmware serving shot #347, which
+  // carries a full `targetTemperature` series alongside `temperature`. It was
+  // absent here while nothing read it, which left `SCALE_BY_10` listing a field
+  // the parsed type did not have. Optional like the rest: the fixtures captured
+  // for the chart's stories predate it and do not carry one.
+  targetTemperature: NumberSeries.optional(),
   temperature: NumberSeries.optional(),
   timeInShot: NumberSeries.optional(),
   waterPumped: NumberSeries.optional(),

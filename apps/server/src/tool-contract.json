@@ -142,6 +142,17 @@
                   "description": "Highest pressure reached during the shot, in bar",
                   "type": "number"
                 },
+                "pressureDeviationBar": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "How far group pressure ran from what the profile asked for, averaged over the samples where a pressure target was commanded, in bar; null when the profile drove flow throughout and never commanded one"
+                },
                 "profileName": {
                   "description": "Name of the brew profile used",
                   "type": "string"
@@ -161,8 +172,19 @@
                   ],
                   "description": "Weight the profile was set to stop at, in grams; null when the profile has no weight stop condition"
                 },
+                "tempDeviationC": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "How far boiler temperature ran from what the profile asked for, averaged over the samples where a temperature target was commanded, in degrees Celsius; null when the shot record carries no target temperature"
+                },
                 "tempStability": {
-                  "description": "Human-readable temperature verdict: \"stable\", or \"drifted +N.NC\" when the spread exceeded 1°C",
+                  "description": "Human-readable temperature verdict: \"stable\", or \"drifted +N.NC\" when the spread exceeded 1°C. Answers whether the boiler wobbled, which is a different question from whether it was correct — see tempDeviationC",
                   "type": "string"
                 },
                 "timeToFirstDripSec": {
@@ -188,9 +210,11 @@
               "required": [
                 "finalWeightG",
                 "peakPressureBar",
+                "pressureDeviationBar",
                 "profileName",
                 "shotId",
                 "targetWeightG",
+                "tempDeviationC",
                 "tempStability",
                 "timeToFirstDripSec",
                 "totalDurationSec",
@@ -262,6 +286,17 @@
                 "description": "Highest pressure reached during the shot, in bar",
                 "type": "number"
               },
+              "pressureDeviationBar": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "How far group pressure ran from what the profile asked for, averaged over the samples where a pressure target was commanded, in bar; null when the profile drove flow throughout and never commanded one"
+              },
               "profileName": {
                 "description": "Name of the brew profile used",
                 "type": "string"
@@ -281,8 +316,19 @@
                 ],
                 "description": "Weight the profile was set to stop at, in grams; null when the profile has no weight stop condition"
               },
+              "tempDeviationC": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "How far boiler temperature ran from what the profile asked for, averaged over the samples where a temperature target was commanded, in degrees Celsius; null when the shot record carries no target temperature"
+              },
               "tempStability": {
-                "description": "Human-readable temperature verdict: \"stable\", or \"drifted +N.NC\" when the spread exceeded 1°C",
+                "description": "Human-readable temperature verdict: \"stable\", or \"drifted +N.NC\" when the spread exceeded 1°C. Answers whether the boiler wobbled, which is a different question from whether it was correct — see tempDeviationC",
                 "type": "string"
               },
               "timeToFirstDripSec": {
@@ -308,9 +354,11 @@
             "required": [
               "finalWeightG",
               "peakPressureBar",
+              "pressureDeviationBar",
               "profileName",
               "shotId",
               "targetWeightG",
+              "tempDeviationC",
               "tempStability",
               "timeToFirstDripSec",
               "totalDurationSec",
@@ -372,6 +420,17 @@
               "description": "Highest pressure reached during the shot, in bar",
               "type": "number"
             },
+            "pressureDeviationBar": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "How far group pressure ran from what the profile asked for, averaged over the samples where a pressure target was commanded, in bar; null when the profile drove flow throughout and never commanded one"
+            },
             "profileName": {
               "description": "Name of the brew profile used",
               "type": "string"
@@ -391,8 +450,19 @@
               ],
               "description": "Weight the profile was set to stop at, in grams; null when the profile has no weight stop condition"
             },
+            "tempDeviationC": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "How far boiler temperature ran from what the profile asked for, averaged over the samples where a temperature target was commanded, in degrees Celsius; null when the shot record carries no target temperature"
+            },
             "tempStability": {
-              "description": "Human-readable temperature verdict: \"stable\", or \"drifted +N.NC\" when the spread exceeded 1°C",
+              "description": "Human-readable temperature verdict: \"stable\", or \"drifted +N.NC\" when the spread exceeded 1°C. Answers whether the boiler wobbled, which is a different question from whether it was correct — see tempDeviationC",
               "type": "string"
             },
             "timeToFirstDripSec": {
@@ -418,9 +488,11 @@
           "required": [
             "finalWeightG",
             "peakPressureBar",
+            "pressureDeviationBar",
             "profileName",
             "shotId",
             "targetWeightG",
+            "tempDeviationC",
             "tempStability",
             "timeToFirstDripSec",
             "totalDurationSec",
