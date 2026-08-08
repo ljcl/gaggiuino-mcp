@@ -65,9 +65,9 @@ describe("loadSecurityConfig", () => {
   });
 
   it("ignores MCP_AUTH_TOKEN entirely", () => {
-    // The variable is still *read*, but by `loadServerConfig`, and only to
-    // refuse to start. Nothing about the request gate consults it any more, so
-    // a stale value cannot quietly re-gate `/mcp` — see config.test.ts.
+    // Nothing reads the removed shared secret any more — the 2.0.x startup
+    // tombstone is gone too (#114) — so a stale value in a long-lived `.env`
+    // must be an ignored variable, never something that re-gates `/mcp`.
     expect(loadSecurityConfig({ MCP_AUTH_TOKEN: "correct-horse" })).toEqual({
       allowedHosts: [],
       allowedOrigins: [],

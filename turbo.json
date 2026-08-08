@@ -6,7 +6,6 @@
     "PORT",
     "HOST",
     "LOG_LEVEL",
-    "MCP_AUTH_TOKEN",
     "MCP_ALLOWED_ORIGINS",
     "MCP_ALLOWED_HOSTS",
     "MCP_PUBLIC_URL",
