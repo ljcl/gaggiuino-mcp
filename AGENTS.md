@@ -1025,7 +1025,6 @@ curl -X POST http://localhost:8000/mcp \
 | `MCP_PUBLIC_URL`      | _(unset)_                | Public https origin, no path. With `MCP_OAUTH_SECRET`, enables OAuth and is advertised as the `resource` |
 | `MCP_OAUTH_SECRET`    | _(unset)_                | ≥32-char signing key for self-issued tokens; keep it stable across restarts |
 | `MCP_OAUTH_PASSPHRASE_HASH` | _(unset)_          | scrypt hash for the consent page. Required when OAuth is on; `bun run hash-passphrase` |
-| `MCP_AUTH_TOKEN`      | _(removed)_              | Removed in 2.0.0. Still read, only to fail startup while it is set — see the tombstone below |
 | `MCP_ALLOWED_ORIGINS` | _(empty)_                | Browser origins allowed on `/mcp`; `*` allows any |
 | `MCP_ALLOWED_HOSTS`   | _(empty)_                | `Host` values to accept; empty disables the check |
 | `LOG_LEVEL`           | `info`                   | `debug`/`info`/`warn`/`error`/`silent`            |
@@ -1112,24 +1111,22 @@ client, so the two write tools were permanently refused on the one deployment
 this repo is built for. It went in 2.0.0, and `authenticate` now has one
 credential path rather than a precedence rule between two.
 
-**Its removal is guarded by a tombstone, and the tombstone is the actual safety
-mechanism.** `loadServerConfig` still reads `env.MCP_AUTH_TOKEN`, solely to
-throw a `ConfigError` when it has a value. A hard delete would have been silent
-in the only direction that matters: an unread variable is an ignored variable,
-so a deployment that gated `/mcp` with the token — which is what the README told
-those users to do — would have come up open on the next image pull with nothing
-in the log. The major version does not protect them either, because `docker.yml`
-publishes `latest` on every default-branch push and `docker-compose.yml`
-defaults to it, so the documented deployment receives the change before a 2.0.0
-tag exists. Refusing to start is what protects them. #114 removes it one release
-later.
-
-That is also why the variable is still in `.env.example` and in `turbo.json`'s
-`globalPassThroughEnv`: the code reads it, so `envExample.test.ts` requires the
-template entry, and the pass-through is what lets the value reach the process
-under turbo at all. Both go with the tombstone, not before it. The template
-entry's *wording* is therefore load-bearing and asserted — a reader who takes it
-for a live setting gets a server that will not boot.
+**Its removal shipped behind a one-release tombstone, now itself removed
+(#114).** Through 2.0.x, `loadServerConfig` kept reading `env.MCP_AUTH_TOKEN`
+solely to throw a `ConfigError` while it had a value, because a hard delete
+would have been silent in the only direction that matters: an unread variable
+is an ignored variable, so a deployment that gated `/mcp` with the token —
+which is what the README told those users to do — would have come up open on
+the next image pull with nothing in the log. The major version was not the
+protection either, because `docker.yml` publishes `latest` on every
+default-branch push and `docker-compose.yml` defaults to it, so the documented
+deployment received the change before a 2.0.0 tag existed; refusing to start is
+what made it visible. With the tombstone gone, nothing reads the variable — a
+value still set today is somebody's stale `.env` line, and the only remaining
+mention in code is the unauthenticated-startup warning, which names the removal
+so that log line explains itself. The `.env.example` entry and `turbo.json`
+pass-through left with the tombstone, in the same commit, because
+`envExample.test.ts` requires template and code to agree in both directions.
 
 `oauth/` holds the resource-server half: `metadata.ts` (RFC 9728 document and the
 `WWW-Authenticate` challenges), `tokens.ts` (sign/verify), `scopes.ts`, and
@@ -1383,8 +1380,12 @@ Improvements and changes are tracked as GitHub Issues and triaged on the
   `gh project item-list 2 --owner ljcl --format json` and
   `gh project field-list 2 --owner ljcl --format json`.
 - **Cloud and iOS sessions**: the `github-projects` MCP server from `.mcp.json`
-  (auth via `GH_MCP_PAT`). Pass numeric field ids via `fields`, and use option
-  ids rather than option names for single-select values.
+  (auth via `GH_MCP_PAT`): `projects_list` / `projects_get` / `projects_write`,
+  with the operation named in a `method` parameter. Field names
+  (`field_names: ["Status"]`), single-select option names
+  (`updated_field: {"name": "Status", "value": "Ready"}`), and
+  `item_owner`+`item_repo`+`issue_number` item addressing all work — the
+  numeric ids below are needed only by the gh CLI path.
 
 Board constants: project number 2, owner `ljcl`, node id `PVT_kwHOABzAhM4BeYXa`,
 database id `24741338`.

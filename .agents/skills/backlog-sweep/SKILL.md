@@ -80,11 +80,16 @@ board (see CLAUDE.md "Backlog and issue tracking" for labels and board fields).
      json` and `gh project field-list 2 --owner ljcl --format json`.
    - **Cloud/iOS sessions** (no gh): the `github-projects` MCP server from
      `.mcp.json` (hosted GitHub MCP, projects toolset, auth via the
-     `GH_MCP_PAT` env var in the cloud environment config). Hosted-build
-     caveats: pass numeric field ids via the `fields` param
-     (`field_names` is not deployed yet), and `update_project_item` needs the
-     numeric `item_id` plus the option **id** (not name) for single-select
-     values. Ids are discoverable at runtime via `list_project_fields`.
+     `GH_MCP_PAT` env var in the cloud environment config). The toolset is
+     three method-style tools — `projects_list`, `projects_get`,
+     `projects_write` — with the operation named in a `method` parameter
+     (`list_project_items`, `update_project_item`, …). Human-readable names
+     work throughout: `field_names: ["Status", "Priority", "Effort"]` when
+     listing, and for updates an item addressed by `item_owner` + `item_repo`
+     + `issue_number` with `updated_field: {"name": "Status", "value":
+     "Ready"}` — option names accepted for single-select. No numeric id of any
+     kind is required on this path (verified live, 2026-08-08 sweep); the ids
+     below serve the gh CLI path, which does need them.
 
    Constants for this board: project number 2, owner `ljcl`, node id
    `PVT_kwHOABzAhM4BeYXa`, database id 24741338; field ids: Status
