@@ -225,13 +225,12 @@ export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
 
       // New session — must be an initialize request
       if (isInitializeRequest(body)) {
-        if (!(await sessions.tryReserve())) {
-          return jsonRpcError(
-            503,
-            -32000,
-            "Server at session capacity; retry shortly",
-          );
-        }
+        // Never refuses. The cap bounds how many transports are held, not how
+        // long a conversation may run: a host that opens a session per tool
+        // call and never DELETEs would otherwise hit a 503 mid-conversation,
+        // and retrying that 503 is another initialize. Whatever gets closed
+        // here answers 404 next, which is the spec's re-handshake signal.
+        await sessions.reserve();
         const transport = createTransport(describeInitiator(body));
         const server = createServer();
         await server.connect(transport);

@@ -1242,15 +1242,45 @@ exist produces Anthropic's documented "Couldn't reach the MCP server."
 Sessions expire on an idle TTL (30 min) and are capped (64). The two are not
 redundant: the TTL reclaims sessions whose client vanished without a DELETE — a
 dropped tunnel, a restarted host — and the cap bounds anything that outruns it.
-`tryReserve()` sweeps *before* it refuses, so a burst of abandoned sessions
-cannot lock out a client that arrives later; over the cap the handler answers
-503 rather than allocating.
 
-Two ordering details in `sweep()` are load-bearing. It deletes each entry before
-calling `close()`, because the real transport's `onclose` calls straight back
-into `delete` — closing first means mutating the map mid-iteration. And each
-`close()` is individually caught, so one transport that refuses to die does not
-strand the rest of the sweep. Both have tests named after the failure.
+**The cap evicts rather than refuses, and `reserve()` therefore always
+succeeds.** It used to answer 503 over the cap, which read as prudent and was
+not: Claude opens a fresh session per tool call and never sends a DELETE — five
+`session.opened` records in forty seconds with no `session.closed` between them,
+observed on the real deployment once `describeInitiator` made it visible.
+Nothing that arrived inside the 30-minute TTL is sweepable, so ~64 tool calls in
+half an hour ended a working conversation, and the advice that 503 carried
+("retry shortly") is another `initialize` — the thing that filled the map.
+
+What makes eviction survivable is the 404 rule below: an evicted client's next
+request gets the spec's own re-handshake signal and recovers on its own, where a
+503 on `initialize` has no recovery at all. That asymmetry is the argument, not
+the raw capacity number — the cap now bounds *memory* rather than conversation
+length. `reserve()` still sweeps first, because reclaiming a client that is
+genuinely gone always beats closing one that is merely oldest, and it evicts by
+**least recently seen** rather than oldest-opened, so the session doing the work
+is the last to go.
+
+Three details are load-bearing. `evict()` deletes each entry before calling
+`close()`, because the real transport's `onclose` calls straight back into
+`delete` — closing first means mutating the map mid-iteration. Each `close()` is
+individually caught, so one transport that refuses to die does not strand the
+rest. And the eviction walks a **snapshot** of ids sorted by `lastSeen` rather
+than re-finding the oldest in a `while`: it frees more than one slot when a cap
+lowered between restarts has left the map over the new ceiling, and a finite
+list cannot spin the way a loop conditioned on `sessions.size` could if an entry
+ever failed to leave the map. `maxSessions` is clamped to at least 1 so
+`reserve()`'s promise stays total. All have tests named after the failure.
+
+That shape was also chosen against the coverage rule: the obvious version —
+`while (size >= cap)` around a `leastRecentlySeen()` that returns
+`string | undefined` — needs a guard for an `undefined` that `cap >= 1` makes
+unreachable. Restructuring removed the dead branch rather than paying for it, or
+worse, weakening the threshold to accommodate it.
+
+`onEvicted` reports `idle` or `capacity`, and the distinction is the diagnostic:
+a run of `capacity` evictions is the signature of a host that is not reusing its
+sessions, which is a different problem from clients going away.
 
 `index.ts` handles **SIGTERM as well as SIGINT** — `docker stop` sends SIGTERM,
 so handling only SIGINT meant the container was killed after the grace period
@@ -1265,6 +1295,11 @@ as well as a missing header, and no client recovers from that by re-handshaking,
 so a session the idle TTL reclaimed stranded its client instead of prompting a
 reconnect. 400 now means only what it says: the `Mcp-Session-Id` header is
 absent.
+
+That rule carries more weight than it used to: it is what the capacity eviction
+above is built on. Closing a live session is only acceptable because its client
+gets a 404 and re-handshakes, so anything that softened this back toward a 400
+would turn every eviction into a stranded client.
 
 ### Logging, health, and startup validation
 
