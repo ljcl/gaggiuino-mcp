@@ -67,6 +67,7 @@
         "react": "19.2.8",
         "storybook": "10.5.5",
         "typescript": "7.0.2",
+        "vitest": "4.1.10",
       },
     },
     "packages/shot-graph": {
