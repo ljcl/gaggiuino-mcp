@@ -10,7 +10,7 @@ import { PROTECTED_TOOLS, protectedToolsIn } from "./scopeGate";
  * protected set unnoticed. Same reasoning as `NON_IDEMPOTENT_TOOLS` in
  * `server.test.ts`.
  */
-const WRITE_TOOLS = ["select_profile", "upload_profile"];
+const WRITE_TOOLS = ["delete_profile", "select_profile", "upload_profile"];
 
 function toolCall(name: string) {
   return { id: 1, jsonrpc: "2.0", method: "tools/call", params: { name } };

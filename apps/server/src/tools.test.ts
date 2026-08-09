@@ -12,7 +12,7 @@ import { resetClient } from "./client";
 import { TEST_PASSPHRASE_HASH } from "./oauth/__fixtures__";
 import { handleToolCall } from "./server";
 import { mockServer } from "./test-setup";
-import { describeUploadFailure } from "./tools";
+import { describeDeleteFailure, describeUploadFailure } from "./tools";
 
 /**
  * Configure OAuth for the duration of a test, which is what `writeToolDisabled`
@@ -1326,6 +1326,369 @@ describe("tool dispatch", () => {
         expect(result.isError).toBe(true);
         expect(result.text).toContain("no profile with id '99'");
         expect(result.text).not.toContain("firmware version");
+      });
+    });
+  });
+
+  describe("delete_profile", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    /**
+     * The machine, plus counters for the two things that must not happen by
+     * accident. `deleted` records every id the DELETE verb actually reached —
+     * most of the tests below assert it stays empty, because for a destructive
+     * tool "returned an error" and "did not delete anything" are different
+     * claims and only the second one matters.
+     */
+    function machineHolding(
+      profiles: Array<Record<string, unknown>>,
+      selectedProfileId?: string,
+    ) {
+      const deleted: string[] = [];
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.json(profiles),
+        ),
+        http.get("http://gaggiuino.local/api/system/status", () =>
+          HttpResponse.json([
+            { ...mockMachineStatus, profileId: selectedProfileId },
+          ]),
+        ),
+        http.delete(
+          "http://gaggiuino.local/api/profile-select/:id",
+          ({ params }) => {
+            deleted.push(String(params.id));
+            return HttpResponse.text("OK");
+          },
+        ),
+      );
+      return deleted;
+    }
+
+    it("refuses when the server has no credential configured, and deletes nothing", async () => {
+      // The gate has to come before the fetch, not after it — same assertion
+      // upload_profile makes, and it matters more here.
+      vi.stubEnv("MCP_PUBLIC_URL", "");
+      vi.stubEnv("MCP_OAUTH_SECRET", "");
+      const deleted = machineHolding([{ id: "15", name: "Zer0" }]);
+
+      const result = await handleToolCall("delete_profile", {
+        confirm_name: "Zer0",
+        profile_id: "15",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("MCP_PUBLIC_URL");
+      expect(deleted).toEqual([]);
+    });
+
+    describe("with the endpoint authenticated", () => {
+      beforeEach(() => {
+        configureOAuth();
+      });
+
+      it("deletes the profile when the id and the exact name agree", async () => {
+        const deleted = machineHolding(
+          [
+            { id: "15", name: "Zer0" },
+            { id: "27", name: "[TEST] mcp upload" },
+          ],
+          "15",
+        );
+
+        const result = await handleToolCall("delete_profile", {
+          confirm_name: "[TEST] mcp upload",
+          profile_id: "27",
+        });
+        expect(result.isError).toBeUndefined();
+        expect(deleted).toEqual(["27"]);
+        expect(result.text).toContain("cannot be undone");
+      });
+
+      it("refuses a name that differs only in case, and deletes nothing", async () => {
+        // The gate is a strict ===, not another findCatalogEntry. That helper
+        // trims and lowercases, so routing the confirmation through it would let
+        // "zer0" confirm "Zer0" and the whole check would be theatre.
+        const deleted = machineHolding(
+          [{ id: "27", name: "[TEST] mcp upload" }],
+          "15",
+        );
+
+        const result = await handleToolCall("delete_profile", {
+          confirm_name: "[test] MCP UPLOAD",
+          profile_id: "27",
+        });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("Refusing to delete");
+        expect(deleted).toEqual([]);
+      });
+
+      it("refuses a name that belongs to a different profile, and deletes nothing", async () => {
+        // The off-by-one this exists for: ids on a real machine are sparse, so
+        // a model that shifts one row deletes a profile nobody discussed.
+        const deleted = machineHolding(
+          [
+            { id: "26", name: "Londinium" },
+            { id: "27", name: "[TEST] mcp upload" },
+          ],
+          "15",
+        );
+
+        const result = await handleToolCall("delete_profile", {
+          confirm_name: "Londinium",
+          profile_id: "27",
+        });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("[TEST] mcp upload");
+        expect(deleted).toEqual([]);
+      });
+
+      it("accepts the machine's own spelling of a documented profile's name", async () => {
+        // `entry.name` is the bundled YAML's spelling for a documented profile,
+        // and the join is on the lowercased name — so the machine can legitimately
+        // spell it differently. The user reads the machine's version, so it has
+        // to be accepted or the gate refuses a correct answer.
+        const deleted = machineHolding(
+          [{ id: "21", name: "LMD 9-8 v1.5 (milk)" }],
+          "15",
+        );
+
+        const result = await handleToolCall("delete_profile", {
+          confirm_name: "LMD 9-8 v1.5 (milk)",
+          profile_id: "21",
+        });
+        expect(result.isError).toBeUndefined();
+        expect(deleted).toEqual(["21"]);
+      });
+
+      it("refuses to delete the profile the machine has selected, and deletes nothing", async () => {
+        const deleted = machineHolding([{ id: "15", name: "Zer0" }], "15");
+
+        const result = await handleToolCall("delete_profile", {
+          confirm_name: "Zer0",
+          profile_id: "15",
+        });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("currently has selected");
+        expect(deleted).toEqual([]);
+      });
+
+      it("fails closed when the machine will not report what is selected", async () => {
+        // Without a status read this server does not know what is selected, and
+        // "probably fine" is not a basis for an irreversible delete.
+        const deleted: string[] = [];
+        mockServer.use(
+          http.get("http://gaggiuino.local/api/profiles/all", () =>
+            HttpResponse.json([{ id: "27", name: "[TEST] mcp upload" }]),
+          ),
+          http.get("http://gaggiuino.local/api/system/status", () =>
+            HttpResponse.error(),
+          ),
+          http.delete(
+            "http://gaggiuino.local/api/profile-select/:id",
+            ({ params }) => {
+              deleted.push(String(params.id));
+              return HttpResponse.text("OK");
+            },
+          ),
+        );
+
+        const result = await handleToolCall("delete_profile", {
+          confirm_name: "[TEST] mcp upload",
+          profile_id: "27",
+        });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("status check");
+        expect(deleted).toEqual([]);
+      });
+
+      it("still deletes on firmware that reports no selected profile", async () => {
+        // Absent and unreadable are different, on purpose. A failed status read
+        // is transient, so refusing costs nothing permanent; a firmware that
+        // never reports the field would refuse forever, which makes the tool
+        // useless on that machine rather than safer on it. `profileId` is
+        // undocumented, so this is a real firmware, not a hypothetical.
+        const deleted = machineHolding([
+          { id: "27", name: "[TEST] mcp upload" },
+        ]);
+
+        const result = await handleToolCall("delete_profile", {
+          confirm_name: "[TEST] mcp upload",
+          profile_id: "27",
+        });
+        expect(result.isError).toBeUndefined();
+        expect(deleted).toEqual(["27"]);
+      });
+
+      it("will not guess at an id when the machine cannot be reached", async () => {
+        // The catalog degrades to the bundled documentation when the machine is
+        // down, and a documented profile's id is this server's own, not the
+        // machine's. Deleting by it would be deleting by a number that means
+        // something else.
+        const deleted: string[] = [];
+        mockServer.use(
+          http.get("http://gaggiuino.local/api/profiles/all", () =>
+            HttpResponse.error(),
+          ),
+          http.delete(
+            "http://gaggiuino.local/api/profile-select/:id",
+            ({ params }) => {
+              deleted.push(String(params.id));
+              return HttpResponse.text("OK");
+            },
+          ),
+        );
+
+        const result = await handleToolCall("delete_profile", {
+          confirm_name: "Zer0",
+          profile_id: "zer0",
+        });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("could not be reached");
+        expect(deleted).toEqual([]);
+      });
+
+      it("refuses an id it cannot find at all, and deletes nothing", async () => {
+        const deleted = machineHolding([{ id: "15", name: "Zer0" }], "15");
+
+        const result = await handleToolCall("delete_profile", {
+          confirm_name: "Whatever",
+          profile_id: "does-not-exist",
+        });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("Nothing was deleted");
+        expect(result.text).toContain("Available ids:");
+        expect(deleted).toEqual([]);
+      });
+
+      it("will not confirm a delete the machine failed with a 5xx", async () => {
+        // The ESP32 answers 503 while it is busy writing to flash, which is
+        // exactly when a write may have landed anyway — so this must not read
+        // as "nothing happened".
+        mockServer.use(
+          http.get("http://gaggiuino.local/api/profiles/all", () =>
+            HttpResponse.json([{ id: "27", name: "[TEST] mcp upload" }]),
+          ),
+          http.get("http://gaggiuino.local/api/system/status", () =>
+            HttpResponse.json([{ ...mockMachineStatus, profileId: "15" }]),
+          ),
+          http.delete(
+            "http://gaggiuino.local/api/profile-select/:id",
+            () => new HttpResponse("flash busy", { status: 503 }),
+          ),
+        );
+
+        const result = await handleToolCall("delete_profile", {
+          confirm_name: "[TEST] mcp upload",
+          profile_id: "27",
+        });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("cannot confirm");
+        expect(result.text).toContain("flash busy");
+        expect(result.text).toContain("list_profiles");
+      });
+
+      it("refuses a profile the machine does not hold", async () => {
+        const deleted = machineHolding([{ id: "15", name: "Zer0" }], "15");
+
+        const result = await handleToolCall("delete_profile", {
+          confirm_name: "Adaptive",
+          profile_id: "adaptive",
+        });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("not on the machine");
+        expect(deleted).toEqual([]);
+      });
+
+      it("stops the deleted profile appearing in the next list_profiles", async () => {
+        // The eviction in `finally`, from the caller's side: a 30s stale list
+        // still showing the profile reads as "the delete silently failed", and
+        // invites a second delete against an id the machine may have reassigned.
+        let listed: Array<Record<string, unknown>> = [
+          { id: "15", name: "Zer0" },
+          { id: "27", name: "[TEST] mcp upload" },
+        ];
+        mockServer.use(
+          http.get("http://gaggiuino.local/api/profiles/all", () =>
+            HttpResponse.json(listed),
+          ),
+          http.get("http://gaggiuino.local/api/system/status", () =>
+            HttpResponse.json([{ ...mockMachineStatus, profileId: "15" }]),
+          ),
+          http.delete("http://gaggiuino.local/api/profile-select/:id", () => {
+            listed = [{ id: "15", name: "Zer0" }];
+            return HttpResponse.text("OK");
+          }),
+        );
+
+        await handleToolCall("delete_profile", {
+          confirm_name: "[TEST] mcp upload",
+          profile_id: "27",
+        });
+        const after = await handleToolCall("list_profiles", {});
+        expect(after.text).not.toContain("[TEST] mcp upload");
+      });
+
+      it("does not retry, and says the delete may have landed", async () => {
+        // Worse than upload's duplicate: the reference never says whether ids
+        // are reused after a delete, so a retry that lands twice could remove a
+        // different profile.
+        let attempts = 0;
+        mockServer.use(
+          http.get("http://gaggiuino.local/api/profiles/all", () =>
+            HttpResponse.json([{ id: "27", name: "[TEST] mcp upload" }]),
+          ),
+          http.get("http://gaggiuino.local/api/system/status", () =>
+            HttpResponse.json([{ ...mockMachineStatus, profileId: "15" }]),
+          ),
+          http.delete("http://gaggiuino.local/api/profile-select/:id", () => {
+            attempts += 1;
+            return HttpResponse.error();
+          }),
+        );
+
+        const result = await handleToolCall("delete_profile", {
+          confirm_name: "[TEST] mcp upload",
+          profile_id: "27",
+        });
+        expect(attempts).toBe(1);
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("list_profiles");
+        expect(result.text).toContain("ids are reused");
+      });
+
+      it("calls a 404 ambiguous rather than blaming the id", async () => {
+        // errors.ts's generic branch matches this path regardless of method and
+        // would name select_profile — advice for the wrong verb, and wrong about
+        // what happened.
+        mockServer.use(
+          http.get("http://gaggiuino.local/api/profiles/all", () =>
+            HttpResponse.json([{ id: "27", name: "[TEST] mcp upload" }]),
+          ),
+          http.get("http://gaggiuino.local/api/system/status", () =>
+            HttpResponse.json([{ ...mockMachineStatus, profileId: "15" }]),
+          ),
+          http.delete(
+            "http://gaggiuino.local/api/profile-select/:id",
+            () => new HttpResponse(null, { status: 404 }),
+          ),
+        );
+
+        const result = await handleToolCall("delete_profile", {
+          confirm_name: "[TEST] mcp upload",
+          profile_id: "27",
+        });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("already gone");
+        expect(result.text).toContain("list_profiles");
+        expect(result.text).not.toContain("select_profile");
+      });
+
+      it("leaves a failure it does not recognise to the dispatcher", async () => {
+        expect(
+          describeDeleteFailure(new Error("boom"), "Zer0"),
+        ).toBeUndefined();
       });
     });
   });

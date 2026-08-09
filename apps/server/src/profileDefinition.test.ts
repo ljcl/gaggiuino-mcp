@@ -159,6 +159,7 @@ describe("loadProfileDefinition", () => {
     description: null,
     documented: false,
     id: "zer0",
+    machineName: "Zer0",
     machineProfileId: "15",
     name: "Zer0",
     onMachine: true as boolean | null,
