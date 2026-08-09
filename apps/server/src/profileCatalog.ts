@@ -38,6 +38,22 @@ export interface CatalogEntry {
   id: string;
   /** The value `select_profile` needs, when the machine offered one. */
   machineProfileId: string | null;
+  /**
+   * The profile's name **as the machine spells it**, when it is on the machine.
+   *
+   * Not the same string as `name`. For a documented profile `name` is the
+   * bundled YAML's spelling, because the join is on the lowercased, trimmed name
+   * and `documentedEntry` keeps the YAML's copy — so the two legitimately differ
+   * in case and spacing. This repo already contains an instance:
+   * `profiles.yaml` says `LMD 9-8 v1.5 (Milk)` where the machine says `(milk)`.
+   *
+   * It exists because `delete_profile` makes the caller echo the profile's exact
+   * name, and a confirmation gate has to check against what the user can
+   * actually see. Deliberately absent from `ProfileOutput`, which is a
+   * `z.object` and strips it before `structuredContent`, so no tool advertises
+   * it and no permission grant moves.
+   */
+  machineName: string | null;
   name: string;
   onMachine: boolean | null;
   recommendedDose: string | null;
@@ -63,12 +79,14 @@ function documentedEntry(
   profile: ReturnType<typeof listProfileEntries>[number],
   onMachine: boolean | null,
   machineProfileId: string | null,
+  machineName: string | null = null,
 ): CatalogEntry {
   return {
     basketNotes: profile.basketNotes ?? null,
     description: profile.description,
     documented: true,
     id: profile.id,
+    machineName,
     machineProfileId,
     name: profile.name,
     onMachine,
@@ -92,6 +110,7 @@ function machineOnlyEntry(
     // A profile the user made has no curated id, so it is addressed by the
     // machine's own — and by its position when the firmware sends no id at all.
     id: machineProfileId ?? `profile-${index + 1}`,
+    machineName: profile.name,
     machineProfileId,
     name: profile.name,
     onMachine: true,
@@ -141,7 +160,7 @@ export async function loadProfileCatalog(): Promise<ProfileCatalog> {
     const docs = documented.get(key);
     if (!docs) return machineOnlyEntry(profile, index);
     seen.add(key);
-    return documentedEntry(docs, true, profile.id ?? null);
+    return documentedEntry(docs, true, profile.id ?? null, profile.name);
   });
 
   const absent = [...documented.entries()]

@@ -179,6 +179,84 @@ describe("resolveClient", () => {
     expect(await resolveClient("not a url")).toBeUndefined();
   });
 
+  /**
+   * The size and shape guards on the fetched document.
+   *
+   * `client_id` is attacker-supplied and this server fetches it, so what comes
+   * back is untrusted input on the login path: a body that never ends, or one
+   * that is not JSON at all, must cost a bounded amount and produce no client.
+   */
+  it("refuses a document that declares itself too large", async () => {
+    const id = "https://example.com/huge";
+    mockServer.use(
+      http.get(
+        id,
+        () =>
+          new HttpResponse('{"client_id":"x"}', {
+            headers: {
+              "content-length": String(128 * 1024),
+              "content-type": "application/json",
+            },
+          }),
+      ),
+    );
+    expect(await resolveClient(id)).toBeUndefined();
+  });
+
+  it("refuses an oversized document that declared no length at all", async () => {
+    // The second size check, and the one that actually matters:
+    // `content-length` is a claim, not a promise, and a chunked response
+    // carries none — so the body is measured again after reading. Streamed
+    // here precisely so no length header exists to catch it earlier.
+    const id = "https://example.com/chunked";
+    mockServer.use(
+      http.get(id, () => {
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode("x".repeat(128 * 1024)),
+            );
+            controller.close();
+          },
+        });
+        return new HttpResponse(stream, {
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+    expect(await resolveClient(id)).toBeUndefined();
+  });
+
+  it("refuses a document that is not JSON", async () => {
+    // An HTML error page served with a 200 is the common shape of this.
+    const id = "https://example.com/notjson";
+    mockServer.use(
+      http.get(id, () => HttpResponse.text("<!doctype html><title>nope")),
+    );
+    expect(await resolveClient(id)).toBeUndefined();
+  });
+
+  it("refuses valid JSON that is not an object", async () => {
+    // `JSON.parse` succeeds on a bare string, a number, or null — none of which
+    // has a `client_id`, and `null` would throw on property access.
+    const id = "https://example.com/scalar";
+    mockServer.use(http.get(id, () => HttpResponse.json("just a string")));
+    expect(await resolveClient(id)).toBeUndefined();
+  });
+
+  it("refuses a hostname that resolves to nothing at all", async () => {
+    // An empty answer is not a public answer. `every` on an empty array is
+    // vacuously true, so without the explicit length check this would pass the
+    // SSRF guard.
+    stubbedAddresses.set("empty.example.com", []);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    expect(
+      await resolveClient("https://empty.example.com/client"),
+    ).toBeUndefined();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("caches a resolved document", async () => {
     const id = "https://example.com/cached";
     let fetches = 0;

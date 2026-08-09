@@ -1515,6 +1515,38 @@
     "title": "Save a new brew profile"
   },
   {
+    "_meta": {
+      "anthropic/requiresUserInteraction": true
+    },
+    "annotations": {
+      "destructiveHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    },
+    "description": "Permanently delete a brew profile from the machine. There is no undo and this server cannot restore a deleted profile, so only call this when the user has asked for this specific profile to be deleted, in this conversation, by name. Never delete a profile on your own initiative — not to tidy up, not to remove a duplicate you created, not as a step in some other task. Requires the profile's exact name in confirm_name as well as its id, so the deletion cannot be an off-by-one: read the name from list_profiles and pass it back exactly as reported. Refuses to delete the profile the machine currently has selected, and refuses unless this server has an authorization server configured.",
+    "inputSchema": {
+      "properties": {
+        "confirm_name": {
+          "description": "The profile's exact name, copied from list_profiles. Must match, or the deletion is refused. This is a confirmation, not a lookup — do not guess it, and do not derive it from profile_id.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "profile_id": {
+          "description": "Id of the profile to delete, as listed by list_profiles — either its documented id (\"zer0\") or its machineProfileId (\"15\").",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "confirm_name",
+        "profile_id"
+      ],
+      "type": "object"
+    },
+    "name": "delete_profile",
+    "title": "Delete a brew profile"
+  },
+  {
     "annotations": {
       "destructiveHint": false,
       "idempotentHint": true,

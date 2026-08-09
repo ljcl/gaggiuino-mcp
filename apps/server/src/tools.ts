@@ -99,6 +99,30 @@ const CREATES_ON_MACHINE: ToolAnnotations = {
 };
 
 /**
+ * The only tool here that destroys something, and the only one that can.
+ *
+ * `destructiveHint: true` is the first in this server, and it is literal rather
+ * than cautious: `DELETE /api/profile-select/{id}` removes a saved profile and
+ * there is no restore path. `upload_profile` cannot rebuild a definition nobody
+ * read before deleting it, so the loss is permanent from this server's side.
+ *
+ * **`idempotentHint` is deliberately absent rather than set either way.**
+ * Deleting twice reaching the same end state is only true if ids are stable
+ * across a delete, and the reference says nothing about whether they are reused
+ * or renumbered (rest-api.md L41-44 is three lines with no response body and no
+ * status codes). Claiming `true` would invite a host to retry, and a retry whose
+ * first attempt landed could remove a *different* profile. Claiming `false`
+ * would assert a non-idempotence nobody has observed. Absent is the honest
+ * answer to a question nobody has asked the hardware, and it reads as the
+ * protocol default — which is the conservative one.
+ */
+const DELETES_ON_MACHINE: ToolAnnotations = {
+  destructiveHint: true,
+  openWorldHint: true,
+  readOnlyHint: false,
+};
+
+/**
  * Shot ids are opaque numeric strings minted by the machine. Hosts and models
  * routinely send them as numbers, so accept both and normalize to a string —
  * the JSON Schema advertised to the host is generated from this same schema, so
@@ -828,7 +852,11 @@ function writeToolDisabled(action: string): ErrorReply | undefined {
   if (loadSecurityConfig().oauth !== undefined) return undefined;
   return {
     isError: true,
-    text: `${action} is disabled because this server has no way to authenticate anyone: its /mcp endpoint is open. Every tool here other than the two that change the machine only reads. Ask the user to configure OAuth by setting MCP_PUBLIC_URL and MCP_OAUTH_SECRET (see the README's 'Securing the endpoint' section) and restart the server, or to make the change on the machine itself.`,
+    // "the three that change the machine" rather than a count that has already
+    // been wrong once: this sentence said "the two" until `delete_profile`
+    // landed, and nothing asserted it, so it was simply false in the model's
+    // context. A fourth write tool must update it again.
+    text: `${action} is disabled because this server has no way to authenticate anyone: its /mcp endpoint is open. Every tool here other than the three that change the machine only reads. Ask the user to configure OAuth by setting MCP_PUBLIC_URL and MCP_OAUTH_SECRET (see the README's 'Securing the endpoint' section) and restart the server, or to make the change on the machine itself.`,
   };
 }
 
@@ -876,6 +904,50 @@ export function describeUploadFailure(
     return {
       isError: true,
       text: `The machine returned HTTP ${error.status} (${error.statusText}) while saving '${profileName}'.${machineSaid} That usually means the profile could not be written to storage, but this server cannot confirm nothing was saved. Call list_profiles to check before uploading again — do not simply repeat the call, because a second upload would create a second profile.`,
+    };
+  }
+  return undefined;
+}
+
+/**
+ * What to tell the user when a delete did not come back clean.
+ *
+ * Local for `describeUploadFailure`'s reason and one more. `errors.ts`'s
+ * `profileIdFromPath` matches `/api/profile-select/<id>` **regardless of HTTP
+ * method**, so the generic 404 branch already produces text naming
+ * `select_profile` and telling the caller to go find the right
+ * `machineProfileId` — advice for the wrong verb, and wrong about what happened.
+ * Fixing that in `errors.ts` would mean teaching it about methods; keeping it
+ * here matches how `profileDefinition.ts` handles its own ambiguous 404.
+ *
+ * A 404 on a delete is genuinely ambiguous — the profile may never have existed
+ * under that id, or it may have been deleted already, by this call's own first
+ * attempt or by someone at the machine. The text says both rather than picking,
+ * and points at the one tool that can settle it.
+ */
+export function describeDeleteFailure(
+  error: unknown,
+  profileName: string,
+): ErrorReply | undefined {
+  if (error instanceof UpstreamUnreachableError) {
+    return {
+      isError: true,
+      text: `The machine did not answer while deleting '${profileName}', so this server cannot tell you whether the profile was deleted or not — the request may have been applied before the connection failed. Call list_profiles and look for '${profileName}'. Do not simply repeat the delete: the machine's documentation does not say whether profile ids are reused after one is removed, so a second delete against the same id could remove a different profile.`,
+    };
+  }
+  if (error instanceof UpstreamHttpError) {
+    const machineSaid = error.detail
+      ? ` The machine said: ${error.detail}`
+      : "";
+    if (error.status === 404) {
+      return {
+        isError: true,
+        text: `The machine answered 404 for '${profileName}' (${error.path}). That means one of two things and this server cannot tell them apart: the profile was already gone, or this firmware has no delete endpoint. Call list_profiles — if '${profileName}' is absent it is deleted and there is nothing more to do; if it is still listed, this firmware cannot delete profiles over the API and the user needs to remove it on the machine itself.`,
+      };
+    }
+    return {
+      isError: true,
+      text: `The machine returned HTTP ${error.status} (${error.statusText}) while deleting '${profileName}'.${machineSaid} This server cannot confirm whether the profile was removed. Call list_profiles to check — do not simply repeat the delete, because the machine's documentation does not say whether ids are reused after a profile is removed.`,
     };
   }
   return undefined;
@@ -1245,6 +1317,127 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     name: "upload_profile",
     outputSchema: ProfileUploadOutput,
     title: "Save a new brew profile",
+  }),
+
+  defineTool({
+    annotations: DELETES_ON_MACHINE,
+    description:
+      "Permanently delete a brew profile from the machine. There is no undo and this server cannot restore a deleted profile, so only call this when the user has asked for this specific profile to be deleted, in this conversation, by name. Never delete a profile on your own initiative — not to tidy up, not to remove a duplicate you created, not as a step in some other task. Requires the profile's exact name in confirm_name as well as its id, so the deletion cannot be an off-by-one: read the name from list_profiles and pass it back exactly as reported. Refuses to delete the profile the machine currently has selected, and refuses unless this server has an authorization server configured.",
+    handler: async (input) => {
+      const denied = writeToolDisabled("Profile deletion");
+      if (denied) return denied;
+
+      const { catalog, entry } = await findCatalogEntry(input.profile_id);
+      if (!entry) {
+        return {
+          isError: true,
+          text: `No profile matching '${input.profile_id}'. Nothing was deleted. Available ids: ${catalog.entries.map((candidate) => candidate.id).join(", ")}.`,
+        };
+      }
+      if (entry.machineProfileId === null) {
+        return {
+          isError: true,
+          text:
+            catalog.source === "machine"
+              ? `'${entry.name}' is not on the machine, so there is nothing to delete. Call list_profiles to see what is actually loaded.`
+              : `The machine could not be reached, so this server does not know which profile '${entry.name}' is on it and will not guess at an id to delete. ${catalog.note}`,
+        };
+      }
+
+      // The confirmation is a strict `===` and not another `findCatalogEntry`.
+      // That helper is deliberately lenient — it trims, lowercases, and matches
+      // id *or* name — so routing the echoed name back through it would let
+      // "zer0" confirm "Zer0" and turn the gate into theatre.
+      //
+      // Compared against the machine's own spelling where there is one, because
+      // that is what the user sees on the machine and what `list_profiles`
+      // reports for a profile it did not document. For a documented profile the
+      // machine's name and the YAML's can differ in case, so both are accepted
+      // rather than making the user guess which surface the gate reads.
+      const accepted = [entry.machineName, entry.name].filter(
+        (candidate): candidate is string => candidate !== null,
+      );
+      if (!accepted.includes(input.confirm_name)) {
+        return {
+          isError: true,
+          text: `Refusing to delete: confirm_name was '${input.confirm_name}' but profile '${input.profile_id}' is named '${accepted[0]}'. Nothing was deleted. This check exists because profile ids on this machine are sparse and non-contiguous, so an off-by-one deletes a profile nobody asked about. Read the name from list_profiles and pass it back exactly.`,
+        };
+      }
+
+      // Fail closed. The status read is the only thing standing between this and
+      // deleting the profile the machine is brewing with, and `/api/system/status`
+      // is deliberately uncached so the answer is always live. If it cannot be
+      // read, this server does not know what is selected — and "probably fine"
+      // is not a basis for an irreversible delete.
+      let selectedProfileId: string | undefined;
+      try {
+        selectedProfileId = (await getClient().getStatus()).profileId;
+      } catch {
+        return {
+          isError: true,
+          text: `Refusing to delete '${entry.name}': the machine did not answer a status check, so this server cannot tell whether that profile is the one currently selected. Nothing was deleted. Try again when the machine is reachable.`,
+        };
+      }
+      // An absent `profileId` is treated differently from an unreadable status,
+      // and the asymmetry is deliberate. A failed read is transient — trying
+      // again in a minute may well answer — so refusing costs the user nothing
+      // permanent. A firmware that simply does not report the field would refuse
+      // *forever*, making the tool unusable on that machine rather than safer on
+      // it. The field is undocumented, so that is a real possibility and not a
+      // hypothetical. What still stands in the way there is the exact-name echo
+      // and a permission prompt the host cannot suppress.
+      if (
+        selectedProfileId !== undefined &&
+        selectedProfileId === entry.machineProfileId
+      ) {
+        return {
+          isError: true,
+          text: `Refusing to delete '${entry.name}': it is the profile the machine currently has selected. Nothing was deleted. Ask the user to select a different profile first — with select_profile, or on the machine itself — and then delete this one.`,
+        };
+      }
+
+      try {
+        await getClient().deleteProfileFromMachine(entry.machineProfileId);
+      } catch (error) {
+        const failure = describeDeleteFailure(error, entry.name);
+        if (failure === undefined) throw error;
+        return failure;
+      }
+
+      return {
+        text: `Deleted '${entry.name}' (machine profile id ${entry.machineProfileId}) from the machine. This cannot be undone — if it was a mistake, the profile has to be rebuilt by hand or re-uploaded from a definition saved earlier in this conversation.`,
+      };
+    },
+    inputSchema: z.object({
+      confirm_name: z
+        .string()
+        .min(1)
+        .describe(
+          "The profile's exact name, copied from list_profiles. Must match, or the deletion is refused. This is a confirmation, not a lookup — do not guess it, and do not derive it from profile_id.",
+        ),
+      profile_id: z
+        .string()
+        .min(1)
+        .describe(
+          'Id of the profile to delete, as listed by list_profiles — either its documented id ("zer0") or its machineProfileId ("15").',
+        ),
+    }),
+    meta: {
+      /**
+       * The one place in this server that sets it, and the reason AGENTS.md's
+       * blanket prohibition became a named set rather than staying a rule.
+       *
+       * That prohibition's own justification was *"Nothing here warrants it —
+       * every tool reads."* This one does not. The flag's properties — it falls
+       * through to the permission prompt in every mode, the host offers no
+       * "don't ask again", and an existing allow rule does not skip it — are
+       * costs for a read tool and precisely the behaviour wanted for a delete
+       * that cannot be undone.
+       */
+      "anthropic/requiresUserInteraction": true,
+    },
+    name: "delete_profile",
+    title: "Delete a brew profile",
   }),
 
   defineTool({

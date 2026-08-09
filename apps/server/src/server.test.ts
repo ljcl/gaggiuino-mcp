@@ -213,15 +213,40 @@ describe("ListTools", () => {
    * added to this list deliberately; a read tool that quietly loses
    * `readOnlyHint` fails instead of redefining what the test asserts.
    */
-  const WRITE_TOOLS = new Set(["select_profile", "upload_profile"]);
+  const WRITE_TOOLS = new Set([
+    "delete_profile",
+    "select_profile",
+    "upload_profile",
+  ]);
 
   /**
    * Writes that are not safe to repeat, named the same way and for the same
    * reason. `POST /api/profile` mints a fresh id on every call, so a retried
    * upload leaves a duplicate profile behind — and `idempotentHint` is the flag
    * a host keys an automatic retry on.
+   *
+   * `delete_profile` is absent because it declares no `idempotentHint` at all:
+   * whether deleting twice is safe depends on whether ids are reused after a
+   * delete, which the machine's documentation does not say. See
+   * `IDEMPOTENCE_UNSTATED` below — absent and `false` are different claims.
    */
   const NON_IDEMPOTENT_TOOLS = new Set(["upload_profile"]);
+
+  /**
+   * Tools that deliberately state no `idempotentHint`, because nobody has
+   * established the answer against hardware. Named rather than derived so a
+   * tool cannot lose the hint by accident and pass.
+   */
+  const IDEMPOTENCE_UNSTATED = new Set(["delete_profile"]);
+
+  /**
+   * Tools that destroy something. One, and it took a hardware-verified endpoint
+   * and an unrecoverable failure mode to earn it — a create is additive and a
+   * selection replaces a selection, so neither of the other two writes qualifies.
+   * Named rather than derived for the same reason as the sets above: a new tool
+   * must claim this deliberately, and a tool that quietly gains it fails here.
+   */
+  const DESTRUCTIVE_TOOLS = new Set(["delete_profile"]);
 
   it("gives every tool a title and honest annotations", async () => {
     const { tools } = await client.listTools();
@@ -233,18 +258,28 @@ describe("ListTools", () => {
       expect(tool.annotations?.readOnlyHint, `${tool.name} readOnly`).toBe(
         !WRITE_TOOLS.has(tool.name),
       );
-      // True for every tool here, read or write: selecting a profile replaces
-      // a selection rather than destroying anything, and uploading one is
-      // additive — the machine offers no REST verb that overwrites or deletes.
+      // Only `delete_profile`. Selecting a profile replaces a selection rather
+      // than destroying anything, and uploading one is additive — REST offers no
+      // verb that overwrites. Deleting one is the exception, and there is no
+      // restore path, so the flag is literal rather than cautious.
       expect(
         tool.annotations?.destructiveHint,
         `${tool.name} destructive`,
-      ).toBe(false);
-      // Not true for every tool any more: `upload_profile` mints a new profile
-      // per call, so claiming idempotence would invite a host to retry it.
-      expect(tool.annotations?.idempotentHint, `${tool.name} idempotent`).toBe(
-        !NON_IDEMPOTENT_TOOLS.has(tool.name),
-      );
+      ).toBe(DESTRUCTIVE_TOOLS.has(tool.name));
+      // Three states, not two: true, false, and deliberately unstated. Absent
+      // means nobody has established the answer against hardware, which is a
+      // different claim from "this is not idempotent".
+      if (IDEMPOTENCE_UNSTATED.has(tool.name)) {
+        expect(
+          tool.annotations?.idempotentHint,
+          `${tool.name} idempotent`,
+        ).toBeUndefined();
+      } else {
+        expect(
+          tool.annotations?.idempotentHint,
+          `${tool.name} idempotent`,
+        ).toBe(!NON_IDEMPOTENT_TOOLS.has(tool.name));
+      }
       expect(
         typeof tool.annotations?.openWorldHint,
         `${tool.name} openWorld`,
@@ -348,6 +383,18 @@ describe("ListTools", () => {
  * call. See `toolContract.ts` for why that is worth a committed artifact.
  */
 describe("the advertised contract", () => {
+  /**
+   * The tools allowed to set `_meta["anthropic/requiresUserInteraction"]`.
+   *
+   * This was a blanket prohibition — no tool may set it — on the reasoning that
+   * the flag defeats "don't ask again" in every mode and *"nothing here warrants
+   * it, every tool reads"*. `delete_profile` does not read, and an
+   * unsuppressable prompt is the point rather than the cost. The rule became a
+   * set rather than being deleted, so the prohibition still holds everywhere
+   * else.
+   */
+  const ALWAYS_PROMPT_TOOLS = new Set(["delete_profile"]);
+
   it("matches the committed tool contract", async () => {
     // Regenerate with `bun run generate-tool-contract` when the change is
     // intended — and read the diff, because it is the list of grants every
@@ -369,18 +416,22 @@ describe("the advertised contract", () => {
     );
   });
 
-  it("asks no tool to prompt on every call", async () => {
+  it("asks only the destructive tool to prompt on every call", async () => {
     // A tool whose `_meta` carries this flag falls through to the permission
     // prompt in every mode, the host offers no "don't ask again", and an
-    // existing allow rule does not skip it. Nothing this server does warrants
-    // that — every tool here reads.
+    // existing allow rule does not skip it.
+    //
+    // That is a cost for a tool that reads and the entire point for one that
+    // deletes, so this is a set rather than a prohibition — and the set is
+    // written out rather than derived from `destructiveHint`, because a tool
+    // picking the flag up silently is exactly the regression worth catching.
     const { tools } = await client.listTools();
     for (const tool of tools) {
       const meta = (tool._meta ?? {}) as Record<string, unknown>;
       expect(
         meta["anthropic/requiresUserInteraction"],
         `${tool.name} requiresUserInteraction`,
-      ).toBeUndefined();
+      ).toBe(ALWAYS_PROMPT_TOOLS.has(tool.name) ? true : undefined);
     }
   });
 

@@ -85,6 +85,7 @@ via symlinks in `.claude/skills/`. Externally-sourced skills are tracked in `ski
 | `get_maintenance_status`| Descale/backflush service log the machine keeps itself |
 | `select_profile`        | **Write.** Switch profile; needs OAuth configured   |
 | `upload_profile`        | **Write, not idempotent.** Save a new profile; needs OAuth configured |
+| `delete_profile`        | **Write, destructive, irreversible.** Needs the exact name too |
 | `get_dial_in_guidance`  | Expert dial-in system prompt                        |
 
 App-only (`visibility: ["app"]`, not advertised to the model): `get_shot_raw_json`
@@ -124,27 +125,39 @@ annotations, and the handler. Nothing about a tool is declared twice.
   today. A firmware that starts logging water-filter changes is carried through
   with no schema change. Enumerate the services and it becomes the settings
   case, and the schema starts dropping things.
-- **Annotations are honest, not decorative.** Every tool is
-  `destructiveHint: false`, and every tool but two is `readOnlyHint: true`.
-  `select_profile` and `upload_profile` are the exceptions and carry
-  `readOnlyHint: false`, because that flag is what a host keys an approval
+- **Annotations are honest, not decorative.** Every tool but three is
+  `readOnlyHint: true`. `select_profile`, `upload_profile` and `delete_profile`
+  carry `readOnlyHint: false`, because that flag is what a host keys an approval
   prompt on — claiming otherwise to dodge the prompt is the dishonest annotation
-  the tests exist to catch. `upload_profile` is also the only tool with
-  `idempotentHint: false`: `POST /api/profile` mints a fresh id on every call, so
-  a retried upload leaves a duplicate profile behind, and `idempotentHint` is
-  what a host would key an automatic retry on. `destructiveHint: false` still
-  holds for it — a create is additive, and REST offers no update or overwrite
-  verb at all. `openWorldHint` is true for every tool that reaches
-  the machine and false for `get_dial_in_guidance`, now the only one that reads
-  bundled YAML and nothing else — `list_profiles` and `get_profile_info` flipped
-  to open-world when they started reading the machine's own inventory.
-  `server.test.ts` names the write tools
-  in a set rather than deriving them from the annotations under test, so a new
-  write tool is a deliberate edit and a read tool that quietly loses
-  `readOnlyHint` fails; `NON_IDEMPOTENT_TOOLS` sits beside it for the same
-  reason. `http.test.ts` re-asserts both hints over the real transport, since
-  `annotations` is exactly what a transport is free to drop — and it keeps its
-  own copy of the two sets on purpose, so one edit cannot satisfy both files.
+  the tests exist to catch. The other two flags separate the three writes from
+  each other, and each distinction is load-bearing:
+
+  - `upload_profile` is the only tool with `idempotentHint: false`.
+    `POST /api/profile` mints a fresh id on every call, so a retried upload
+    leaves a duplicate behind, and `idempotentHint` is what a host would key an
+    automatic retry on. `destructiveHint: false` still holds for it — a create
+    is additive, and REST offers no update or overwrite verb at all.
+  - `delete_profile` is the only tool with `destructiveHint: true`, and the only
+    one that **states no `idempotentHint` at all**. Absent is a third answer, not
+    a synonym for `false`: deleting twice reaching the same end state depends on
+    whether ids survive a delete, and the reference says nothing either way
+    (rest-api.md L41-44 is three lines with no response body and no status
+    codes). Claiming `true` invites a retry that could remove a *different*
+    profile; claiming `false` asserts a non-idempotence nobody has observed.
+    `server.test.ts` therefore checks three states, with `IDEMPOTENCE_UNSTATED`
+    beside the other sets — a tool losing the hint by accident still fails.
+
+  `openWorldHint` is true for every tool that reaches the machine and false for
+  `get_dial_in_guidance`, now the only one that reads bundled YAML and nothing
+  else — `list_profiles` and `get_profile_info` flipped to open-world when they
+  started reading the machine's own inventory. `server.test.ts` names the write
+  tools in a set rather than deriving them from the annotations under test, so a
+  new write tool is a deliberate edit and a read tool that quietly loses
+  `readOnlyHint` fails; `NON_IDEMPOTENT_TOOLS`, `IDEMPOTENCE_UNSTATED`,
+  `DESTRUCTIVE_TOOLS` and `ALWAYS_PROMPT_TOOLS` sit beside it for the same
+  reason. `http.test.ts` re-asserts all of it over the real transport, since
+  `annotations` and `_meta` are exactly what a transport is free to drop — and it
+  keeps its own copies on purpose, so one edit cannot satisfy both files.
 - **Expected failures are results, not exceptions.** `errors.ts` defines the
   three upstream failure classes (`UpstreamUnreachableError`,
   `UpstreamHttpError`, `MalformedUpstreamError`) and `describeUpstreamError`
@@ -357,6 +370,63 @@ diagnostic rather than a generic "unavailable". `onMachine` is then `null`, not
 `false` — this server did not check, and saying it did would be the same class of
 lie the split exists to fix.
 
+### Deleting is four gates, and each stops a different mistake
+
+`delete_profile` is the only tool here that destroys anything, and the endpoint
+behind it — `DELETE /api/profile-select/{id}` — differs from the *selector* by
+HTTP verb alone. It sat on `client.ts`'s not-called list until #105 for exactly
+that reason. What made it shippable is that reaching it is now deliberate at
+four independent points, and no two of them fail together:
+
+- **The scope gate**, inherited rather than written: `PROTECTED_TOOLS` derives
+  from `readOnlyHint === false`, so the tool joined the `espresso:write` set
+  with no gating code. This is the gate that keeps *strangers* out, and it is
+  the one that does nothing about the model — the owner has to grant
+  `espresso:write` for `upload_profile` to work at all.
+- **An exact-name echo.** `confirm_name` must equal the profile's name under a
+  strict `===`. Deliberately *not* run through `findCatalogEntry`, which trims
+  and lowercases and matches id-or-name — routing the confirmation through it
+  would let `zer0` confirm `Zer0` and the check would be theatre. Both the
+  machine's spelling and the documented one are accepted, because for a
+  documented profile `entry.name` is the YAML's and the machine's may differ in
+  case; `CatalogEntry.machineName` exists to carry the second, on the interface
+  only, so `ProfileOutput`'s `z.object` strips it and no grant moves.
+- **A refusal to delete the selected profile**, read live from
+  `/api/system/status`'s `profileId` — undocumented upstream, but captured off
+  real hardware and already arriving through the loose client schema. That
+  endpoint is deliberately uncached, so the guard is never answered from a
+  snapshot. It **fails closed**: an unreadable status refuses the delete.
+  An *absent* `profileId` does not, and the asymmetry is the point — a failed
+  read is transient, while a firmware that never reports the field would refuse
+  forever, making the tool useless rather than safer.
+- **`requiresUserInteraction`**, so no stored allow rule can spend the other
+  three silently.
+
+`websocket.md` L247 says `c_del_prof` is "rejected if it's the active one" —
+corroboration that the firmware treats this as a hazard, and **not** authority
+for the REST verb, which documents no refusal and no error codes at all. The
+server declines rather than discovering the machine's behaviour in production.
+
+**`maxAttempts: 1`, and the reason is worse than `createProfile`'s.** The
+reference says nothing about whether ids are reused or renumbered after a
+delete, so a retried DELETE whose first attempt landed could remove a
+*different* profile. An upload's worst case is a duplicate the user deletes;
+this one's is silent loss they cannot attribute. `selectProfile`'s docblock
+pre-registered the obligation — "a future write that is not idempotent must not
+inherit this loop without saying so" — and this is that write.
+
+The eviction in `finally` drops **two** keys, where `createProfile` drops one: a
+create has no prior definition cached and a delete does, so
+`/api/profile/{id}` goes too. Leaving it would let `get_profile_info` serve the
+full definition of a profile that no longer exists, which reads as the delete
+having silently failed.
+
+`describeDeleteFailure` exists because `errors.ts`'s `profileIdFromPath` matches
+this path **regardless of method**, so the generic 404 branch names
+`select_profile` — advice for the wrong verb, and wrong about what happened. A
+404 on a delete is genuinely ambiguous between "already gone" and "this firmware
+has no delete endpoint", and the text says both rather than picking.
+
 ### The machine is also the authority on what a profile *does*
 
 `GET /api/profile/{id}` serves a profile's full definition — phases, targets,
@@ -423,10 +493,19 @@ writes.
 Three more invariants are asserted separately, because a regenerated contract
 would otherwise absorb them silently:
 
-- **No tool sets `_meta["anthropic/requiresUserInteraction"]`.** That flag falls
-  through to the permission prompt in every mode, the host offers no "don't ask
-  again", and an existing allow rule does not skip it. Nothing here warrants it —
-  every tool reads.
+- **Only `delete_profile` sets `_meta["anthropic/requiresUserInteraction"]`.**
+  That flag falls through to the permission prompt in every mode, the host offers
+  no "don't ask again", and an existing allow rule does not skip it. This was a
+  blanket prohibition, justified as *"nothing here warrants it — every tool
+  reads"*. `delete_profile` does not read, and every property that makes the flag
+  a cost for a read tool is the point for a delete that cannot be undone. So the
+  rule became `ALWAYS_PROMPT_TOOLS`, a named set, rather than being deleted: the
+  prohibition still holds for every other tool, and the set is written out rather
+  than derived from `destructiveHint`, because a tool picking the flag up
+  silently is the regression worth catching. `http.test.ts` re-asserts it over
+  the transport — `_meta` is as droppable as `annotations`, and this flag is the
+  only thing keeping a stored allow rule from letting a delete through
+  unprompted.
 - **No capability claims `listChanged`** (or `resources.subscribe`). Every list
   this server serves is a module-level constant. `listChanged` is a promise to
   tell the host to re-fetch, and a re-fetch is what re-keys the cached tools a

@@ -28,6 +28,7 @@
  * | `GET /api/system/status` | §3 L100-102 | deliberately uncached |
  * | `GET /api/maintenance` | §5 L467-484 | `MACHINE_CONFIG_TTL_MS` |
  * | `POST /api/profile-select/*` | §2 L36-39 | none; id in the path, no body |
+ * | `DELETE /api/profile-select/*` | §2 L41-44 | none; **never retried** |
  * | `POST /api/profile` | §2 L77-96 | none; body, and **never retried** |
  *
  * The reference spells ids as a wildcard `*` rather than `{id}`.
@@ -40,10 +41,15 @@
  *   nothing here has shot data to upload.
  * - `DELETE /api/shots/*` (L24-28) — destructive, needs an SD card, and no
  *   read-only story asks for it.
- * - `DELETE /api/profile-select/*` (L41-44) — despite sharing a path with the
- *   profile *selector*, this **deletes a profile**. The two differ only by HTTP
- *   method, which is exactly why it is written down here: a model one token
- *   away from `select` must never be able to reach it.
+ * - ~~`DELETE /api/profile-select/*`~~ — **called as of #105**, by
+ *   `deleteProfileFromMachine`. It stayed on this list while it was unverified,
+ *   and the warning that earned it a place here is still true and is now the
+ *   method's own docblock: it shares a path with the profile *selector* and
+ *   differs only by HTTP verb, so a model one token away from `select` must
+ *   never be able to reach it by accident. What changed is that the tool in
+ *   front of it makes reaching it deliberate — an exact-name echo, a refusal to
+ *   touch the selected profile, and a permission prompt the host cannot
+ *   suppress.
  * - Every `POST /api/settings/*` (L144, L203, L252, L296, L343, L396) —
  *   writing boiler setpoints from a chat window is a far heavier permission
  *   story than `select_profile`, and nobody has asked for it. That is the soft
@@ -211,6 +217,22 @@ const NumericSchema = z
 export const MachineStatusSchema = z.looseObject({
   brewSwitchState: SwitchStateSchema.optional(),
   pressure: NumericSchema,
+  /**
+   * Id of the profile the machine currently has selected.
+   *
+   * Undocumented — `rest-api.md` gives `/api/system/status` one line and no
+   * response example — but captured verbatim off real hardware on 2026-07-27
+   * (`mockMachineStatusFromHardware`: `profileId: "15"` beside
+   * `profileName: "Zer0"`). The loose object meant it was already arriving and
+   * merely undeclared; declaring it is what lets `delete_profile` refuse to
+   * delete the profile the machine is actually using.
+   *
+   * Deliberately **not** added to `MachineStatusOutput`. It is a safety input,
+   * not something `get_status` was asked for, and the advertised output schema
+   * is a permission-grant key — widening it would re-key every installation's
+   * grant to publish a field nobody requested.
+   */
+  profileId: IdSchema.optional(),
   profileName: z.string().optional(),
   steamSwitchState: SwitchStateSchema.optional(),
   targetTemperature: NumericSchema.optional(),
@@ -574,8 +596,12 @@ export function createClient(config: ClientConfig) {
    * and a stream body is consumed by the first attempt.
    *
    * Two arms, so the *type* rather than a comment rules out caching a write.
-   * `perform` keys the cache on `path` alone with no method prefix, which is
-   * safe only for as long as nothing POSTs to a path something else GETs.
+   * `perform` keys the cache on `path` alone with no method prefix. Three verbs
+   * now share `/api/profile-select/*` — GET is never sent there, POST selects
+   * and DELETE deletes — so the unprefixed key is safe only because **no write
+   * on that path passes `ttlMs`**, and therefore none of them ever writes a
+   * cache entry another could read. Adding a cached GET to a path something
+   * else writes is what would break it.
    *
    * `maxAttempts` defaults to the client's `maxRetries`, which — despite the
    * name — already counts attempts rather than retries: `maxRetries: 3` produces
@@ -586,7 +612,7 @@ export function createClient(config: ClientConfig) {
     | {
         body?: never;
         maxAttempts?: number;
-        method?: "GET" | "POST";
+        method?: "DELETE" | "GET" | "POST";
         /** Serve this path from cache for this long. Omit to always fetch. */
         ttlMs?: number;
       }
@@ -900,6 +926,58 @@ export function createClient(config: ClientConfig) {
         // write that landed as missing, and walks the caller straight into the
         // duplicate that `maxAttempts: 1` exists to prevent.
         cache.delete("/api/profiles/all");
+      }
+    },
+
+    /**
+     * Delete a saved profile. **Named this way on purpose.**
+     *
+     * `DELETE /api/profile-select/{id}` (rest-api.md L41-44) differs from
+     * `selectProfile`'s `POST /api/profile-select/{id}` by HTTP verb and nothing
+     * else. A method called `deleteProfile` sitting beside `selectProfile` is one
+     * autocomplete away from the wrong call, and the wrong call here destroys a
+     * profile somebody spent months dialling in. The name is long so the two can
+     * never be confused at a call site, and it is the only method in this file
+     * whose name says what it costs.
+     *
+     * Verified against hardware on firmware `main-7889b7d`: it removes exactly
+     * the named profile and leaves the selection alone.
+     *
+     * **`maxAttempts: 1`, and the reason is worse than `createProfile`'s.**
+     * `selectProfile`'s docblock pre-registered the obligation — "a future write
+     * that is not idempotent must not inherit this loop without saying so" — and
+     * a delete is that write twice over. The reference documents no response
+     * body, no status codes, and crucially **nothing about whether ids are
+     * reused or renumbered after a delete**. If they are, a retried DELETE whose
+     * first attempt already landed removes a *different, arbitrary* profile.
+     * `createProfile`'s worst case is a duplicate the user deletes; this one's is
+     * silent data loss the user cannot attribute. Retrying is not available until
+     * somebody establishes that ids are stable.
+     */
+    async deleteProfileFromMachine(machineProfileId: string): Promise<void> {
+      const id = encodeURIComponent(machineProfileId);
+      try {
+        await perform(`/api/profile-select/${id}`, statusReader, {
+          maxAttempts: 1,
+          method: "DELETE",
+        });
+      } finally {
+        // `finally`, for `createProfile`'s reason, plus one of its own.
+        //
+        // The list is stale the instant the machine accepts the delete, and on
+        // an ambiguous failure the tool sends the caller to `list_profiles` to
+        // find out whether it landed — answering that from a pre-delete snapshot
+        // reports a profile that is already gone as still present, which is the
+        // exact prompt to try the delete again against an id the machine may
+        // have since reassigned.
+        //
+        // The second eviction has no `createProfile` counterpart: a create has
+        // no prior definition cached, a delete does. Leaving it would let
+        // `get_profile_info` serve the full definition of a profile that no
+        // longer exists for up to `MACHINE_CONFIG_TTL_MS`, which reads as "the
+        // delete silently failed".
+        cache.delete("/api/profiles/all");
+        cache.delete(`/api/profile/${id}`);
       }
     },
   };

@@ -427,18 +427,53 @@ describe("tools/list over the real transport", () => {
   /** Duplicated from `server.test.ts` on purpose — this file asserts the same
    *  facts over the real transport, and sharing the sets would let one edit
    *  satisfy both assertions. */
-  const WRITE_TOOLS = new Set(["select_profile", "upload_profile"]);
+  const WRITE_TOOLS = new Set([
+    "delete_profile",
+    "select_profile",
+    "upload_profile",
+  ]);
   const NON_IDEMPOTENT_TOOLS = new Set(["upload_profile"]);
+  const IDEMPOTENCE_UNSTATED = new Set(["delete_profile"]);
+  const DESTRUCTIVE_TOOLS = new Set(["delete_profile"]);
+  const ALWAYS_PROMPT_TOOLS = new Set(["delete_profile"]);
 
   it("serves every tool with its annotations intact", async () => {
     const tools = await listTools();
     expect(tools.length).toBeGreaterThan(0);
     for (const tool of tools) {
       expect(tool.annotations, `${tool.name} annotations`).toMatchObject({
-        destructiveHint: false,
-        idempotentHint: !NON_IDEMPOTENT_TOOLS.has(tool.name),
+        destructiveHint: DESTRUCTIVE_TOOLS.has(tool.name),
         readOnlyHint: !WRITE_TOOLS.has(tool.name),
       });
+      // Separate from the toMatchObject above because the assertion is about a
+      // key being *absent*, which toMatchObject cannot express.
+      expect(tool.annotations?.idempotentHint, `${tool.name} idempotent`).toBe(
+        IDEMPOTENCE_UNSTATED.has(tool.name)
+          ? undefined
+          : !NON_IDEMPOTENT_TOOLS.has(tool.name),
+      );
+    }
+  });
+
+  it("does not lose the destructive hint in transit", async () => {
+    // The same exposure as the two below, on the flag with the worst downside:
+    // a delete tool arriving without destructiveHint reads as an ordinary
+    // write, and the host stops warning before something irreversible.
+    const tools = await listTools();
+    const remove = tools.find((tool) => tool.name === "delete_profile");
+    expect(remove?.annotations?.destructiveHint).toBe(true);
+  });
+
+  it("does not lose the always-prompt flag in transit", async () => {
+    // `_meta` is as droppable as `annotations`, and this flag is the only thing
+    // stopping a stored allow rule from letting a delete through unprompted.
+    const tools = await listTools();
+    for (const tool of tools) {
+      const meta = (tool._meta ?? {}) as Record<string, unknown>;
+      expect(
+        meta["anthropic/requiresUserInteraction"],
+        `${tool.name} requiresUserInteraction`,
+      ).toBe(ALWAYS_PROMPT_TOOLS.has(tool.name) ? true : undefined);
     }
   });
 
