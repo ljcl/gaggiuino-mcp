@@ -21,6 +21,7 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "dev": "turbo run dev",
+    "fake-machine": "bun scripts/fake-machine.ts",
     "boundaries": "turbo boundaries",
     "check": "turbo run lint test typecheck build knip && turbo boundaries && bun run size",
     "check:affected": "turbo run lint test typecheck build knip --affected && turbo boundaries && bun run size",

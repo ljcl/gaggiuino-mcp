@@ -1058,6 +1058,7 @@ bun run storybook          # Storybook on port 6006 (via Turborepo)
 bun run build-storybook    # Static Storybook build to apps/storybook/storybook-static/
 bun run shots --list       # List story ids
 bun run shots <id>...      # Screenshot stories to PNGs under gitignored story-shots/
+bun run fake-machine       # Serve recorded /api/* payloads on :8080 (--port N); no hardware needed
 
 # Server only
 cd apps/server
@@ -1351,6 +1352,72 @@ dependency is what puts ui in turbo's `build:storybook` task graph. Without it a
 ui-only merge cache-hit and redeployed the previous `storybook-static` — the change
 never reached Pages. `knip.config.ts` carries a matching `ignoreDependencies` entry,
 and `apps/storybook/turbo.json` uses the repo's `dependsOn: ["topo", ...]` JIT pattern.
+
+## Running without the machine
+
+`bun run fake-machine` serves recorded `/api/*` payloads so the server has
+something to talk to. `GAGGIUINO_URL=http://localhost:8080 bun run dev` then
+gives a working `get_status`, `list_profiles`, `get_profile_info`,
+`get_maintenance_status`, and two real ~190-sample captures for `get_shot_data`
+and `view_shot_graph`. `/health` flips to `machine.state: "ok"` after the first
+tool call, and fills `machine.versions` only once something reads `/api/settings`
+— which is the observed-not-probed design being visible rather than asserted.
+
+**It is split across two files, and the split is the whole design.**
+
+- `apps/server/src/__fixtures__/fakeMachine.ts` — payloads and a pure
+  `routeFakeMachine(method, pathname)`. Under `src/`, so it is type-checked, in
+  the coverage set, and reachable from a test.
+- `scripts/fake-machine.ts` — a port and a listener, nothing else. At the
+  **repo root**, which is what keeps it out of the image: `apps/server/Dockerfile`
+  copies `apps/server/src`, `apps/server/scripts` and `packages/shot-graph/dist`,
+  and root `scripts/` is never in the build context. Putting it in
+  `apps/server/scripts/` — the intuitive home, next to `generate-schemas.ts` —
+  would have shipped it in every published image.
+
+Three rules keep it honest, and each replaced something easier:
+
+- **Recorded, not invented.** A hand-written fake serves the types we *expect*,
+  agrees with our schemas by construction, and proves nothing. The status payload
+  is the repo's one hardware capture (decimal strings, real booleans); settings,
+  profile definitions and maintenance come from the vendored reference; the shots
+  are real captures reached through `packages/shot-graph`'s `./fixtures` export.
+  `/api/profiles/all` is the one route with no recorded body anywhere — the
+  reference gives it one line and no example — so its docblock says outright that
+  its shape is `MachineProfileSchema`'s and its ids are the sparse set observed
+  while verifying #105, rather than letting it look as recorded as the rest.
+- **Validated by the real client, not by a restated schema.** `fakeMachine.test.ts`
+  mounts the route table as one msw handler and drives `createClient` over it, so
+  every payload goes through `jsonReader` → `safeParse` → `MalformedUpstreamError`.
+  Parsing with the schemas directly would prove much less: only two are exported,
+  and `MachineSettingsSchema` / `MachineMaintenanceSchema` are `z.looseObject({})`
+  and accept anything — so those two are asserted through their tools instead.
+  It mounts at `MACHINE_URL` rather than an invented host because `MACHINE_URL` is
+  read once at module load, so an env var set inside a test arrives far too late
+  for `handleToolCall`.
+- **Writes are refused with a 501, not acknowledged.** The fake holds no state, so
+  a faked `select_profile` is contradicted by the next `list_profiles`. Declining
+  is the honest answer and it is what keeps this stateless — the moment it grows a
+  mutable profile list it has become a second server.
+
+Shot ids are offset by `FAKE_SHOT_ID_BASE` (900,000,000). The machine numbers
+shots small and sequentially, so a fixture shot sharing an id with a real one is
+one that can be mistaken for the user's in a conversation or a bug report. The
+gap between the two synthetic ids is deliberate too: it makes `walkShotsBack`
+absorb 404s rather than walk a tidy contiguous run.
+
+**It does not replace hardware.** It cannot reproduce the 503 an ESP32 returns
+while writing a shot to flash, its one-request-at-a-time serialisation, the
+WS-only profile update path, or a firmware revision's type inconsistencies. The
+value is confined to process-level and in-host paths — which are real, since the
+MCP App had never been rendered in a real host without a machine.
+
+Landing it also removed the test scaffolding from the published image. The runner
+`COPY`s all of `apps/server/src`, so every `*.test.ts`, every `__fixtures__` file
+and `test-setup.ts` were shipping — unreachable at runtime (msw is a
+devDependency the runner never installs) but present. `.dockerignore` now excludes
+them, which is what makes "the fake never ships" true of its payloads and not just
+its executable.
 
 ## Testing the MCP endpoint
 
