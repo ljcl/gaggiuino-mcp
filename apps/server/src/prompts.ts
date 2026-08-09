@@ -125,9 +125,11 @@ function promptArguments(schema: ArgsSchema): PromptArgument[] {
  * permission grant.
  *
  * Shared rather than written into each plan twice, because two copies of a
- * numeric rule drift. It is a `const` and not a function on purpose —
- * `apps/server`'s coverage gate is `functions: 100`, so a helper reachable from
- * only one render would fail the build.
+ * numeric rule drift. A `const` rather than a builder function because there is
+ * nothing to parameterise — and note that `apps/server`'s `functions: 100`
+ * coverage gate constrains anything added here: `prompts.test.ts` renders every
+ * prompt, so a helper *some* render reaches is covered, but one no render path
+ * reaches fails the build outright.
  *
  * The numbers are starting guidance, not the server's opinion: band, dose and
  * grinder resolution are equipment-specific, which is what `user_context` in
@@ -139,7 +141,8 @@ const ADJUSTMENT_POLICY = [
   "",
   "These are defaults. Anything my own setup notes say, via `get_dial_in_guidance`, replaces them.",
   "",
-  "- **Target window.** Use the profile's own target time where it states one; otherwise aim for 25-32 seconds. Treat the middle of that window as the target and anything within a second either side of it as on target.",
+  "- **Target window.** Use the `targetTime` window `list_profiles` or `get_profile_info` reports for this profile, and treat anything inside it as on target — measure error from the nearest edge, not from the middle. The windows are wide on purpose and they differ a lot by profile. `globalStopConditions.time` in a profile's definition is a hard cutoff, not a target; do not read it as one.",
+  "- **When the profile reports no target time**, aim for 25-32 seconds and treat 27.5-29.5 as on target — but only for an espresso profile. Ask me what the profile is for before assuming: a turbo profile is much shorter and a filter profile runs for minutes, and dialling either toward 30 seconds is the wrong loop entirely.",
   '- **Hold.** Inside that dead zone, say so and change nothing. "This is dialled in, stop adjusting" is a valid answer, and I would rather hear it than be given another change to make.',
   "- **First step.** Size it from how far the first shot missed: about one grinder step per 6 seconds of error, never less than half a step, never more than two. Say it in my grinder's units, not in seconds.",
   "- **Halve on a reversal.** If the change you are about to suggest is the opposite direction to the last one, halve the step. If it is the same direction, keep it. Never grow it.",
@@ -147,7 +150,7 @@ const ADJUSTMENT_POLICY = [
   "",
   "Take the round history from this conversation — the shots already pulled are the record. Do not ask me to repeat them.",
   "",
-  "**A shot that collapsed carries no grind signal.** When `get_shot_data` lists an event under a phase that begins \"pressure fell\", the puck gave way instead of resisting, so that shot's time says nothing about the grind. Do not read a direction from it, and do not let it seed or halve the step — treat it as a round that did not happen, fix the cause (puck prep, distribution, basket, dose) and re-pull. The reverse does not hold: no event is not proof the puck held, only that nothing crossed the detector's threshold.",
+  "**A shot that collapsed carries no grind signal.** When `get_shot_data` lists, under one of the phases, an event whose text begins \"pressure fell\", the puck gave way instead of resisting, so that shot's time says nothing about the grind. Do not read a direction from it, and do not let it seed or halve the step — treat it as a round that did not happen, fix the cause (puck prep, distribution, basket, dose) and re-pull. The reverse does not hold: no event is not proof the puck held. It means either that nothing crossed the detector's threshold, or that the shot's profile named no phases at all — in which case the breakdown says so and no event could be reported either way.",
   "",
   "Brew ratio and extraction yield are outcome checks, not direction signals: pick the direction from extraction time, then confirm the ratio landed where the profile intended. If I give you a refractometer reading, extraction yield is (yield in grams x TDS%) / dose in grams, and the SCA Golden Cup band is 18-22%. The machine cannot measure TDS, so ask me for it rather than estimating it.",
 ];
@@ -226,7 +229,7 @@ export const PROMPT_DEFINITIONS: PromptDefinition[] = [
         "3. Call `list_profiles` and choose the profile whose type suits this roast. Recommend only profiles the machine actually holds, and say in one sentence why that one.",
         "4. If it is not the profile already loaded, ask me before calling `select_profile` — that one changes the machine.",
         "5. Give me a starting point: grind direction relative to my usual setting, dose, target yield, and target time.",
-        "6. After I pull the shot, call `get_latest_shot_id` and analyse it. Change ONE variable before the next shot and tell me which and why.",
+        "6. After I pull the shot, call `get_latest_shot_id` for its id and headline numbers, then `get_shot_data` with that id — the phase breakdown is the only place a pressure-collapse event appears, and the rule below depends on seeing it. Change ONE variable before the next shot and tell me which and why.",
         "",
         "Do not guess at anything the tools can tell you.",
         ...ADJUSTMENT_POLICY,

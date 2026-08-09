@@ -28,9 +28,15 @@
  * - pressure (`pressureAbove`, `pressureBelow`, and a PRESSURE phase's
  *   `target.end`) — bar.
  * - `restriction` — **no documented unit.** `websocket.md` L198 gives
- *   `float restriction = 3` and says only (L221) that both shipped UIs always
- *   send `0`. Do not invent one; leave it at 0 unless copying a profile that
- *   sets it.
+ *   `float restriction = 3` on a phase and says nothing further about it. Do
+ *   not invent a unit, and do not assume the field is unused: a real lever
+ *   profile sets it on sixteen of its nineteen phases (see
+ *   `formatProfileDefinition`). Preserve whatever a profile already carries.
+ *
+ *   L221's "both always send `0`" is about a **different field** —
+ *   `ProfileManualDto.restriction`, the live `BREW_MANUAL` setpoint, which is
+ *   its own message (L213-216) and not a phase. This docblock cited it as
+ *   evidence about `PhaseDto.restriction` until 2026-08-09; it never was.
  * - `waterPumped` / `waterPumpedInPhase` — undocumented, millilitres by
  *   inference from the flow units. Hedge it anywhere it is described.
  *

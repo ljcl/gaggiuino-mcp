@@ -55,20 +55,38 @@ From `lib/machines/`:
 
 Those costs land differently on this server, and mostly harder.
 
-- **Their normalisation target is our entire data model.** `analysis.ts`,
-  `normalize.ts`'s `SCALE_BY_10` set, `events.ts`'s bar-per-second thresholds,
-  the shot-graph app's series registry and `get_shot_data`'s output schema are
-  all built on Gaggiuino's ×10-integer, decisecond wire format. A second
-  firmware does not add a client; it adds a translation layer underneath all of
-  that, whose failure mode is silently wrong numbers in a tool result. That is
-  the same failure this repo rejected live telemetry over, arriving by a
-  different route.
-- **Four unfillable status fields is a tool-contract problem, not a UX one.**
-  `MachineStatusOutput` would have to make them nullable for **every** user,
-  including everyone with a Gaggiuino, and the advertised schema is a
-  permission-grant key (AGENTS.md, "The advertised surface is a permission-grant
-  key"). Every existing installation would re-grant in exchange for a machine it
-  does not own.
+- **Their normalisation target is our decoding layer.** `normalize.ts`'s
+  `SCALE_BY_10` set, the `normalizeValue` calls threaded through `analysis.ts`
+  and `events.ts`, a hardcoded `shotData.duration / 10`, and the shot-graph app's
+  own `normalize.ts` (`SCALE = 10`, plus the raw-units first-drip threshold in
+  `extractAnnotations`) all assume Gaggiuino's ×10-integer, decisecond wire
+  format. A second firmware does not add a client; it adds a translation layer
+  underneath all of that, whose failure mode is silently wrong numbers in a tool
+  result. That is the failure the live-telemetry note's protobuf rejection turns
+  on ("Version skew fails quiet, and this repo fails loud"), reached by a
+  different route — not the reason live telemetry as a whole was declined, which
+  was fit rather than cost.
+
+  Worth being precise about what is *not* coupled, because it is where a seam
+  would go if one were ever built: `get_shot_data`'s output schema is unit-clean
+  (`finalWeightG`, `peakPressureBar`, `totalDurationSec`) and so is the chart's
+  series registry, which carries display metadata and never a scale factor.
+  `events.ts`'s thresholds are real-unit numbers too — they are calibrated to
+  this machine's ~0.15 s **sample cadence**, not to the encoding. The scaling
+  lives in exactly two `normalize` modules, and the schemas above them are the
+  boundary a translation layer would have to hit exactly.
+- **Unfillable status fields would be a tool-contract problem.** How much of one
+  is unknown until somebody names them: `MachineStatusOutput` already has five of
+  its nine fields `.nullable()` — `profileName`, `targetTemperatureC`,
+  `upTimeSec`, `waterLevelPercent`, `weightG` — and those are the plausible
+  candidates for a firmware that cannot fill them. The four that are not nullable
+  are `brewActive`, `pressureBar`, `steamActive` and `temperatureC`, which any
+  espresso firmware can answer. So the honest statement is: the cost is zero if
+  the gaps fall inside the already-nullable five, and a re-key of every
+  installation's permission grant if they do not, because the advertised schema
+  is a permission-grant key (AGENTS.md, "The advertised surface is a
+  permission-grant key"). Nobody has established which, and that is itself a
+  reason not to start.
 - **There is a cheaper answer that costs nothing.** `GAGGIUINO_URL` is
   per-process and the deployment is a single container, so someone with two
   machines runs two containers and adds two connectors. That is a better fit

@@ -90,11 +90,15 @@ jobs:
         run: bun run turbo run test:coverage
 
       # Restore the latest main coverage snapshot into coverage-baseline/ so the
-      # summary can annotate each cell with its delta vs main. Best-effort: the
-      # primary key never hits (it is stamped with this run's SHA), so the
-      # restore-keys prefix picks the most recent saved baseline; the first main
-      # run and fork PRs simply get no baseline and the table degrades to
-      # absolute numbers.
+      # summary can annotate each moved cell with its delta vs main.
+      # Best-effort: on a PR the primary key cannot hit (it is stamped with the
+      # ephemeral merge SHA, and the only writer of that key is the push-gated
+      # save below), so the restore-keys prefix picks the most recent saved
+      # baseline. With no baseline the table degrades to absolute numbers —
+      # which happens on the first main run and after an entry is evicted.
+      # Fork PRs are NOT such a case: they can read caches from the base
+      # branch, they just cannot write one, and the save step never runs on a
+      # PR anyway.
       - name: Restore coverage baseline
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

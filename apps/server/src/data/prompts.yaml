@@ -177,17 +177,22 @@ espresso_shot_analyst:
 
     Everything above adjusts grind, dose and ratio. This section adjusts the *profile*, which is the right lever once the grind is where it should be and the shot still misses the same way every time.
 
-    `get_profile_info` returns the machine's own definition under `definition`, and that object is exactly the shape `upload_profile` accepts. The workflow is: read the profile, change ONE field, upload it under a new name.
+    `get_profile_info` returns the machine's own definition under `definition`, and that object is the machine's own wire format, which `upload_profile` takes back essentially unchanged. The workflow is: read the profile, change ONE field, upload it under a new name.
+
+    The two are not byte-for-byte interchangeable, and the one way they differ matters: the read side is deliberately permissive so a field from newer firmware survives, and the upload side is strict so a typo cannot become a phase that targets zero. If an upload is rejected for an unrecognised key, that key came from firmware this server does not know about — **do not quietly delete it to make the upload pass.** Say what it was and ask.
 
     ### Before changing anything
 
     1. **Read the profile first.** Call `get_profile_info` for the profile the shot actually ran. Never edit from memory, and never from the documentation table at the end of this guidance — profiles get edited on the machine's own screen, so only the machine knows what a profile currently contains.
-    2. **Upload creates; it never updates.** `upload_profile` mints a new profile on every call and there is no overwrite verb. Give the edit a distinct name so the original survives untouched, and if a call fails ambiguously check `list_profiles` before retrying — a second attempt makes a second profile.
-    3. **One field per iteration.** Otherwise the next shot cannot be attributed to anything.
-    4. **Locate the phase by shape, never by name or by a guessed index.** `definition.phases` is an array, and most profiles built on the machine's own screen carry no `name` on any phase, so matching on a label finds nothing on exactly the profiles the user built themselves. Match on structure instead:
-       - the preinfusion/fill phase is the first one — typically `type: "FLOW"`, or a `PRESSURE` phase whose `target.end` is low (under roughly 4 bar);
-       - a ramp is a `PRESSURE` phase whose `target.end` is above its `target.start`;
-       - a decline/taper is a late phase whose `target.end` is below its `target.start`.
+    2. **Show the whole edited profile and get an explicit yes before uploading.** Name, brew temperature, and every phase's target and stop conditions — not only the field you changed. This creates something the user will see on the machine's own screen.
+    3. **Upload creates; it never updates.** `upload_profile` mints a new profile on every call, and this server has no overwrite verb — the machine's REST API only creates. Give the edit a distinct name so the original survives untouched, and if a call fails ambiguously check `list_profiles` before retrying, because a second attempt makes a second profile.
+    4. **One field per iteration.** Otherwise the next shot cannot be attributed to anything.
+    5. **Locate the phase by shape, never by name or by a guessed index.** `definition.phases` is an array, and most profiles built on the machine's own screen carry no `name` on any phase, so matching on a label finds nothing on exactly the profiles the user built themselves. Match on structure instead:
+       - the preinfusion/fill phase is **the first one**, whatever its type — typically `type: "FLOW"`, or a `PRESSURE` phase with a low `target.end` (under roughly 4 bar);
+       - a ramp is a **later** `PRESSURE` phase whose `target.end` is above the previous phase's `target.end`, with a non-zero `target.time`. The first phase is never the ramp;
+       - a decline/taper is a **late** phase whose `target.end` is below the previous phase's `target.end`. Check its `type` before touching `target.end` — a decline can be either kind, and the unit follows the type.
+
+       **Do not use `target.start` to work any of this out.** It is optional and most real phases omit it, which means "continue from where the previous phase ended" — that is why the comparison above is against the previous phase. When a phase does set `start`, a `0` there is not evidence of a ramp from zero.
 
        Say which index you picked and what made it that phase before you edit it.
 
@@ -196,10 +201,11 @@ espresso_shot_analyst:
     **Nothing in a profile is scaled by 10 — but the shot time-series is.** A shot datapoint reading `950` is 95.0 °C, and the profile field that asked for it reads `95`. Copying a number straight out of a shot into a profile is the single most likely way to ruin one.
 
     - every `time` field, at every level, is in **milliseconds**: `5000` is five seconds, `40000` is a forty-second shot
-    - `waterTemperature` is real degrees Celsius: `93` means 93 °C
-    - pressure is bar, flow is ml/s, `weight`/`coffeeIn`/`coffeeOut` are grams
-    - **the machine does not reject a bad profile.** Missing and malformed fields are filled with zero-value defaults, so a ramp of `5` is accepted as a five-*millisecond* ramp and quietly changes the shot
-    - keep `switchToManuaFlowCtrl` spelled exactly as the machine spells it, with one `l` in `Manua` — that misspelling is the wire format
+    - `waterTemperature` is real degrees Celsius: `93` means 93 °C. It exists at **two** levels — the profile's own, and an optional per-phase override that wins for that phase. Check for phase-level ones before moving the profile-level field, and say which you moved
+    - **`target.end`'s unit follows the phase's `type`**: bar on a `PRESSURE` phase, ml/s on a `FLOW` phase. The same number means very different things on the two, and nothing rejects the wrong one
+    - `weight`, `coffeeIn` and `coffeeOut` are grams
+    - **the machine does not sanity-check a profile it accepts.** It rejects only a body with no name or no phases; every other missing or malformed field is filled with a zero-value default, so a ramp of `5` is accepted as a five-*millisecond* ramp and quietly changes the shot
+    - keep `switchToManuaFlowCtrl` spelled exactly as written — the final `l` of `Manual` is missing, and that misspelling is the wire format. Its sibling `switchToManualPressureCtrl` is spelled correctly, so do not "fix" one to match the other
     - never send an `id`; the machine assigns one
 
     ### Symptom to lever
@@ -215,7 +221,7 @@ espresso_shot_analyst:
     | | ramp phase's `target.end` | decrease | 5-9.5 bar | 0.75 bar |
     | | decline phase's `target.time` | decrease | 10000-35000 ms | 2000 ms |
     | **Watery**, weak | `globalStopConditions.weight` | decrease | 25-60 g | 2 g |
-    | | decline phase's `target.end` | increase | 2-6 bar | 0.5 bar |
+    | | decline phase's `target.end` | increase | 2-6 bar / 1-3 ml/s | 0.5 bar / 0.25 ml/s |
     | **Channeling** | preinfusion phase's `stopConditions.time` | increase | 3000-15000 ms | 1500 ms |
     | | preinfusion phase's `stopConditions.pressureAbove` | increase | 1-4 bar | 0.5 bar |
 
@@ -228,7 +234,7 @@ espresso_shot_analyst:
     Worth knowing, because both are the obvious field to reach for and neither does what the name suggests:
 
     - **`recipe.ratio` does not stop the shot.** It is informational — the dose and yield the profile was written around. The machine does not enforce it, so lowering it to fix a watery shot changes the documentation and not the coffee. The field that actually ends the shot on yield is `globalStopConditions.weight`.
-    - **`restriction` has no documented unit**, and both of the machine's own UIs always send `0`. There is no way to advise a value for it. Leave it alone unless you are copying a profile that already sets it.
+    - **`restriction` has no documented unit.** The reference gives a phase only `float restriction` and never says what it measures, so no value can be advised for it. Leave whatever the profile already has exactly as it is — some real profiles, lever simulations especially, set it on most of their phases. Do not zero it, and do not add it to a phase that does not have one.
 
     ## Important Notes
 

@@ -79,11 +79,12 @@ The profile commands answer with a **data push instead of an ack**:
 
 The four commands observed to be answered by `d_resp` as documented are
 `c_opmode`, `c_tare_pend`, `c_save_settings` and `c_save_act_prof`. The rest of
-the action table's `c_*` entries — `c_upd_manual_prof`, `c_upd_settings`,
-`c_upd_act_prof`, `c_upd_act_prof_id`, `c_reorder_prof`, `c_upd_desc_progr` and
-the `c_wifi_*` family — are not exercised by that implementation, so this
-erratum says nothing about them either way. **Do not read the table above as a
-complete map**; read it as proof that L299's "Every" is false.
+the action table's `c_*` entries (L228-255) — `c_upd_manual_prof`,
+`c_upd_settings`, `c_upd_act_prof`, `c_upd_act_prof_id`, `c_reorder_prof`,
+`c_upd_desc_progr` and the `c_wifi_*` family — are not exercised by that
+implementation, so this erratum says nothing about them either way. **Do not read
+the table above as a complete map**; read it as proof that L299's "Every" is
+false.
 
 The document already half-knows this and contradicts itself: L62 says `d_prof`
 arrives "In response to `g_prof`, **and after `c_new_prof` succeeds**", which
@@ -96,25 +97,28 @@ a future issue proposing a WebSocket write path is the most likely reader of
 L299, and a `sendCommand` helper that waits for `d_resp` would hang on three of
 the five requests it might send.
 
-### `c_service_test` is named but never specified, and emits only `d_notif`
+### `c_service_test` is missing from the action table, and emits only `d_notif`
 
 `websocket.md` L114 says the Maintenance page's Component Tests are "triggered
-via `c_service_test`" — and `c_service_test` appears **nowhere else in the
-document**. It has no row in the action table (L228-254), no payload type, and
-no documented response.
+via `c_service_test`". Its payload *type* is specified — `ServiceTestCommandDto`
+at L112-124, with the `ServiceTestPeripheralDto` enum and field notes — but the
+action itself has **no row in the client→server action table** (L228-255) and no
+documented response, so a reader working from that table will not find it at all.
 
-Observed in practice: it emits `d_notif` and no `d_resp` at all. A client that
-treats it as an ordinary `c_*` command and waits for the acknowledgement L299
-promises will wait until its own timeout.
+Observed in practice: it emits `d_notif` and no `d_resp`. A client that treats it
+as an ordinary `c_*` command and waits for the acknowledgement L299 promises will
+wait until its own timeout.
 
 ### `d_sensor_snap` is unsolicited and continuous — corroborated
 
 The document is internally inconsistent here, and
 `docs/plans/2026-08-04-live-telemetry-websocket-mqtt.md` noted the ambiguity and
-declined to resolve it without hardware: Connection Behaviour says everything
-past the on-connect burst "only arrives once it's asked for", while L58 says
-`d_sensor_snap` is sent "Continuously, while sensor data is flowing from the
-core" and L48 says "every client sees every sensor tick".
+set it aside as not needing resolution for its own argument. Connection Behaviour
+at L47 lists the sensor stream among the things that "only arrives once it's
+asked for (`g_*` actions below) or once something changes" — and there is no
+`g_sensor_*` action in the table — while L58 says `d_sensor_snap` is sent
+"Continuously, while sensor data is flowing from the core" and L48 says "every
+client sees every sensor tick".
 
 **L58 and L48 are right.** The second implementation receives it pushed
 continuously and unrequested. This one is a corroboration rather than a
@@ -124,17 +128,27 @@ already said.
 ### `POST /api/settings/{category}` — "should" means "must"
 
 Recorded in full at `client.ts`'s not-called list, where a tool author will
-actually hit it. In short: the reference does say "All fields from GET response
-should be included in the request body", and that advisory phrasing understates
-it — omitted fields are **zeroed**, not left alone.
+actually hit it. In short: the reference says "All fields from GET response
+should be included in the request body", and read together with Notes item 4's
+whole-struct atomic write (L535) the safe reading is that omitted fields are
+**zeroed** rather than left alone.
 
-Worth noting here because it is a documentation defect rather than a behaviour
-one: that sentence appears on **five of the six** category POSTs — boiler
-(L147), system (L206), display (L299), scales (L346), led (L399) — and is
-**missing from `POST /api/settings/theme`** (L252-256), which carries only the
-persistence note. Nothing suggests theme behaves differently; it is the same
-atomic whole-struct write described at L535. So the one category whose
-documentation does not warn you is not the one category where it is safe.
+**That reading is inferred from the documentation, not observed on hardware** —
+unlike the `websocket.md` entries above. A second implementation reads it the
+same way (its MQTT setup re-reads the whole `system` category and merges before
+writing) but cites this same sentence as its reason, so it is a shared reading
+rather than independent corroboration. Nothing anyone has written down says
+"omitted fields are zeroed" in as many words. It is the conservative reading, and
+the cost of being wrong about it is asymmetric.
+
+Worth noting here as a documentation defect rather than a behaviour one: that
+sentence appears on **five of the six** category POSTs — boiler (L147), system
+(L206), display (L299), scales (L346), led (L399) — and is **missing from
+`POST /api/settings/theme`** (L252-256), which carries an RGB565 format note and
+the persistence note but not the all-fields sentence. Nothing suggests theme
+behaves differently; it is the same atomic whole-struct write described at L535.
+So the one category whose documentation does not warn you is not the one category
+where it is safe.
 
 ## Refreshing
 

@@ -6,6 +6,13 @@ as this server — a Home Assistant profiler with a shot store, a scoring engine
 an analytics dashboard and a flavour taxonomy. Read in source on 2026-08-08 for
 ideas that fit a stateless MCP server.
 
+**Provenance and standing**, as in `docs/upstream/README.md`'s errata and the
+sibling GaggiMate note: everything said below about *their* code comes from
+reading that source, not from running it, and the reading was targeted rather
+than exhaustive. Where this note says a thing is absent from their codebase, read
+"was not found" rather than "does not exist". Claims about *this* repo are
+verified against the code here.
+
 Anyone who finds it will ask why this repo does not have its most visible
 features. This note is the answer, so that starts from a decision rather than
 from silence — the same instrument
@@ -23,15 +30,15 @@ re-derived and re-measured here; the carve-outs say where.
 
 ## What was salvaged, and where it went
 
-Two things in this batch were worth keeping, and both shipped rather than being
+Two things in this batch were worth keeping, and both were carried rather than
 declined:
 
 - **Target-relative temperature and pressure deviation** — the rescuable half of
-  the shot score. #134, shipped in PR #152 as `tempDeviationC` and
+  the shot score. #134, merged in PR #152 as `tempDeviationC` and
   `pressureDeviationBar` on `OutcomeMetricsSchema`.
 - **A precedence rule for contradictory taste symptoms**, channeling outranking
-  taste — the one genuinely reusable idea near the flavour wheel. #136, shipped
-  into the dial-in guidance's "Editing a Profile" section.
+  taste — the one genuinely reusable idea near the flavour wheel. #136, shipping
+  in this same batch, in the dial-in guidance's "Editing a Profile" section.
 
 The line running through every decline below is the same one those two respect:
 **report what was measured, and let the model judge it.**
@@ -74,8 +81,9 @@ fruity" solves a problem this server does not have. Their matcher exists to turn
 free-text bean tags into sunburst chart nodes, and there is no sunburst here.
 
 Worth recording as a **negative finding**, because it is the thing you would
-expect to be there and is not: flavour notes are never mapped to extraction
-advice anywhere in their codebase. The wheel is descriptive, not diagnostic. So
+expect to be there and was not found: no mapping from flavour notes to extraction
+advice turned up anywhere in their codebase. The wheel is descriptive, not
+diagnostic. So
 "upstream has a flavour wheel" is not evidence that a taste taxonomy improves
 dial-in advice — nobody has demonstrated that, there or here.
 
@@ -98,15 +106,18 @@ Three independent blockers, each sufficient:
 - **The metadata.** Bean, grinder, grind setting, basket, dose — all
   user-entered, all with nowhere to live.
 - **The surface.** A second MCP App re-pays the React + ext-apps bundle floor
-  (~370 KB raw / ~103 KB gzip per
+  (~430 KB raw / ~103 KB gzip per
   `2026-07-27-shot-graph-bundle-budget.md`) and needs new tools, and the
   advertised tool list is a permission-grant key.
 
 One piece was separable and was carved out rather than declined: their
 `_tempStability` is a mean absolute deviation of measured from target
 temperature, skipping samples where the target is zero. That needs one shot's
-own datapoints and nothing else — it became `tempDeviationC` in #134, with the
-zero-target rule kept for the reason upstream has it.
+own datapoints and nothing else — it became `tempDeviationC` in #134. The
+zero-target rule was kept for a reason re-derived here rather than inherited:
+a target of 0 means the profile is driving flow instead, which is how Londinium
+spends its first five seconds (65 of 191 samples). Upstream's own reason for the
+rule is not recorded anywhere we read.
 
 **Reopens if** the machine grows an authoritative history index served in one
 request (already an upstream ask in the live-telemetry note) *and* somewhere

@@ -187,7 +187,7 @@ Three options, all bad in this repo's terms:
 > documents rather than from a working client, and a working client uses a path
 > not listed above.
 >
-> `lib/gaggiuino-proto.js` in
+> `gaggiuino-local-profiler/lib/gaggiuino-proto.js` in
 > [mxkissnr/gaggiuino-local-profiler](https://github.com/mxkissnr/gaggiuino-local-profiler)
 > is ~250 lines of **hand-written runtime descriptors** handed to a protobuf
 > runtime: no codegen step, no firmware checkout, no submodule, no generated
@@ -246,22 +246,36 @@ nothing below depends on its details.
 > - **Retained topics, settled.** Notes item 4 (L324) names them exactly:
 >   `sensors`, `system`, `profile/active`, `maintenance` and `status` are
 >   retained. The cross-referenced "retained maintenance topic" this section
->   assumed from `websocket.md` is real. `<prefix>/shot` is **not** retained and
->   is published one message per sample during a shot (L127-129) — so the live
->   shot, the one thing the crux rules out, is also the one topic a late
->   subscriber cannot recover from the broker.
-> - **`<prefix>/status` carries the literal strings `online` / `offline`** as an
->   LWT availability topic (L49-60), not JSON.
+>   assumed from `websocket.md` is real. `<prefix>/shot` is **not** among them
+>   and is published one message per sample during a shot (L127-129) — so the
+>   live shot, the one thing the crux rules out, is one of the two topics a late
+>   subscriber cannot recover from the broker (`<prefix>/notification`, L186, is
+>   the other).
+> - **`<prefix>/status` carries the literal strings `online` / `offline`** as a
+>   retained availability topic whose `offline` payload is registered as the
+>   connection's LWT (L49-60), not JSON.
 >
-> One genuinely new fact, and it outlives this note: **MQTT and the WebSocket
-> are two different data models, not two transports for one.** The `shot` topic
-> publishes `timeInShotMs`, and real floats — `"pressure": 9.1`,
-> `"temperature": 93.4` (L133-144). The REST and protobuf surfaces this server
-> is built on use deciseconds and ×10 integers, where the same shot reads `91`
-> and `934`. So the field *names* differ from the protobuf DTOs and so do the
-> *units*, and `normalize.ts`'s `SCALE_BY_10` set does not apply to an MQTT
-> payload at all. Any future argument that treats the two as interchangeable —
-> "we already parse this shape" — is wrong before it starts.
+> One genuinely new fact, and it outlives this note: **MQTT's `shot` topic and
+> the WebSocket's `ShotSnapshotDto` are two different data models, not two
+> encodings of one.** The trap is that they look identical. Nine of the shot
+> topic's ten field names are byte-for-byte the DTO's — `pressure`, `pumpFlow`,
+> `weightFlow`, `temperature`, `shotWeight`, `waterPumped`, `targetTemperature`,
+> `targetPumpFlow`, `targetPressure` — and the same nine are in this server's own
+> `ShotDatapointsSchema`. Only the time field differs, `timeInShot` becoming
+> `timeInShotMs`, which is the one honest signal that anything changed.
+>
+> The values are not the same. MQTT publishes real floats — `"pressure": 9.1`,
+> `"temperature": 93.4` (L133-144) — where the REST and protobuf surfaces this
+> server is built on send `91` and `934` in deciseconds and ×10 integers. Eight
+> of the nine shared names are in `normalize.ts`'s `SCALE_BY_10`, so a hand-written
+> MQTT path that reused `normalizeValue` would turn 9.1 bar into 0.91 with nothing
+> to catch it. Near-total name overlap carrying a different scale is exactly what
+> invites "we already parse this shape", and it is wrong before it starts.
+>
+> Scoped to the shot topic deliberately: `<prefix>/sensors` and
+> `SensorStateSnapshotDto` really do agree on both names and value convention
+> (`websocket.md` L78 notes the sensor DTO uses real numbers, unlike the shot
+> format), which is precisely why the shot topic's divergence is easy to miss.
 >
 > Also worth recording against the "Mid-shot control tools" rejection below:
 > MQTT has its own command surface (`cmd/profile/select`, `cmd/opmode`,

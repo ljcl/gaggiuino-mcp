@@ -58,10 +58,13 @@
  *   are "updated atomically - the entire settings structure is updated and
  *   persisted as one operation". Together those mean `should` is `must` and the
  *   penalty is destructive rather than incomplete, which neither sentence says
- *   on its own. Corroborated by a second implementation
- *   (mxkissnr/gaggiuino-local-profiler, read 2026-08-08) in the shape of its
- *   code: its MQTT setup cannot send only the MQTT fields, and instead re-reads
- *   the whole `system` category and merges before writing.
+ *   on its own. **That is an inference from the documentation, not an observed
+ *   behaviour** — no hardware test here has confirmed it. A second
+ *   implementation (mxkissnr/gaggiuino-local-profiler, read 2026-08-08) reads
+ *   it the same way, re-reading the whole `system` category and merging before
+ *   it writes, but it cites this same sentence as its reason: a shared reading,
+ *   not independent evidence. Treated as true anyway, because the cost of being
+ *   wrong runs one way only.
  *
  *   So a write tool here must GET, merge, and POST the whole category. One that
  *   modelled only the fields it knew about would silently wipe the rest —

@@ -579,14 +579,33 @@ Two rows were corrected rather than copied, for the same reason:
   does not enforce it, so the upstream "watery → lower the ratio" lever changes
   documentation and not coffee. The field that actually ends a shot on yield is
   `globalStopConditions.weight`.
-- **`restriction` has no documented unit** and both of the machine's own UIs
-  always send `0` (`websocket.md` L221), so no value can be advised for it.
+- **`restriction` has no documented unit**, so no value can be advised for it —
+  but the guidance says *preserve* it rather than zero it, and that correction
+  is worth knowing about because the same mistake was in this repo already.
+  `profileShape.ts` cited `websocket.md` L221 ("both always send `0`") as
+  evidence about a phase's `restriction`. L221 is about
+  **`ProfileManualDto.restriction`** — the live `BREW_MANUAL` setpoint, a
+  different message (L213-216). Nothing says a *phase's* restriction is unused,
+  and `formatProfileDefinition` records the opposite from observation: a real
+  lever profile sets it on sixteen of its nineteen phases. Telling a model the
+  field is always zero invites it to normalise a lever profile's restrictions
+  away while editing one field. Fixed in `profileShape.ts` at the same time.
 
 Every stated range sits inside `ProfileUploadInput`'s own bounds — guidance that
 recommends a value the server then rejects is worse than none. The units section
 repeats `profileShape.ts`'s central trap on purpose: **nothing in a profile is
 scaled by 10 while the shot time-series is**, and the machine fills malformed
 fields with zero-value defaults rather than rejecting them.
+
+**Phases are located by shape, and deliberately not by `target.start`.** The
+obvious rule — a ramp is a phase whose `target.end` exceeds its `target.start` —
+fails twice on this repo's own fixtures: `start` is optional and most real phases
+omit it (meaning "continue from the previous phase"), and where it *is* present
+it is often `0`, which makes a 3-bar preinfusion look like a ramp and invites the
+model to push it to 5+ bar. The rule compares against the **previous phase's**
+`target.end` instead, excludes the first phase from being the ramp, and says to
+check `type` before touching `target.end` — whose unit is bar on a `PRESSURE`
+phase and ml/s on a `FLOW` one, with nothing anywhere to reject the wrong one.
 
 ## MCP App (Shot Graph)
 

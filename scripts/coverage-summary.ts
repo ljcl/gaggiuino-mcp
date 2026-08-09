@@ -17,27 +17,30 @@
  *
  * ## The baseline diff is best-effort by construction
  *
- * When `coverage-baseline/` is present each cell is annotated with its delta vs
- * `main`, so a reviewer sees test-depth regressions without diffing raw
- * numbers. CI restores it from a cache before this runs (**Restore coverage
+ * When `coverage-baseline/` is present, every cell whose value *moved* is
+ * annotated with its delta vs `main`, so a reviewer sees test-depth regressions
+ * without diffing raw numbers; an unchanged metric stays a bare percentage. CI
+ * restores the baseline from a cache before this runs (**Restore coverage
  * baseline**, `ci.yml:98-104`) and re-saves it after pushes to `main`
  * (`:113-130`).
  *
- * That restore is *designed* to miss its primary key. The key is
- * `coverage-baseline-${{ github.sha }}` and the only writer of it is the
- * push-to-`main`-gated save step using the same expression, so on a PR — whose
- * `github.sha` is an ephemeral merge commit nobody ever saved — it cannot hit.
+ * On a PR that restore is *designed* to miss its primary key. The key is
+ * `coverage-baseline-` plus `github.sha`, and the only writer of it is the
+ * push-to-`main`-gated save step using the same expression — so a PR, whose
+ * `github.sha` is an ephemeral merge commit nobody ever saved, cannot hit it.
  * The bare `restore-keys: coverage-baseline-` prefix is what actually resolves,
  * and `actions/cache` answers a prefix with the most recently created matching
  * entry: the last `main` push's snapshot, which is exactly the baseline wanted.
  * The SHA stamp is there because cache entries are immutable and a fixed key
- * could never be updated.
+ * could never be updated. (The one case where the primary key does hit is a
+ * re-run of a `main` push, which replays a SHA its own first attempt saved.)
  *
  * So a missing baseline is a normal state, not a failure, and nothing here
  * treats it as one: `readTotals` returns null, the optional chain in `row`
- * yields undefined, and `cell` prints a bare percentage. The table degrades to
- * absolute numbers on the first `main` run, on a fork PR that cannot read the
- * cache, and whenever the entry has been evicted.
+ * yields undefined, and `cell` prints a bare percentage. That happens on the
+ * first `main` run and whenever the entry has been evicted. It is **not** what
+ * happens on a fork PR — a fork can restore caches from the base branch, it
+ * just cannot save one, and the save step is push-gated so it never would.
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
