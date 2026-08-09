@@ -1,5 +1,28 @@
 # Changelog
 
+## [3.0.0](https://github.com/ljcl/gaggiuino-mcp/compare/v2.0.0...v3.0.0) (2026-08-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* **server:** measure temperature and pressure against the profile's own targets ([#152](https://github.com/ljcl/gaggiuino-mcp/issues/152))
+
+### Features
+
+* **dev:** a fixture-backed fake Gaggiuino so the server runs without the machine ([#156](https://github.com/ljcl/gaggiuino-mcp/issues/156)) ([d8da101](https://github.com/ljcl/gaggiuino-mcp/commit/d8da101eadf75c13d11510eacd0b28e73b732e58))
+* **server:** delegate token issuing to an external issuer with MCP_OAUTH_ISSUER ([#148](https://github.com/ljcl/gaggiuino-mcp/issues/148)) ([f87856c](https://github.com/ljcl/gaggiuino-mcp/commit/f87856ca343c8d633cdceef5b19f08afb98765f6))
+* **server:** delete_profile, behind four independent gates ([#155](https://github.com/ljcl/gaggiuino-mcp/issues/155)) ([d8d3475](https://github.com/ljcl/gaggiuino-mcp/commit/d8d34758e569cb72fc6a26f0fab7c5ca909fed36))
+* **server:** give the dial-in loop a stopping rule and profile edits a lever table ([#154](https://github.com/ljcl/gaggiuino-mcp/issues/154)) ([6cad1b7](https://github.com/ljcl/gaggiuino-mcp/commit/6cad1b7d65dbfab0382f29f77138ae268f4f15e8))
+* **server:** measure temperature and pressure against the profile's own targets ([#152](https://github.com/ljcl/gaggiuino-mcp/issues/152)) ([3438190](https://github.com/ljcl/gaggiuino-mcp/commit/343819048717412039150a69985e9eb438f5db84))
+* **server:** populate phases[].events with measured pressure collapses ([#150](https://github.com/ljcl/gaggiuino-mcp/issues/150)) ([6bdb702](https://github.com/ljcl/gaggiuino-mcp/commit/6bdb7026e426be05a960effdd822794577dbf3e3))
+
+
+### Bug Fixes
+
+* **server:** evict the quietest session at the cap instead of answering 503 ([#126](https://github.com/ljcl/gaggiuino-mcp/issues/126)) ([f5bda09](https://github.com/ljcl/gaggiuino-mcp/commit/f5bda094e68e6544f07201e76bd2435674ff537c))
+* **server:** make the consent token stateless so /oauth/authorize cannot be evicted ([#130](https://github.com/ljcl/gaggiuino-mcp/issues/130)) ([9a5728e](https://github.com/ljcl/gaggiuino-mcp/commit/9a5728e3b8b8c4091cc8e1c08bc6195c3b6edd27))
+* **server:** segment shot phases by the same rule the chart uses ([#149](https://github.com/ljcl/gaggiuino-mcp/issues/149)) ([75c3261](https://github.com/ljcl/gaggiuino-mcp/commit/75c32617a245374571b26e198bf0590989ba37c6))
+
 ## [2.0.0](https://github.com/ljcl/gaggiuino-mcp/compare/v1.7.0...v2.0.0) (2026-08-07)
 
 
