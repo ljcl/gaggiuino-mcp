@@ -11,6 +11,18 @@ over which transport?** It is a decision document, not a survey. Code is out of
 scope; the outcome is a decision plus a short list of REST-only work that came
 out of reading the two documents side by side.
 
+> **Amended 2026-08-09 (#139).** Two of this note's supporting cost arguments
+> were written from documents rather than from a working implementation, and
+> both were wrong on the facts: the protobuf-binding cost is overstated, and the
+> MQTT assessment was made without `MQTT.md`, which is now vendored. Both are
+> corrected in place, marked as amendments where they sit.
+>
+> **The decision itself is unchanged, and this is not a re-run of it.** Its
+> crux is structural — MCP is request/response, and a tool call has no channel
+> to push a later frame — and nothing in either correction touches that. The
+> corrections matter because the next person to revisit this should not start
+> from premises already known to be false.
+
 ## What the release actually added
 
 From `websocket.md`, the endpoint carries three things the REST surface cannot:
@@ -169,6 +181,30 @@ Three options, all bad in this repo's terms:
   and honest about scope, but it hardcodes field numbers, which is the same
   skew exposure with less tooling.
 
+> **Amendment, 2026-08-09 (#139): there is a fourth option, and it makes this
+> section's cost estimate too high.** The decision is unchanged — see the crux,
+> which none of this touches — but the reasoning below was written from two
+> documents rather than from a working client, and a working client uses a path
+> not listed above.
+>
+> `gaggiuino-local-profiler/lib/gaggiuino-proto.js` in
+> [mxkissnr/gaggiuino-local-profiler](https://github.com/mxkissnr/gaggiuino-local-profiler)
+> is ~250 lines of **hand-written runtime descriptors** handed to a protobuf
+> runtime: no codegen step, no firmware checkout, no submodule, no generated
+> artifact in the tree, and nothing for Docker or Turborepo to build. The subset
+> this server would need is smaller still.
+>
+> That deletes the first bullet's objections outright — there is no `protoc`
+> stage, no network access to a second repository during the image build, and no
+> unwatched pinned SHA. It does **not** delete the third bullet's objection:
+> descriptors written by hand pin field numbers exactly as hand-decoding does,
+> so "Version skew fails quiet" below stands unamended and is now the *whole* of
+> the binding cost rather than one item among several.
+>
+> The practical consequence is to trigger #1, which called a published schema
+> package "the single biggest lever, and it is upstream's to pull". Most of what
+> it was gating turns out not to be there. It is narrowed accordingly.
+
 For the server itself the runtime dependency size is irrelevant (no bundling).
 For the app it is not: `app.html` is 1,047,652 B raw / 279,233 B gzip against
 budgets set ~10% over, and the resource body is re-sent on **every render**. A
@@ -201,6 +237,52 @@ Assessed from the machine's `system` settings block (`mqttEnabled`, `mqttHost`,
 cross-references in `websocket.md` to notification and retained maintenance
 topics. `MQTT.md` itself was not part of the material reviewed for this note;
 nothing below depends on its details.
+
+> **Amendment, 2026-08-09 (#139): `MQTT.md` has since been vendored** at
+> `docs/upstream/MQTT.md` (retrieved 2026-08-09), so the caveat above no longer
+> has to stand. Reading it changes nothing in this section's conclusion and
+> confirms the two things it was hedging:
+>
+> - **Retained topics, settled.** Notes item 4 (L324) names them exactly:
+>   `sensors`, `system`, `profile/active`, `maintenance` and `status` are
+>   retained. The cross-referenced "retained maintenance topic" this section
+>   assumed from `websocket.md` is real. `<prefix>/shot` is **not** among them
+>   and is published one message per sample during a shot (L127-129) — so the
+>   live shot, the one thing the crux rules out, is one of the two topics a late
+>   subscriber cannot recover from the broker (`<prefix>/notification`, L186, is
+>   the other).
+> - **`<prefix>/status` carries the literal strings `online` / `offline`** as a
+>   retained availability topic whose `offline` payload is registered as the
+>   connection's LWT (L49-60), not JSON.
+>
+> One genuinely new fact, and it outlives this note: **MQTT's `shot` topic and
+> the WebSocket's `ShotSnapshotDto` are two different data models, not two
+> encodings of one.** The trap is that they look identical. Nine of the shot
+> topic's ten field names are byte-for-byte the DTO's — `pressure`, `pumpFlow`,
+> `weightFlow`, `temperature`, `shotWeight`, `waterPumped`, `targetTemperature`,
+> `targetPumpFlow`, `targetPressure` — and the same nine are in this server's own
+> `ShotDatapointsSchema`. Only the time field differs, `timeInShot` becoming
+> `timeInShotMs`, which is the one honest signal that anything changed.
+>
+> The values are not the same. MQTT publishes real floats — `"pressure": 9.1`,
+> `"temperature": 93.4` (L133-144) — where the REST and protobuf surfaces this
+> server is built on send `91` and `934` in deciseconds and ×10 integers. Eight
+> of the nine shared names are in `normalize.ts`'s `SCALE_BY_10`, so a hand-written
+> MQTT path that reused `normalizeValue` would turn 9.1 bar into 0.91 with nothing
+> to catch it. Near-total name overlap carrying a different scale is exactly what
+> invites "we already parse this shape", and it is wrong before it starts.
+>
+> Scoped to the shot topic deliberately: `<prefix>/sensors` and
+> `SensorStateSnapshotDto` really do agree on both names and value convention
+> (`websocket.md` L78 notes the sensor DTO uses real numbers, unlike the shot
+> format), which is precisely why the shot topic's divergence is easy to miss.
+>
+> Also worth recording against the "Mid-shot control tools" rejection below:
+> MQTT has its own command surface (`cmd/profile/select`, `cmd/opmode`,
+> `cmd/tare`, `cmd/manual`, L200-248), including manual pressure/flow setpoints.
+> That does not revive the idea — the objection was a model's reaction time
+> against a 30-second shot, not the absence of a transport — but the rejection
+> should not be read as "there is no way to do it".
 
 MQTT has one genuine advantage and it is worth stating plainly: **it does not
 consume a WebSocket slot and adds no load to the ESP32 that the user has not
@@ -317,10 +399,22 @@ REST shot-history index.
 
 Concrete triggers, not sentiment.
 
-1. **A published, versioned schema package.** If the firmware project publishes
-   its `.proto` bindings to npm with a version number, the codegen, Docker, and
-   skew objections all collapse at once. That is the single biggest lever, and
-   it is upstream's to pull.
+1. **A version signal on the wire format.** *Narrowed 2026-08-09 (#139) — see
+   the amendment under "Protobuf bindings".* This originally read "a published,
+   versioned schema package… the single biggest lever, and it is upstream's to
+   pull", on the reasoning that codegen, Docker and skew objections would
+   collapse together. Two of those three were never really there: ~250 lines of
+   hand-written runtime descriptors need no codegen stage and no build-time
+   dependency on another repository, which is how a working client does it
+   today.
+
+   What survives is the skew objection alone, and it is enough on its own:
+   hand-written descriptors pin field numbers with nothing watching them, and
+   the failure is a silently wrong reading rather than an error. So the trigger
+   is **any mechanism that makes a field-number change observable** — a
+   published versioned package is the obvious one and still the best, but a
+   protocol version field in the frame, or a documented schema hash, would do
+   as well. Absent one, the objection stands however the bindings are obtained.
 2. **A host-supported push primitive that reaches the model.** If MCP gains a
    server-initiated message that a host we target actually delivers into model
    context mid-turn — not display-only progress scoped to an in-flight call —

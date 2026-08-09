@@ -107,6 +107,55 @@ function promptArguments(schema: ArgsSchema): PromptArgument[] {
 }
 
 /**
+ * The adjustment policy the dial-in plans shipped without.
+ *
+ * `dial_in_new_bag` and `diagnose_last_shot` both told the model to change one
+ * variable and re-pull, and neither said how far to move it, which way after a
+ * reversal, or when to stop — so the loop they describe has no termination
+ * condition. A model will suggest "a bit finer" indefinitely, oscillate around
+ * the target because nothing tells it to shrink the step after an overshoot,
+ * and never say "this is dialled in".
+ *
+ * **The round history is the conversation, so this is text rather than state.**
+ * The obvious implementation of a convergence loop is a session object holding
+ * the rounds, and there is nowhere here to put one — no database, no persisted
+ * user state, and the session TTL evicts anything in memory. None of that is
+ * needed: the model already has every shot in context. What was missing is the
+ * policy for reading them, which costs one shared constant and re-keys no
+ * permission grant.
+ *
+ * Shared rather than written into each plan twice, because two copies of a
+ * numeric rule drift. A `const` rather than a builder function because there is
+ * nothing to parameterise — and note that `apps/server`'s `functions: 100`
+ * coverage gate constrains anything added here: `prompts.test.ts` renders every
+ * prompt, so a helper *some* render reaches is covered, but one no render path
+ * reaches fails the build outright.
+ *
+ * The numbers are starting guidance, not the server's opinion: band, dose and
+ * grinder resolution are equipment-specific, which is what `user_context` in
+ * `prompts.yaml` already exists to override.
+ */
+const ADJUSTMENT_POLICY = [
+  "",
+  "## How far to move it, and when to stop",
+  "",
+  "These are defaults. Anything my own setup notes say, via `get_dial_in_guidance`, replaces them.",
+  "",
+  "- **Target window.** Use the `targetTime` window `list_profiles` or `get_profile_info` reports for this profile, and treat anything inside it as on target — measure error from the nearest edge, not from the middle. The windows are wide on purpose and they differ a lot by profile. `globalStopConditions.time` in a profile's definition is a hard cutoff, not a target; do not read it as one.",
+  "- **When the profile reports no target time**, aim for 25-32 seconds and treat 27.5-29.5 as on target — but only for an espresso profile. Ask me what the profile is for before assuming: a turbo profile is much shorter and a filter profile runs for minutes, and dialling either toward 30 seconds is the wrong loop entirely.",
+  '- **Hold.** Inside that dead zone, say so and change nothing. "This is dialled in, stop adjusting" is a valid answer, and I would rather hear it than be given another change to make.',
+  "- **First step.** Size it from how far the first shot missed: about one grinder step per 6 seconds of error, never less than half a step, never more than two. Say it in my grinder's units, not in seconds.",
+  "- **Halve on a reversal.** If the change you are about to suggest is the opposite direction to the last one, halve the step. If it is the same direction, keep it. Never grow it.",
+  "- **Stop** as soon as any of these is true, and name the one that fired: two shots in a row landed in the dead zone; the next step would be finer than my grinder can actually set; or we have made six adjustments on this coffee. Six is a safety valve, not a target.",
+  "",
+  "Take the round history from this conversation — the shots already pulled are the record. Do not ask me to repeat them.",
+  "",
+  "**A shot that collapsed carries no grind signal.** When `get_shot_data` lists, under one of the phases, an event whose text begins \"pressure fell\", the puck gave way instead of resisting, so that shot's time says nothing about the grind. Do not read a direction from it, and do not let it seed or halve the step — treat it as a round that did not happen, fix the cause (puck prep, distribution, basket, dose) and re-pull. The reverse does not hold: no event is not proof the puck held. It means either that nothing crossed the detector's threshold, or that the shot's profile named no phases at all — in which case the breakdown says so and no event could be reported either way.",
+  "",
+  "Brew ratio and extraction yield are outcome checks, not direction signals: pick the direction from extraction time, then confirm the ratio landed where the profile intended. If I give you a refractometer reading, extraction yield is (yield in grams x TDS%) / dose in grams, and the SCA Golden Cup band is 18-22%. The machine cannot measure TDS, so ask me for it rather than estimating it.",
+];
+
+/**
  * The workflow prompts are defined here rather than in `prompts.yaml` on
  * purpose. What they contain is a plan naming *this server's own tools*, so a
  * local override could point a step at a tool that does not exist; the part a
@@ -180,9 +229,10 @@ export const PROMPT_DEFINITIONS: PromptDefinition[] = [
         "3. Call `list_profiles` and choose the profile whose type suits this roast. Recommend only profiles the machine actually holds, and say in one sentence why that one.",
         "4. If it is not the profile already loaded, ask me before calling `select_profile` — that one changes the machine.",
         "5. Give me a starting point: grind direction relative to my usual setting, dose, target yield, and target time.",
-        "6. After I pull the shot, call `get_latest_shot_id` and analyse it. Change ONE variable before the next shot and tell me which and why.",
+        "6. After I pull the shot, call `get_latest_shot_id` for its id and headline numbers, then `get_shot_data` with that id — the phase breakdown is the only place a pressure-collapse event appears, and the rule below depends on seeing it. Change ONE variable before the next shot and tell me which and why.",
         "",
         "Do not guess at anything the tools can tell you.",
+        ...ADJUSTMENT_POLICY,
       ].join("\n"),
     title: "Dial in a new bag",
   }),
@@ -221,6 +271,7 @@ export const PROMPT_DEFINITIONS: PromptDefinition[] = [
         "7. If I have pulled several shots on this coffee, call `list_recent_shots` and say whether this one is a trend or a one-off.",
         "",
         "Then tell me: the most likely cause, the ONE variable to change next, and which direction to move it. If the data contradicts what I tasted, say so.",
+        ...ADJUSTMENT_POLICY,
       ].join("\n"),
     title: "Diagnose the last shot",
   }),

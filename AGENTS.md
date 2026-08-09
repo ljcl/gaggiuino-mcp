@@ -22,6 +22,35 @@ Remote MCP server for integrating a Gaggiuino espresso machine with AI tools.
 - `apps/server/src/data/prompts.yaml` - System prompt for espresso dial-in guidance
 - `apps/server/src/data/*.example-local.yaml` - Templates for user-specific overrides (copy to `*.local.yaml`)
 - `docs/plans/` - Design docs and implementation plans
+- `docs/upstream/` - Verbatim vendored copies of the Gaggiuino project's own API
+  reference (`rest-api.md`, `websocket.md`, `MQTT.md`), plus the errata that
+  corrects them
+
+### The vendored reference, and its errata
+
+`docs/upstream/` exists so `client.ts` can cite a stable path with line numbers
+that do not move under it. Its README states the posture: **these documents
+settle *existence* questions, not *shape* questions** — they are hand-written
+and disagree with themselves about types.
+
+Two rules govern it.
+
+- **Never edit the vendored files.** Their value is that a refresh produces a
+  reviewable diff, and every citation in `client.ts` is a line reference into
+  them. Corrections go in the README's **Errata** section, or in `client.ts`'s
+  not-called block when what is being prevented is a bad tool rather than a
+  misreading.
+- **Say where a correction came from.** The errata's current entries are drawn
+  from a second, independently written implementation of the same protocols
+  rather than from this repo's hardware, and the README says so at the top of
+  the section. That is strong evidence about behaviour and it is not a
+  specification; where the two disagree, hardware wins.
+
+The entry most likely to matter later is that `websocket.md` claims three times
+(L226, L299, L358) that **every** `c_*` command is acknowledged by `d_resp`, and
+the profile commands answer with a data push instead. Profile *update* and
+*delete* are WebSocket-only — there is no REST verb for either — so the next
+person to design a WS write path is exactly the reader that claim would mislead.
 
 ## Agent Skills
 
@@ -491,6 +520,92 @@ literal. It was hardcoded in the ListPrompts handler, which made a
 one surface a host shows the user. That is also why `advertisedPrompts()` is a
 function rather than a module constant like `TOOLS` — the list is built per
 request so a local override stays authoritative.
+
+### The loop had no termination condition
+
+The dial-in prompts told the model to change one variable and re-pull, and said
+nothing about **how far**, **which way after a reversal**, or **when to stop** —
+so a model suggests "a bit finer" indefinitely, oscillates around the target
+because nothing shrinks the step after an overshoot, and never says "this is
+dialled in".
+
+`ADJUSTMENT_POLICY` in `prompts.ts` is that missing policy, spliced into
+`dial_in_new_bag` and `diagnose_last_shot`. **It is text, not state, and that is
+the whole reason it fits here.** The obvious implementation is a session object
+holding the round history, and there is nowhere to put one — no database, no
+persisted user state, and the session TTL evicts anything in memory. None of it
+is needed: the round history *is* the conversation and the model already has it.
+What was missing was the policy for reading it, so this adds no tool, no schema,
+and re-keys no permission grant.
+
+Three details are load-bearing:
+
+- **A `const`, not a function.** `apps/server`'s coverage gate is
+  `functions: 100`, so a helper reached from only one render would fail the
+  build outright. Shared rather than written into each plan twice, because two
+  copies of a numeric rule drift.
+- **A collapsed shot is excluded from direction-finding**, and the text names
+  what the model will actually *see* — an event beginning `pressure fell` — not
+  an internal concept. `phases[].events` is `string[]` with no discriminator
+  field, so there is nothing else to key on. The converse is stated too: no
+  event is not proof the puck held, and a shot whose profile names no phases
+  produces no events at all because `extractPhaseSummary` returns before the
+  detector runs.
+- **The numbers are defaults, not the server's opinion.** Band, dose and grinder
+  resolution are equipment-specific, which is what `user_context` already exists
+  to override.
+
+### Which field to move, and the two levers that do nothing
+
+`get_profile_info` reads a profile and `upload_profile` writes one; what did not
+exist was the middle — which field to change for which symptom. The
+"Editing a Profile" section of `prompts.yaml` is that table, and it is in the
+YAML rather than the plans because it is durable domain knowledge that every
+plan already picks up by calling `get_dial_in_guidance` in step 1.
+
+**The upstream table it came from could not be used as written, and that is the
+part worth remembering.** Its paths are `preinfusion.stopConditions.time`,
+`ramp.target.end`, `decline.target.time` — and there is no `preinfusion`, `ramp`
+or `decline` key anywhere in the wire format. `phases` is a flat **array**, and
+`phases[i].name` is *absent* on nearly every real profile because profiles built
+on the machine's own screen carry no phase names. So the table addresses phases
+by `type` and target shape, and says to read `definition.phases` first. Shipping
+the dotted paths verbatim would have produced exactly the confidently-wrong edit
+the section exists to prevent.
+
+Two rows were corrected rather than copied, for the same reason:
+
+- **`recipe.ratio` does not stop the shot.** It is informational and the machine
+  does not enforce it, so the upstream "watery → lower the ratio" lever changes
+  documentation and not coffee. The field that actually ends a shot on yield is
+  `globalStopConditions.weight`.
+- **`restriction` has no documented unit**, so no value can be advised for it —
+  but the guidance says *preserve* it rather than zero it, and that correction
+  is worth knowing about because the same mistake was in this repo already.
+  `profileShape.ts` cited `websocket.md` L221 ("both always send `0`") as
+  evidence about a phase's `restriction`. L221 is about
+  **`ProfileManualDto.restriction`** — the live `BREW_MANUAL` setpoint, a
+  different message (L213-216). Nothing says a *phase's* restriction is unused,
+  and `formatProfileDefinition` records the opposite from observation: a real
+  lever profile sets it on sixteen of its nineteen phases. Telling a model the
+  field is always zero invites it to normalise a lever profile's restrictions
+  away while editing one field. Fixed in `profileShape.ts` at the same time.
+
+Every stated range sits inside `ProfileUploadInput`'s own bounds — guidance that
+recommends a value the server then rejects is worse than none. The units section
+repeats `profileShape.ts`'s central trap on purpose: **nothing in a profile is
+scaled by 10 while the shot time-series is**, and the machine fills malformed
+fields with zero-value defaults rather than rejecting them.
+
+**Phases are located by shape, and deliberately not by `target.start`.** The
+obvious rule — a ramp is a phase whose `target.end` exceeds its `target.start` —
+fails twice on this repo's own fixtures: `start` is optional and most real phases
+omit it (meaning "continue from the previous phase"), and where it *is* present
+it is often `0`, which makes a 3-bar preinfusion look like a ramp and invites the
+model to push it to 5+ bar. The rule compares against the **previous phase's**
+`target.end` instead, excludes the first phase from being the ramp, and says to
+check `type` before touching `target.end` — whose unit is bar on a `PRESSURE`
+phase and ml/s on a `FLOW` one, with nothing anywhere to reject the wrong one.
 
 ## MCP App (Shot Graph)
 
@@ -1354,6 +1469,24 @@ Things worth not re-breaking:
   guard a stranger aims it at the LAN. Loopback, RFC 1918, link-local
   (`169.254`, where cloud metadata lives) and `100.64/10` — the tailnet this
   server is probably inside — are all refused.
+
+  **The tests assert the call count, not the return value**, because every
+  `toBeUndefined()` in that file is satisfied equally by a guard that blocks the
+  fetch and by one that fetches first and discards the result — and only one of
+  those is a guard. Two tests stub DNS so a *hostname* resolves privately (an IP
+  literal never exercises the resolve-then-decide path at all) and assert `fetch`
+  was never called; one of them splits the answer public-then-private, which is
+  what `every` is for and what a `some` would wave through. Both were verified to
+  fail for the right reason by mutating the implementation before landing.
+
+  `resolvesPublicly`'s docblock carries a dated **accepted residue**: it resolves
+  the hostname and `fetch` resolves it again, so a short-TTL record can answer
+  public for the check and private for the connection. Accepted because the fetch
+  is https-only (which already excludes the plain-http LAN targets that motivate
+  the threat), the response is never echoed, and the deployment is single-user.
+  Closing it needs a custom undici dispatcher pinning the connection to the
+  resolved address — **explicitly out of scope**, and recorded so a future reader
+  treats it as a decision rather than an open action.
 - **Loopback redirect URIs ignore the port, everything else is exact.** RFC 8252
   §7.3 requires it for the IP literal, and Anthropic's guidance extends it to
   `localhost`, because Claude Code declares `http://localhost/callback` and then
