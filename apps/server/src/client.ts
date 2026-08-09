@@ -46,7 +46,38 @@
  *   away from `select` must never be able to reach it.
  * - Every `POST /api/settings/*` (L144, L203, L252, L296, L343, L396) —
  *   writing boiler setpoints from a chat window is a far heavier permission
- *   story than `select_profile`, and nobody has asked for it.
+ *   story than `select_profile`, and nobody has asked for it. That is the soft
+ *   reason and still the primary one; the hard one below binds the moment
+ *   somebody decides the permission story is acceptable.
+ *
+ *   **A category write is a whole-struct replace: fields omitted from the body
+ *   are zeroed, not left alone.** The reference does say "All fields from GET
+ *   response should be included in the request body" — on five of the six
+ *   categories (L147, L206, L299, L346, L399; `theme` at L252-256 omits the
+ *   sentence and is not thereby safer) — and Notes item 4 at L535 says settings
+ *   are "updated atomically - the entire settings structure is updated and
+ *   persisted as one operation". Together those mean `should` is `must` and the
+ *   penalty is destructive rather than incomplete, which neither sentence says
+ *   on its own. Corroborated by a second implementation
+ *   (mxkissnr/gaggiuino-local-profiler, read 2026-08-08) in the shape of its
+ *   code: its MQTT setup cannot send only the MQTT fields, and instead re-reads
+ *   the whole `system` category and merges before writing.
+ *
+ *   So a write tool here must GET, merge, and POST the whole category. One that
+ *   modelled only the fields it knew about would silently wipe the rest —
+ *   including fields a firmware revision added after the tool was written. On
+ *   `system` that plausibly means the user's MQTT credentials or their scale
+ *   configuration, as a side effect of changing a boiler setpoint. It is the
+ *   write-side face of the property that keeps `get_machine_settings`
+ *   text-only: on a read, modelling the known fields costs you the one field
+ *   the user was asking about; on a write it costs that field's value.
+ *
+ *   **There is also no try-it-and-revert step.** The REST write applies *and*
+ *   commits to NVS in one call (Notes item 2, L533), so the first write is
+ *   already permanent when it returns. The WebSocket path is the one that
+ *   splits them — `c_upd_settings` applies in RAM, `c_save_settings` writes
+ *   flash (websocket.md L289-294) — which is the opposite of the intuition that
+ *   the documented REST surface is the more conservative one.
  * - `POST /api/firmware/update-all` and `GET /api/firmware/progress` (§6) —
  *   flashing an espresso machine from a conversation.
  * - `GET /api/health` (L518-526) — a real upstream liveness endpoint, and still
@@ -60,6 +91,15 @@
  * - `GET /api/settings/versions` (L427-444) — its three fields are already
  *   inside the `/api/settings` aggregate this client fetches, so calling it
  *   would be a second round trip for data already in hand.
+ *
+ * ### The machine this client deliberately does not reach
+ *
+ * Everything above is an endpoint. The other question people ask is about a
+ * different *firmware* — GaggiMate — and the answer is a decision rather than an
+ * omission: `docs/plans/2026-08-09-second-firmware-gaggimate.md`. Short version:
+ * there is no shared transport to abstract, the normalisation target would be
+ * this server's entire data model, and `GAGGIUINO_URL` being per-process means
+ * two machines is already two containers.
  */
 
 import { z } from "zod";
