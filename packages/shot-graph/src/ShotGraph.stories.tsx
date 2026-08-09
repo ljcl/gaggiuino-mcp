@@ -464,3 +464,62 @@ export const ReportsVisibilityChanges: Story = {
     );
   },
 };
+
+/**
+ * The `hidden` prop, controlled by a parent across an unmount.
+ *
+ * This is the prop's whole reason for existing and it had no test. The app can
+ * unmount this chart — switching to the pressure-against-flow view — and while
+ * the hidden set lived only in here, that unmount reset it to the default while
+ * `main.tsx`'s own copy, the one `updateModelContext` reports to the model, kept
+ * the user's choices. The two diverged with nothing on screen or in a log to say
+ * so: the model would describe temperature as plotted after the user had hidden
+ * it, or the reverse.
+ *
+ * The remount below is what a view switch does. An uncontrolled chart fails the
+ * final assertion.
+ */
+export const ControlledVisibility: Story = {
+  render: function ControlledVisibilityStory() {
+    const [hidden, setHidden] = useState<ReadonlySet<string>>(
+      DEFAULT_HIDDEN_SERIES,
+    );
+    const [mounted, setMounted] = useState(true);
+    return (
+      <div>
+        <button onClick={() => setMounted((m) => !m)} type="button">
+          Toggle mount
+        </button>
+        {mounted && (
+          <ShotGraph
+            annotations={extractAnnotations(londiniumShot33)}
+            data={toChartData(londiniumShot33)}
+            hidden={hidden}
+            onVisibilityChange={setHidden}
+            primaryMeta={extractMeta(londiniumShot33)}
+          />
+        )}
+      </div>
+    );
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const temperatureDash = "5 2 1 2";
+
+    // Temperature starts hidden; showing it is a change the parent now owns.
+    await expect(renderedDashes(canvasElement)).not.toContain(temperatureDash);
+    await userEvent.click(await canvas.findByText("Temperature"));
+    await expect(renderedDashes(canvasElement)).toContain(temperatureDash);
+
+    // Unmount and remount, which is exactly what switching views does.
+    const remount = await canvas.findByRole("button", { name: "Toggle mount" });
+    await userEvent.click(remount);
+    await expect(
+      canvasElement.querySelectorAll(".recharts-line-curve"),
+    ).toHaveLength(0);
+    await userEvent.click(remount);
+
+    // The parent's set survived, so the chart comes back as the user left it.
+    await expect(renderedDashes(canvasElement)).toContain(temperatureDash);
+  },
+};

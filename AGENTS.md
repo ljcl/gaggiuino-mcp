@@ -750,6 +750,100 @@ when it *is* shown the chart's negative right margin has to give way — rechart
 it outboard of the weight axis, and at `-30` its tick labels lay out past the right edge
 of the SVG and get clipped, leaving an axis that reserves width and shows nothing.
 
+### The second view: pressure against flow
+
+`PressureFlowPlot.tsx` plots the shot as a parametric loop — pressure on y, flow on
+x, traced in time order — and `main.tsx`'s `viewMode` toolbar button switches between
+it and the time chart. The time chart shares one x axis across every series, which is
+right and cannot show the relationship these two metrics have with *each other*.
+
+**Named for its two metrics, not as a "phase plot"**, which is the usual term for a
+parametric trace and is unusable here: `phases.ts`, `PhaseRegion`,
+`derivePhaseRegions`, `extractPhaseSummary` and `phases[].events` all already mean a
+*profile* phase, and this view draws none of them.
+
+Six things about it are load-bearing, and the first is why it was cheap enough to
+build at all.
+
+- **It draws no new stroke.** Flow is an *axis* here, so the plot renders `pressure`
+  and `pressureCmp` — the registry's own entries, same colour, same dash. There is
+  nothing new for the Chart accessibility story to measure and no new `--chart-*`
+  token: the contract holds by construction. `PressureFlowPlot.stories.tsx`'s
+  `SingleShot` asserts every rendered (stroke, dash) pair is a `SERIES` entry rather
+  than trusting that, and it was verified to fail on a hardcoded colour.
+- **It is a `Line`, not a `Scatter`.** Recharts' `computeLinePoints` maps the data
+  array in order with no sort, and on a non-category axis x comes from each entry's
+  own `dataKey` value — so a `Line` over `<XAxis type="number" dataKey="pumpFlow" />`
+  is a true parametric trace, backtracking included. `Scatter` would draw the same
+  points, *lose* which of them are consecutive, and cost +12.4 kB raw where the whole
+  feature costs 4.2 kB. Adjacency is not *direction*, though — a loop reads the same
+  traversed either way — so each trace carries a `ReferenceDot` at its start, filled
+  for the primary and hollow for the comparison.
+- **The comparison gets its own hidden `XAxis` with a shared explicit domain.**
+  Recharts takes x from a single axis `dataKey`, so a comparison line left on the
+  primary axis is plotted against the *primary's* flow — pairing a pressure from one
+  shot with a flow from another at every point, and looking entirely plausible while
+  doing it. The second axis fixes that and introduces the opposite hazard, two
+  independently-scaled axes overlaying two incomparable loops, which is what the
+  shared `flowDomain` is for. Its *lower* bound is computed rather than pinned at 0
+  for the same reason: `allowDataOverflow` is false, so recharts widens a user domain
+  to fit the data per axis, and a negative reading on one shot alone would slide the
+  two loops out of registration. The `Comparison` story pins both halves and was
+  verified to fail with the axis removed.
+- **A merge artefact is dropped; a one-sided sample is kept so the path breaks.**
+  These are two different holes and the distinction is the whole rule.
+  `toChartData` mints a bare `{ time }` row wherever only the *other* shot has a
+  sample — 73 of 172 rows on the repo's own comparison fixtures — and those say
+  nothing about this shot. A sample that recorded a pressure but no flow has no
+  horizontal position at all, and **recharts only breaks a path where the point is
+  still in the array with a null coordinate**, so filtering everything incomplete —
+  the tidy-looking version, and what this shipped as first — silently draws the
+  invented chord it was meant to prevent. Both fixtures carry equal-length arrays, so
+  no real capture exercises it; `IncompleteSamples` is the story that does, asserting
+  two subpaths, and it was verified to fail with the predicate flipped back to `&&`.
+- **Both axes are labelled, at every breakpoint.** `ShotGraph` labels none of its
+  four — it does not need to, because its legend names every series. This view has no
+  legend at all, so an unlabelled scale would leave nothing on screen saying the
+  numbers are pressure. The pressure domain is pinned to `ShotGraph`'s own `[0, 12]`
+  rather than left to auto, so toggling views does not rescale the same shot.
+- **`accessibilityLayer` is switched off explicitly, and omitting it would not do
+  it** — recharts 3 defaults the layer *on*, which is also why `ShotGraph`'s explicit
+  flag has never changed anything. The layer's only behaviour is moving a `Tooltip`,
+  and this plot has none, so left on it stamps a focusable `role="application"` on the
+  surface that tells a screen reader to stop intercepting keystrokes and then answers
+  none of them. The container is therefore an `img` — a graphic with no interactive
+  descendants — where `ShotGraph` needs `group` because its legend's toggle buttons
+  live inside the same container. There is no tooltip because the comparison sits on
+  its own x axis, and recharts resolves a tooltip's active point per axis: a shared
+  readout would report one shot's coordinates while the pointer is over the other's
+  curve, which is the cross-pairing the second axis exists to prevent.
+
+`describePressureFlowPlot` in `a11y.ts` is separate from `describeChart` for the same
+reason, and it is the reason worth keeping: almost every sentence `describeChart`
+produces is time-domain ("over N seconds", "at N seconds", phases "from X to Y
+seconds"), so reusing it would narrate a plot with no time axis in terms of one —
+confidently, and wrongly. It says outright that the horizontal position of the
+pressure peak is a flow, and it reads its endpoints from the samples actually *on* the
+plot rather than from everything it was handed — the obvious `?? 0` on that read
+reports an absent coordinate as a measured zero. It deliberately makes **no claim
+about the loop doubling back**, which is the reading a viewer is most likely to draw
+from the shape and would need a threshold this server has not earned.
+
+`buildShotContextSummary` takes a `view` and returns early for the same reason:
+telling the model "series currently plotted: pressure, flow" while flow is the *axis*
+has it answer about a chart nobody is looking at. `viewMode` is in that memo's
+dependency list because `useModelContextSync` drops a summary identical to the last
+one, so a switch that did not change the string would be silently suppressed.
+
+`ShotGraph`'s `hidden` prop is optional and controlled-when-passed. A view switch
+unmounts `ShotGraph`, and while the set lived only inside it that unmount reset it to
+the default while `main.tsx`'s mirror — the copy `updateModelContext` reports — kept
+the user's choices. The legend and the chart always agree with each other, since both
+read the same value; what diverged was **the model's picture of the screen**, with
+nothing rendered or logged to say so. `ControlledVisibility` remounts the chart and
+was verified to fail uncontrolled. Optional so the stories that render `ShotGraph`
+directly are unaffected.
+
 ### The app shell (`packages/ui`)
 
 Host plumbing lives in `packages/ui/src/host/` so a second espresso view (steam

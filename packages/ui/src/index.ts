@@ -42,7 +42,13 @@ export {
   type UseServerToolDataOptions,
   useServerToolData,
 } from "./host/useServerToolData";
-export { CollapseIcon, DownloadIcon, ExpandIcon, RetryIcon } from "./icons";
+export {
+  CollapseIcon,
+  DownloadIcon,
+  ExpandIcon,
+  PressureFlowIcon,
+  RetryIcon,
+} from "./icons";
 export { Legend, LegendItem } from "./Legend";
 export { Skeleton } from "./Skeleton";
 export { ToolbarButton, type ToolbarButtonProps } from "./ToolbarButton";

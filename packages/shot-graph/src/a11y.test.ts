@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeChart } from "./a11y";
+import { describeChart, describePressureFlowPlot } from "./a11y";
 import { type Annotation, type ChartDataPoint, type ShotMeta } from "./types";
 
 const PRIMARY: ShotMeta = {
@@ -176,5 +176,126 @@ describe("describeChart", () => {
     expect(title).toContain("Londinium");
     expect(desc).toContain("32.4 seconds");
     expect(desc).not.toContain("Peak values");
+  });
+});
+
+describe("describePressureFlowPlot", () => {
+  const COMPARISON: ShotMeta = {
+    duration: 30.1,
+    id: "411",
+    profileName: "Zer0",
+    weight: 34.8,
+  };
+
+  it("names both axes so the plot is not mistaken for the time chart", () => {
+    const { desc, title } = describePressureFlowPlot({
+      data: DATA,
+      primary: PRIMARY,
+    });
+    expect(title).toBe("Espresso pressure against flow: Londinium");
+    expect(desc).toContain("group pressure in bar against pump flow");
+  });
+
+  // The whole reason this is not a flag on describeChart: every sentence that
+  // function produces measures the horizontal axis in seconds, and here it is
+  // millilitres per second.
+  it("never places a measurement at a time", () => {
+    const { desc } = describePressureFlowPlot({ data: DATA, primary: PRIMARY });
+    // The one legitimate "seconds" is the shot's own duration in the preamble.
+    // Anything of the form "<value> at <n> seconds" is a coordinate read off a
+    // horizontal axis that measures millilitres per second.
+    expect(desc).not.toMatch(/at [\d.]+ seconds/);
+    expect(desc).not.toContain("Line chart");
+    // Exactly one plural "seconds" survives: the shot's duration. Every other
+    // occurrence is the singular unit "millilitres per second".
+    expect(desc.match(/seconds/g)).toHaveLength(1);
+  });
+
+  it("traces the path's endpoints and its furthest reach", () => {
+    const { desc } = describePressureFlowPlot({ data: DATA, primary: PRIMARY });
+    expect(desc).toContain(
+      "starts at the marked point, 4.4 millilitres per second at 2.1 bar",
+    );
+    expect(desc).toContain("ends at 1.8 millilitres per second at 6.4 bar");
+    expect(desc).toContain("maximum flow is 4.4 millilitres per second");
+  });
+
+  // A peak's horizontal position is the reading a sighted viewer is most likely
+  // to misread as a time, so the description says outright that it is not.
+  it("says the peak's horizontal position is a flow", () => {
+    const { desc } = describePressureFlowPlot({ data: DATA, primary: PRIMARY });
+    expect(desc).toContain("Pressure peaks at 9.1 bar");
+    expect(desc).toContain("not a time");
+  });
+
+  it("names the comparison and how it is drawn", () => {
+    const { desc, title } = describePressureFlowPlot({
+      comparison: COMPARISON,
+      data: DATA,
+      primary: PRIMARY,
+    });
+    expect(title).toContain("compared with Zer0");
+    expect(desc).toContain("A second trace overlays Zer0");
+    expect(desc).toContain("dashed stroke");
+  });
+
+  // Filtering to samples that carry both coordinates can empty the trace, and
+  // an empty frame with a confident narration is worse than saying nothing is
+  // plotted.
+  it("says so when no sample carries both coordinates", () => {
+    const { desc } = describePressureFlowPlot({ data: [], primary: PRIMARY });
+    expect(desc).toContain("No sample carries both");
+    expect(desc).not.toContain("Pressure peaks");
+    expect(desc).not.toContain("The trace runs");
+  });
+});
+
+/**
+ * A sample carrying only one of the two readings has no position on this plot,
+ * so it is not narrated as if it had one. The `?? 0` guard that would otherwise
+ * sit on these reads is the specific hazard: it reports an absent measurement as
+ * a measured zero.
+ */
+describe("describePressureFlowPlot with incomplete samples", () => {
+  const HOLED: ChartDataPoint[] = [
+    { pressure: 2, pumpFlow: 4, shotWeight: 0, time: 0, weightFlow: 0 },
+    { pressure: 9, shotWeight: 4, time: 1, weightFlow: 1 },
+    { pressure: 7, pumpFlow: 1.5, shotWeight: 20, time: 2, weightFlow: 1 },
+  ];
+
+  it("reads its endpoints from the samples actually plotted", () => {
+    const { desc } = describePressureFlowPlot({
+      data: HOLED,
+      primary: PRIMARY,
+    });
+    expect(desc).toContain("4 millilitres per second at 2 bar");
+    expect(desc).toContain("ends at 1.5 millilitres per second at 7 bar");
+    // Never "0 millilitres per second" from a missing reading.
+    expect(desc).not.toContain("0 millilitres per second at");
+  });
+
+  it("takes the peak from a placeable sample, not the highest pressure", () => {
+    // 9 bar is the highest reading in the series and has no flow, so it is not
+    // on the plot at all — narrating it would point at a position that is empty.
+    const { desc } = describePressureFlowPlot({
+      data: HOLED,
+      primary: PRIMARY,
+    });
+    expect(desc).toContain("Pressure peaks at 7 bar");
+    expect(desc).not.toContain("Pressure peaks at 9 bar");
+  });
+
+  it("says how many samples could not be placed", () => {
+    const { desc } = describePressureFlowPlot({
+      data: HOLED,
+      primary: PRIMARY,
+    });
+    expect(desc).toContain("1 sample recorded only one of the two readings");
+    expect(desc).toContain("drawn with a break");
+  });
+
+  it("stays silent about breaks when every sample is placeable", () => {
+    const { desc } = describePressureFlowPlot({ data: DATA, primary: PRIMARY });
+    expect(desc).not.toContain("cannot be placed");
   });
 });

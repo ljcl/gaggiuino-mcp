@@ -118,3 +118,57 @@ describe("buildShotContextSummary", () => {
     expect(summary).not.toContain("Hidden by the user");
   });
 });
+
+/**
+ * The phase-plot branch. Its whole reason for existing is that the timeline's
+ * sentences are wrong here: a model told "series currently plotted: pressure,
+ * flow" while the user is looking at a plot where flow is the *axis* will answer
+ * questions about a chart nobody is looking at.
+ */
+describe("buildShotContextSummary on the pressure-against-flow plot", () => {
+  it("says which view is on screen", () => {
+    const summary = buildShotContextSummary({
+      annotations,
+      hidden: new Set(),
+      primary,
+      view: "pressureFlow",
+    });
+    expect(summary).toContain("pressure-against-flow view");
+    expect(summary).toContain("traced in time order");
+  });
+
+  it("offers no series list, because there is none to offer", () => {
+    const summary = buildShotContextSummary({
+      annotations,
+      hidden: new Set(["temperature"]),
+      primary,
+      view: "pressureFlow",
+    });
+    expect(summary).not.toContain("Series currently plotted");
+    expect(summary).not.toContain("Hidden by the user");
+  });
+
+  it("still reports the shot, and the comparison overlaid on it", () => {
+    const summary = buildShotContextSummary({
+      annotations,
+      comparison,
+      hidden: new Set(),
+      primary,
+      view: "pressureFlow",
+    });
+    expect(summary).toContain("Shot #33 (Londinium)");
+    expect(summary).toContain("Overlaid for comparison");
+  });
+
+  // The default has to stay the timeline: the app opens there, and an omitted
+  // argument must not silently re-describe the screen.
+  it("defaults to the timeline when no view is given", () => {
+    const summary = buildShotContextSummary({
+      annotations,
+      hidden: new Set(),
+      primary,
+    });
+    expect(summary).toContain("Series currently plotted");
+    expect(summary).not.toContain("pressure-against-flow");
+  });
+});

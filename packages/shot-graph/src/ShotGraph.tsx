@@ -54,6 +54,17 @@ interface ShotGraphProps {
    * model what is on screen.
    */
   onVisibilityChange?: (hidden: ReadonlySet<string>) => void;
+  /**
+   * Hidden series, when the parent owns them.
+   *
+   * Optional so every story that renders this component directly keeps working
+   * uncontrolled. It exists because the app can now unmount this chart
+   * — switching to the pressure-vs-flow view — and an unmount would reset the
+   * internal set to the default while the app's own copy, the one that tells the
+   * model what is on screen, still held the user's choices. They would diverge
+   * silently, with no error anywhere.
+   */
+  hidden?: ReadonlySet<string>;
 }
 
 /**
@@ -75,10 +86,12 @@ export function ShotGraph({
   compareLoading,
   mode = "desktop",
   onVisibilityChange,
+  hidden: controlledHidden,
 }: ShotGraphProps) {
-  const [hidden, setHidden] = useState<Set<string>>(
+  const [uncontrolledHidden, setHidden] = useState<Set<string>>(
     () => new Set(DEFAULT_HIDDEN_SERIES),
   );
+  const hidden = controlledHidden ?? uncontrolledHidden;
 
   // Takes a list rather than a single key so the mobile legend, which toggles
   // a metric and its comparison series together, lands both in one update.

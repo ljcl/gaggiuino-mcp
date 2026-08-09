@@ -2,7 +2,7 @@ import { Legend, LegendItem } from "@gaggiuino/ui";
 import { COMPARISON_SERIES, METRICS } from "./constants";
 
 interface ChartLegendProps {
-  hidden: Set<string>;
+  hidden: ReadonlySet<string>;
   /** Toggles every key in one update, so paired series never race each other. */
   onToggle: (keys: readonly string[]) => void;
   hasComparison: boolean;

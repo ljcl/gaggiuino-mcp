@@ -9,6 +9,7 @@ import {
   ErrorState,
   ExpandIcon,
   type LayoutMode,
+  PressureFlowIcon,
   readToolJson,
   type ShellHostContext,
   Skeleton,
@@ -26,6 +27,7 @@ import { DEFAULT_HIDDEN_SERIES } from "./constants";
 import { buildShotContextSummary } from "./contextSummary";
 import { shotCsv, shotCsvFilename } from "./csv";
 import { extractAnnotations, extractMeta, toChartData } from "./normalize";
+import { PressureFlowPlot } from "./PressureFlowPlot";
 import { derivePhaseRegions } from "./phases";
 import { ShotGraph } from "./ShotGraph";
 import { type ShotData } from "./types";
@@ -101,6 +103,9 @@ function AppContent({ app, toolArgs, hostContext, mode }: AppContentProps) {
   const [hiddenSeries, setHiddenSeries] = useState<ReadonlySet<string>>(
     DEFAULT_HIDDEN_SERIES,
   );
+  const [viewMode, setViewMode] = useState<"timeline" | "pressureFlow">(
+    "timeline",
+  );
 
   const { canFullscreen, displayMode, isFullscreen, toggleFullscreen } =
     useDisplayMode(app, hostContext);
@@ -133,9 +138,14 @@ function AppContent({ app, toolArgs, hostContext, mode }: AppContentProps) {
             comparisonAnnotations: view.comparisonAnnotations,
             hidden: hiddenSeries,
             primary: view.primaryMeta,
+            view: viewMode,
           })
         : null,
-    [view, hiddenSeries],
+    // `viewMode` is load-bearing in this list. `useModelContextSync` drops a
+    // summary identical to the last one it sent, so a view switch that did not
+    // change the string would be silently suppressed and the model would keep
+    // describing the chart the user just navigated away from.
+    [view, hiddenSeries, viewMode],
   );
   useModelContextSync(app, contextSummary);
 
@@ -191,10 +201,29 @@ function AppContent({ app, toolArgs, hostContext, mode }: AppContentProps) {
   }, [app, view]);
 
   const canExport = canDownloadFiles(app) && view !== null;
+  const showPressureFlow = viewMode === "pressureFlow";
   const shell = {
+    // `canExport` already implies `view !== null`, so the view toggle and
+    // fullscreen are the only two independent reasons for a toolbar.
     actions:
-      canExport || canFullscreen ? (
+      view !== null || canFullscreen ? (
         <>
+          {view !== null && (
+            <ToolbarButton
+              label={
+                showPressureFlow
+                  ? "Show pressure and flow over time"
+                  : "Show pressure against flow"
+              }
+              mode={mode}
+              onClick={() =>
+                setViewMode(showPressureFlow ? "timeline" : "pressureFlow")
+              }
+              pressed={showPressureFlow}
+            >
+              <PressureFlowIcon />
+            </ToolbarButton>
+          )}
           {canExport && (
             <ToolbarButton
               label="Export CSV"
@@ -271,21 +300,36 @@ function AppContent({ app, toolArgs, hostContext, mode }: AppContentProps) {
           variant="banner"
         />
       )}
-      <ShotGraph
-        annotations={view.annotations}
-        comparisonAnnotations={view.comparisonAnnotations}
-        comparisonMeta={view.comparisonMeta}
-        compareLoading={compareLoading}
-        data={view.chartData}
-        mode={mode}
-        onDismissCompare={comparisonShot ? handleDismissCompare : undefined}
-        onRequestCompare={
-          hostInitiatedCompare ? undefined : handleRequestCompare
-        }
-        onVisibilityChange={setHiddenSeries}
-        phases={view.phases}
-        primaryMeta={view.primaryMeta}
-      />
+      {showPressureFlow ? (
+        <PressureFlowPlot
+          comparisonMeta={view.comparisonMeta}
+          compareLoading={compareLoading}
+          data={view.chartData}
+          mode={mode}
+          onDismissCompare={comparisonShot ? handleDismissCompare : undefined}
+          onRequestCompare={
+            hostInitiatedCompare ? undefined : handleRequestCompare
+          }
+          primaryMeta={view.primaryMeta}
+        />
+      ) : (
+        <ShotGraph
+          annotations={view.annotations}
+          comparisonAnnotations={view.comparisonAnnotations}
+          comparisonMeta={view.comparisonMeta}
+          compareLoading={compareLoading}
+          data={view.chartData}
+          hidden={hiddenSeries}
+          mode={mode}
+          onDismissCompare={comparisonShot ? handleDismissCompare : undefined}
+          onRequestCompare={
+            hostInitiatedCompare ? undefined : handleRequestCompare
+          }
+          onVisibilityChange={setHiddenSeries}
+          phases={view.phases}
+          primaryMeta={view.primaryMeta}
+        />
+      )}
     </AppShell>
   );
 }

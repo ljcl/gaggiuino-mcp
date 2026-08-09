@@ -16,6 +16,9 @@ Measured 2026-07-27 on `packages/shot-graph/dist/app.html` at recharts 3.10.1,
 The weight is dependencies, not build settings — the app already builds
 production React, minified, with tree-shaken named recharts imports.
 
+(That headline is the figure the decision below was made on, and it is no longer
+current — see **Re-measured 2026-08-09**.)
+
 To find out where it goes, three throwaway entry points were bundled in
 isolation (`bun build --minify --define process.env.NODE_ENV="production"`),
 each importing exactly what the app imports:
@@ -42,6 +45,26 @@ Treat the isolated figures as order-of-magnitude: they come from bun's bundler
 rather than the vite/rollup pipeline that builds the real artifact, and
 single-file inlining inflates the raw total further. The ranking is what matters
 and the ranking is stable.
+
+## Re-measured 2026-08-09
+
+| | Raw | Gzip |
+| --- | --- | --- |
+| `app.html`, before the pressure-against-flow view | 984,769 B | 262,059 B |
+| `app.html`, with it | 988,997 B | 263,225 B |
+
+Still recharts 3.10.1, so the ~63 kB the bundle lost since July came from
+dependency patches under it and not from anything decided here. The split above
+is left as measured on the day rather than restated, because it is what the
+decision was made on; what changed is the headline, and the guard's comment now
+carries the new number.
+
+The **+4,228 B raw / +1,166 B gzip** in the second row is the whole cost of
+`PressureFlowPlot.tsx` (#144), which is the argument for it being a `Line` on a
+numeric axis rather than a `Scatter`: `ComposedChart`, `Line`, `XAxis` and
+`YAxis` are already in the bundle, where adding `Scatter` measured +12.4 kB raw
+/ +3.0 kB gzip — three times the entire feature, for a chart type that would
+also have discarded the time ordering the plot exists to show.
 
 ## Decision: keep recharts, hold the budget
 
