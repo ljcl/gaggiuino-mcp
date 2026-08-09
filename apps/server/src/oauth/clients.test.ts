@@ -1,5 +1,5 @@
 import { HttpResponse, http } from "msw";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockServer } from "../test-setup";
 import {
   type ClientMetadata,
@@ -18,11 +18,41 @@ import {
  * anyone's DNS answering a particular way.
  */
 
+/**
+ * DNS answers this file wants to control, keyed by hostname.
+ *
+ * The guard's interesting cases are about *hostnames* rather than IP literals —
+ * an IP literal is its own answer, so a test using one never exercises the
+ * resolve-then-decide path at all. Anything not in this map falls through to
+ * the real resolver, so the existing tests keep depending on `example.com`
+ * resolving and `example.test` not.
+ */
+const { stubbedAddresses } = vi.hoisted(() => ({
+  stubbedAddresses: new Map<string, Array<{ address: string; family: number }>>(
+    [],
+  ),
+}));
+
+vi.mock("node:dns/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:dns/promises")>();
+  return {
+    ...actual,
+    lookup: (hostname: string, options: { all: true }) => {
+      const stubbed = stubbedAddresses.get(hostname);
+      return stubbed
+        ? Promise.resolve(stubbed)
+        : actual.lookup(hostname, options);
+    },
+  };
+});
+
 const CLAUDE_ID = "https://claude.ai/oauth/mcp-oauth-client-metadata";
 const CLAUDE_CODE_ID = "https://claude.ai/oauth/claude-code-client-metadata";
 
 afterEach(() => {
   resetClientCache();
+  stubbedAddresses.clear();
+  vi.restoreAllMocks();
 });
 
 describe("resolveClient", () => {
@@ -196,6 +226,44 @@ describe("resolveClient", () => {
       expect(
         await resolveClient("https://nonexistent.invalid/client"),
       ).toBeUndefined();
+    });
+
+    /**
+     * The assertion that makes the guard a guard.
+     *
+     * Every test above is satisfied just as well by an implementation that
+     * fetches first and throws the result away — `toBeUndefined()` cannot tell
+     * the two apart, and only one of them is a guard. A refactor that moved
+     * `resolvesPublicly` below the `fetch` would keep all of them green while
+     * turning `/oauth/authorize` back into an SSRF probe, so what these two
+     * assert is the **call count**, not the return value.
+     */
+    it("never issues the request when the hostname resolves privately", async () => {
+      stubbedAddresses.set("rebind.example.com", [
+        { address: "192.168.1.1", family: 4 },
+      ]);
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+      expect(
+        await resolveClient("https://rebind.example.com/client"),
+      ).toBeUndefined();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("never issues the request when only one answer is private", async () => {
+      // The case `every` exists for, and the one a `some` would let straight
+      // through: the public answer is deliberately first, so an implementation
+      // that stops at the first acceptable address passes the guard here.
+      stubbedAddresses.set("split.example.com", [
+        { address: "93.184.216.34", family: 4 },
+        { address: "10.0.0.1", family: 4 },
+      ]);
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+      expect(
+        await resolveClient("https://split.example.com/client"),
+      ).toBeUndefined();
+      expect(fetchSpy).not.toHaveBeenCalled();
     });
   });
 

@@ -107,6 +107,35 @@ export function isPubliclyRoutable(address: string, family: number): boolean {
   return family === 6 ? !ipv6IsPrivate(address) : !ipv4IsPrivate(address);
 }
 
+/**
+ * Resolve the hostname and decide **before** anything is fetched.
+ *
+ * The ordering is the security property, not a detail: a version that fetched
+ * first and discarded the result would satisfy every "returns undefined"
+ * assertion in `clients.test.ts` while leaving `/oauth/authorize` an SSRF
+ * probe. Two tests there assert the *call count* on `fetch` for that reason.
+ *
+ * ## Accepted residue: DNS rebinding (recorded 2026-08-09)
+ *
+ * This resolves the hostname and then `fetch` resolves it again, independently.
+ * A record with a short TTL can answer public here and private there, and
+ * nothing below closes that window. Recorded rather than fixed, and it should
+ * **stay** recorded — three things make it a poor trade here:
+ *
+ * - the fetch is **https-only** (`resolveClient` refuses any other scheme),
+ *   which already excludes the LAN targets that motivate the threat: a router
+ *   admin page on plain http is unreachable, and one on https with a
+ *   self-signed certificate fails verification;
+ * - the response is never echoed to the caller, so this is blind-only;
+ * - the deployment is single-user.
+ *
+ * Closing it properly means a custom undici dispatcher pinning the connection
+ * to the address already resolved while preserving SNI and certificate
+ * validation. **That is explicitly out of scope** — this note exists so a
+ * future reader treats the residue as a decision rather than an open action.
+ * The second implementation this server's errata draws on has the identical
+ * gap, so it is not a shortfall relative to the state of the art either.
+ */
 async function resolvesPublicly(hostname: string): Promise<boolean> {
   let addresses: Array<{ address: string; family: number }>;
   try {
