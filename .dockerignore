@@ -28,6 +28,21 @@ story-shots/
 # User local overrides — never bake personal config into the image
 *.local.yaml
 
+# Test scaffolding. The runner COPYs all of apps/server/src, so without these
+# every test file, every fixture and the msw setup shipped in the published
+# image — none of it reachable at runtime (msw is a devDependency the runner
+# never installs), all of it read as part of the server by anyone opening the
+# image. The fake machine's payloads live in __fixtures__ and are excluded by
+# the same rule; its executable is at repo-root scripts/, which the build
+# context never contained.
+#
+# Safe to exclude from the *build* stage too: nothing in the app bundle's import
+# graph reaches a fixture — packages/shot-graph/src/phases.ts mentions
+# chart-data.ts only in a comment — and `turbo build` runs no tests.
+**/*.test.ts
+**/__fixtures__/
+apps/server/src/test-setup.ts
+
 # Docs
 docs/
 *.md

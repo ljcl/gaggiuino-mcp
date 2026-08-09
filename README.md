@@ -491,6 +491,48 @@ The `main` branch Storybook is published to GitHub Pages at
 [ljcl.github.io/gaggiuino-mcp](https://ljcl.github.io/gaggiuino-mcp/) — a static build for
 browsing the shot-graph and UI components without running anything locally.
 
+### Running without a machine
+
+The espresso machine is switched off most of the day, and you may not be on its
+network at all. `bun run fake-machine` serves recorded `/api/*` payloads so the
+server has something to talk to:
+
+```bash
+bun run fake-machine                  # port 8080; --port N to change it
+
+# in another shell
+GAGGIUINO_URL=http://localhost:8080 bun run dev
+```
+
+That gives you a working server: `get_status`, `list_profiles`,
+`get_profile_info`, `get_maintenance_status`, and two real ~190-sample shot
+captures for `get_shot_data` and `view_shot_graph`. `/health` reports
+`machine.state: "ok"` once a tool has made a request, and fills in
+`machine.versions` after anything reads the settings.
+
+The payloads are recorded rather than invented — the status response is a
+verbatim capture off real hardware, the settings and profile definitions come
+from the vendored reference, and the shots are real captures. A test drives the
+**real client** over the same route table, so a payload the client would reject
+fails CI rather than quietly teaching the fake a wire format the firmware does
+not use.
+
+**What it is not.** It does not replace hardware verification, and a few things
+are out of reach by construction:
+
+- **Writes are refused with a 501.** It holds no state, so acknowledging a
+  `select_profile` would be contradicted by the very next `list_profiles`.
+- It cannot reproduce anything genuinely firmware-shaped: the 503 an ESP32
+  returns while writing a shot to flash, its one-request-at-a-time
+  serialisation, the WebSocket-only profile update path, or the type
+  inconsistencies of a firmware revision nobody has captured yet.
+- Shot ids are offset into a `900000000+` range so a fixture shot can never be
+  mistaken for one of yours.
+
+It never ships: the executable is at repo-root `scripts/`, which is not part of
+the Docker build context, and its payloads are excluded from the image along
+with the rest of the test scaffolding.
+
 ### Docker
 
 `docker-compose.yml` pulls the published image. To build and run the image from your
