@@ -67,3 +67,19 @@ export function RetryIcon(props: IconProps) {
     </Svg>
   );
 }
+
+/**
+ * A single arc rising and falling between a pair of axes.
+ *
+ * The glyph is deliberately *not* a miniature of the plot it opens: at 16px a
+ * parametric loop is an ambiguous scribble, and the chart-with-a-curve shape is
+ * what reads as "another way of drawing this shot" at that size.
+ */
+export function PressureFlowIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M2 14V2M2 14h12" />
+      <path d="M3.5 12c1.5-6 4-8 6-6.5S12 11 13 12" />
+    </Svg>
+  );
+}

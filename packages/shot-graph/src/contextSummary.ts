@@ -8,6 +8,12 @@ export interface ShotContextInput {
   comparisonAnnotations?: readonly Annotation[];
   /** Series keys the user has toggled off in the legend. */
   hidden: ReadonlySet<string>;
+  /**
+   * Which view is on screen. Without it the model is told "series currently
+   * plotted: pressure, flow…" while the user is looking at a plot where flow is
+   * an *axis* — so it answers questions about a chart that is not there.
+   */
+  view?: "timeline" | "pressureFlow";
 }
 
 function findMetric(
@@ -46,9 +52,12 @@ export function buildShotContextSummary({
   comparison,
   comparisonAnnotations = [],
   hidden,
+  view = "timeline",
 }: ShotContextInput): string {
   const lines = [
-    "The user is looking at an interactive espresso shot graph in this conversation.",
+    view === "pressureFlow"
+      ? "The user is looking at an interactive espresso shot graph in this conversation, switched to its pressure-against-flow view."
+      : "The user is looking at an interactive espresso shot graph in this conversation.",
     "",
     describeShot(primary, annotations),
   ];
@@ -57,6 +66,20 @@ export function buildShotContextSummary({
     lines.push(
       `Overlaid for comparison — ${describeShot(comparison, comparisonAnnotations)}`,
     );
+  }
+
+  if (view === "pressureFlow") {
+    // No series list, because on this view there is no series list to give: one
+    // trace, and the other metric is the x axis. Saying "plotted: pressure,
+    // flow" here would be the same sentence as the timeline's and describe a
+    // different picture.
+    lines.push(
+      "",
+      "It plots group pressure against pump flow, traced in time order, so the " +
+        "shot reads as a loop rather than as lines against time. The legend and " +
+        "the other metrics are not on this view.",
+    );
+    return lines.join("\n");
   }
 
   const visible = METRICS.filter(({ key }) => !hidden.has(key));

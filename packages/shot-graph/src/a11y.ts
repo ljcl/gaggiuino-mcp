@@ -139,3 +139,101 @@ function describeDelta(delta: number, unit: string): string {
   if (Math.abs(delta) < 0.05) return `the same ${unit}`;
   return `${round(Math.abs(delta))} ${unit} ${delta > 0 ? "more" : "less"}`;
 }
+
+/**
+ * The pressure-against-flow plot's accessible name and description.
+ *
+ * Separate from `describeChart` rather than a flag on it, because almost every
+ * sentence that function produces is time-domain — "over N seconds", "at N
+ * seconds", phases "from X to Y seconds". Reusing it here would narrate a plot
+ * that has no time axis in terms of one, confidently and wrongly, and the shared
+ * parts (a peak, a weight) are two lines rather than a saving.
+ *
+ * What a sighted viewer takes from this plot is the *shape of the path*, so that
+ * is what this describes: where it starts, where it ends, how far right it
+ * reaches, and where pressure peaks along the way. It reports the path and stops
+ * there; naming a cause is the reader's job, and a wrong one is worse than none.
+ *
+ * Deliberately **not** a claim about the loop doubling back. That is the reading
+ * a sighted viewer is most likely to draw from the shape, and it is not one this
+ * function measures — a "the trace doubles back" sentence would need a threshold
+ * on what counts, which is the kind of unearned judgement `events.ts` exists to
+ * keep out of this codebase.
+ */
+export function describePressureFlowPlot({
+  comparison,
+  data,
+  primary,
+}: {
+  primary: ShotMeta;
+  comparison?: ShotMeta;
+  data: ChartDataPoint[];
+}): ChartDescription {
+  const title = comparison
+    ? `Espresso pressure against flow: ${primary.profileName} compared with ${comparison.profileName}`
+    : `Espresso pressure against flow: ${primary.profileName}`;
+
+  const sentences: string[] = [
+    "Parametric plot of group pressure in bar against pump flow in millilitres " +
+      `per second, traced in time order over a ${primary.profileName} shot ` +
+      `yielding ${round(primary.weight)} grams in ${round(primary.duration)} seconds.`,
+  ];
+
+  /*
+   * Narrated from the samples that are actually *on* the plot, which is not the
+   * same set the caller passes: a sample carrying a pressure but no flow has no
+   * horizontal position, so it breaks the drawn path rather than appearing on
+   * it. Reading endpoints straight off `data` would report a coordinate the
+   * picture does not contain — or, with the obvious `?? 0` guard, invent a
+   * reading of zero and present it as measured.
+   */
+  const plotted = data.flatMap((point) =>
+    typeof point.pressure === "number" && typeof point.pumpFlow === "number"
+      ? [{ flow: point.pumpFlow, pressure: point.pressure }]
+      : [],
+  );
+
+  const [first] = plotted;
+  const last = plotted.at(-1);
+  if (!first || !last) {
+    sentences.push("No sample carries both a pressure and a flow reading.");
+    return { desc: sentences.join(" "), title };
+  }
+
+  const maxFlow = Math.max(...plotted.map((point) => point.flow));
+  const peak = plotted.reduce((best, point) =>
+    point.pressure > best.pressure ? point : best,
+  );
+
+  sentences.push(
+    `The trace starts at the marked point, ${round(first.flow)} millilitres per ` +
+      `second at ${round(first.pressure)} bar, and ends at ${round(last.flow)} ` +
+      `millilitres per second at ${round(last.pressure)} bar. Its maximum flow ` +
+      `is ${round(maxFlow)} millilitres per second.`,
+  );
+
+  sentences.push(
+    `Pressure peaks at ${round(peak.pressure)} bar. ` +
+      "On this plot the horizontal position of that peak is the flow the pump " +
+      `was delivering when it happened — ${round(peak.flow)} millilitres per ` +
+      "second — not a time.",
+  );
+
+  if (plotted.length < data.length) {
+    const missing = data.length - plotted.length;
+    sentences.push(
+      `${missing} sample${missing === 1 ? "" : "s"} recorded only one of the two ` +
+        "readings and cannot be placed, so the trace is drawn with a break there.",
+    );
+  }
+
+  if (comparison) {
+    sentences.push(
+      `A second trace overlays ${comparison.profileName} ` +
+        `(${round(comparison.weight)} grams in ${round(comparison.duration)} seconds) ` +
+        "in the same colour with a dashed stroke and a hollow start marker.",
+    );
+  }
+
+  return { desc: sentences.join(" "), title };
+}

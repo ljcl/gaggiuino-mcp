@@ -39,9 +39,19 @@ interface Budget {
 const BUDGETS: Budget[] = [
   {
     path: "packages/shot-graph/dist/app.html",
-    // 1,047,652 B raw / 279,233 B gzip measured 2026-07-27 (recharts 3.10.1).
-    maxBytes: 1_150_000,
-    maxGzipBytes: 310_000,
+    // 988,997 B raw / 263,225 B gzip re-measured 2026-08-09, still recharts
+    // 3.10.1 — the bundle got ~59 kB *lighter* than the 2026-07-27 figure this
+    // comment used to carry, from dependency patches rather than from anything
+    // here. Left uncorrected it claimed 8.9% headroom against the old ceiling
+    // where there was really 14.0% — and a budget is reasoned about in exactly
+    // that number, so a stale one is worse than none.
+    //
+    // Re-centred on that measurement rather than left where it was. A ceiling
+    // that stays put while the bundle shrinks is not a stricter gate, it is a
+    // looser one: at the old numbers a 161 kB regression would have passed
+    // silently.
+    maxBytes: 1_090_000,
+    maxGzipBytes: 290_000,
   },
 ];
 

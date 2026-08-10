@@ -220,6 +220,27 @@ export const SERIES_BY_KEY: ReadonlyMap<string, SeriesConfig> = new Map(
   SERIES.map((s) => [s.dataKey as string, s]),
 );
 
+/**
+ * The registry entry for a key the caller already knows is registered.
+ *
+ * `SERIES_BY_KEY.get` is the right shape for a recharts tooltip payload, whose
+ * `dataKey` is whatever the chart happened to put there. It is the wrong shape
+ * for a view that decided at author time which strokes it draws: that caller
+ * has to handle an `undefined` it cannot produce, and the tidy way to do so —
+ * `?? PRIMARY_SERIES[0]` — resolves a *different* metric's colour and dash, so
+ * a mistyped key would ship as a plausible-looking chart in the wrong colour
+ * rather than as a failure.
+ *
+ * Throwing keeps that loud. It is not a branch nobody can reach: a series
+ * renamed in `METRICS` without its call sites updated lands here, which is
+ * exactly when the silent fallback would be worst.
+ */
+export function requireSeries(key: string): SeriesConfig {
+  const series = SERIES_BY_KEY.get(key);
+  if (!series) throw new Error(`No chart series is registered for "${key}"`);
+  return series;
+}
+
 export function formatTime(seconds: number): string {
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
