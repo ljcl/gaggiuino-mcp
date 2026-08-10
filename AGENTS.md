@@ -1743,6 +1743,29 @@ Things worth not re-breaking:
   which is **bounded detection and not revocation**: a restart forgets it. A
   deliberate weakening for a single-user server, named in the code so it is not
   quietly undone.
+
+  **The counter is monotonic per client, and every grant advances it.** The
+  authorization code path used to mint a hardcoded generation 1 while leaving the
+  counter where rotation had pushed it, so re-authorizing a connector that had
+  already refreshed handed back a token *below* the high-water mark. It
+  authenticated fine for one access-token lifetime and then died on its first
+  refresh as `oauth.refresh_replayed` — this server refusing, as stolen, the
+  credential it had itself issued a hour earlier. Re-consenting produced
+  generation 1 again, so the loop was stable and looked like a client bug; only a
+  restart, which empties the map, appeared to fix it. `claimGeneration` is now the
+  one place a generation is minted and both grants go through it. The consequence
+  worth stating is that a second authorization for the same `client_id`
+  supersedes the first, which is what reconnecting should mean.
+- **Every refusal from `/oauth/token` is logged**, not only the two successes.
+  A silent denial is indistinguishable in the log from an exchange that never
+  happened, and those are opposite diagnoses: `oauth.authorized` followed by
+  nothing means either the code was presented and refused (this server) or the
+  client never came back for the token (not this server). `oauthError` writes
+  `oauth.token_denied` with the grant, the client, and the same description the
+  caller is given, so nothing that leaks is logged that was not already sent.
+  `oauth.refresh_replayed` stays alongside it rather than folding into it — the
+  `generation`/`seen` pair is what makes a replay attributable, and the gap
+  between those two numbers is what exposed the grant bug above.
 - **Every signed thing is domain-separated by HKDF `info`**, so a refresh token
   can never be replayed as an access token and a consent token can never be
   redeemed as either, even though one secret mints all three. `signToken` and

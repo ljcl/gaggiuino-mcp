@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createFetchHandler, type FetchHandler } from "../http";
+import { setLogLevel } from "../logging";
 import { type SecurityConfig } from "../mcpAuth";
 import {
   delegatedConfig,
@@ -662,6 +663,42 @@ describe("/oauth/token", () => {
     });
   });
 
+  it("records a refused exchange, which only success used to log", async () => {
+    // The gap this closes: a connector that consents and then never connects
+    // leaves `oauth.authorized` with nothing after it, and the log could not
+    // say whether the code was presented and refused or never presented at
+    // all. Those are opposite diagnoses — one is this server, one is not.
+    // Captures the real sink so the default `console.error` path stays in the
+    // loop, as the tool-call logging tests do.
+    const records: Array<Record<string, unknown>> = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((line) => {
+      records.push(JSON.parse(String(line)));
+    });
+    setLogLevel("warn");
+    try {
+      const code = await grantCode(pkce().challenge);
+      await handler.fetch(
+        tokenPost({
+          client_id: CLIENT_ID,
+          code,
+          code_verifier: pkce().verifier,
+          grant_type: "authorization_code",
+        }),
+      );
+    } finally {
+      spy.mockRestore();
+      setLogLevel("silent");
+    }
+    expect(
+      records.find((entry) => entry.event === "oauth.token_denied"),
+    ).toMatchObject({
+      clientId: CLIENT_ID,
+      error: "invalid_grant",
+      grant: "authorization_code",
+      reason: "The PKCE verifier does not match",
+    });
+  });
+
   it("spends a code exactly once", async () => {
     const { challenge, verifier } = pkce();
     const code = await grantCode(challenge);
@@ -832,6 +869,32 @@ describe("refresh", () => {
       }),
     );
     expect(other.status).toBe(200);
+  });
+
+  it("keeps a re-authorized connector working across its first refresh", async () => {
+    // The failure this is named after: re-connecting a connector that had
+    // already rotated left a token that worked for exactly one access-token
+    // lifetime, then died on the first refresh with `oauth.refresh_replayed`.
+    // A fresh authorization has to outrank every generation issued before it.
+    const first = await firstTokens();
+    const rotated = await handler.fetch(
+      tokenPost({
+        client_id: CLIENT_ID,
+        grant_type: "refresh_token",
+        refresh_token: first.refresh_token ?? "",
+      }),
+    );
+    expect(rotated.status).toBe(200);
+
+    const reauthorized = await firstTokens();
+    const refreshed = await handler.fetch(
+      tokenPost({
+        client_id: CLIENT_ID,
+        grant_type: "refresh_token",
+        refresh_token: reauthorized.refresh_token ?? "",
+      }),
+    );
+    expect(refreshed.status).toBe(200);
   });
 
   it("refuses an access token presented as a refresh token", async () => {

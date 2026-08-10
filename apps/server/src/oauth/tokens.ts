@@ -63,8 +63,13 @@ export interface AccessTokenClaims {
    * Rotation is required of a public client, and this is what makes it
    * detectable rather than merely performed: a refresh token carries the
    * generation it was minted at, and the token endpoint keeps the highest one
-   * it has seen per client in memory. A refresh token presented below that has
-   * already been superseded, which means it was replayed.
+   * it has issued per client in memory. A refresh token presented below that
+   * has already been superseded, which means it was replayed.
+   *
+   * **Issued, not merely seen** — `claimGeneration` in `token.ts` advances the
+   * counter for *both* grants. A fresh authorization that left it alone would
+   * mint a token below the mark and refuse it on its first refresh, blaming a
+   * replay for a credential this server had just issued.
    *
    * That memory is lost on restart, so this is **bounded replay detection and
    * not revocation** — a deliberate weakening for a single-user server that
