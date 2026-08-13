@@ -12,6 +12,7 @@ import {
   TEST_RESOURCE,
 } from "./__fixtures__";
 import { type ClientMetadata } from "./clients";
+import { signToken } from "./tokens";
 
 /**
  * The whole authorization flow, driven through the real fetch handler.
@@ -157,9 +158,12 @@ function tokenPost(body: Record<string, string>): Request {
 }
 
 /** Run consent to completion and return the authorization code. */
-async function grantCode(challenge: string): Promise<string> {
+async function grantCode(
+  challenge: string,
+  overrides: Record<string, string> = {},
+): Promise<string> {
   const page = await handler.fetch(
-    new Request(authorizeUrl(authorizeParams(challenge))),
+    new Request(authorizeUrl({ ...authorizeParams(challenge), ...overrides })),
   );
   const token = requestTokenFrom(await page.text());
   const redirect = await handler.fetch(consentPost(token, TEST_PASSPHRASE));
@@ -781,18 +785,39 @@ describe("/oauth/token", () => {
 });
 
 describe("refresh", () => {
-  async function firstTokens(): Promise<Record<string, string>> {
+  /** A complete authorization, for whichever client the test needs one from. */
+  async function firstTokens(
+    client: ClientMetadata = CLAUDE,
+    redirectUri: string = REDIRECT_URI,
+  ): Promise<Record<string, string>> {
     const { challenge, verifier } = pkce();
-    const code = await grantCode(challenge);
+    const code = await grantCode(challenge, {
+      client_id: client.clientId,
+      redirect_uri: redirectUri,
+    });
     const response = await handler.fetch(
       tokenPost({
-        client_id: CLIENT_ID,
+        client_id: client.clientId,
         code,
         code_verifier: verifier,
         grant_type: "authorization_code",
       }),
     );
     return (await response.json()) as Record<string, string>;
+  }
+
+  /** Present a refresh token, optionally claiming to be somebody else. */
+  function refresh(
+    refreshToken: string,
+    clientId: string | undefined = CLIENT_ID,
+  ): Promise<Response> {
+    return handler.fetch(
+      tokenPost({
+        ...(clientId === undefined ? {} : { client_id: clientId }),
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+      }),
+    );
   }
 
   it("rotates the refresh token in the same response", async () => {
@@ -849,26 +874,75 @@ describe("refresh", () => {
   it("keeps each client's rotation independent", async () => {
     // The generation counter is keyed by client. Sharing one counter would let
     // a second client's refresh invalidate the first client's token.
-    const first = await firstTokens();
-    const rotated = await handler.fetch(
-      tokenPost({
-        client_id: CLIENT_ID,
-        grant_type: "refresh_token",
-        refresh_token: first.refresh_token ?? "",
-      }),
+    //
+    // Two genuine authorizations, which is the only way to state that. This
+    // used to hand *one* client's token to the token endpoint twice under two
+    // different `client_id` values and assert both were accepted — which is not
+    // independence, it is the bypass #163 was about, asserted as a feature.
+    const claude = await firstTokens();
+    const codeClient = await firstTokens(
+      LOOPBACK,
+      "http://localhost:61234/callback",
     );
-    expect(rotated.status).toBe(200);
 
-    const other = await handler.fetch(
-      tokenPost({
-        client_id: LOOPBACK.clientId,
-        grant_type: "refresh_token",
-        refresh_token:
-          ((await rotated.json()) as Record<string, string>).refresh_token ??
-          "",
-      }),
+    expect((await refresh(claude.refresh_token ?? "")).status).toBe(200);
+    const other = await refresh(
+      codeClient.refresh_token ?? "",
+      LOOPBACK.clientId,
     );
     expect(other.status).toBe(200);
+  });
+
+  it("refuses a refresh token presented under another client's id", async () => {
+    // The bypass itself (#163). Replay detection used to key on this form
+    // field, so a thief holding a stolen token could name any client, land on a
+    // fresh counter, and rotate undetected while the real client carried on.
+    const first = await firstTokens();
+    const response = await refresh(
+      first.refresh_token ?? "",
+      LOOPBACK.clientId,
+    );
+    expect(response.status).toBe(400);
+    expect((await response.json()) as { error: string }).toMatchObject({
+      error: "invalid_grant",
+    });
+  });
+
+  it("accepts a refresh that omits client_id, since the token carries it", async () => {
+    // Present-but-wrong is a refusal; absent is fine. Requiring the field would
+    // break a client that reasonably leaves out what its token already states.
+    const first = await firstTokens();
+    expect((await refresh(first.refresh_token ?? "", undefined)).status).toBe(
+      200,
+    );
+  });
+
+  it("refuses a refresh token minted before the client was sealed into it", async () => {
+    // The deliberate cost of #163: tokens issued by an earlier build carry no
+    // `cid`, and falling back to the form field for them would leave the bypass
+    // open for their whole ninety-day life — and let an attacker choose that
+    // path by presenting an old token. `invalid_grant` is what Claude re-runs
+    // the authorization flow on, so this is one consent prompt, once.
+    const seconds = Math.floor(Date.now() / 1000);
+    const legacy = signToken(
+      {
+        aud: TEST_RESOURCE,
+        exp: seconds + 3600,
+        gen: 1,
+        iat: seconds,
+        iss: TEST_ISSUER,
+        jti: "legacy",
+        scope: "espresso:read espresso:write",
+        sub: "owner",
+      },
+      TEST_OAUTH_CONFIG.secret,
+      "refresh-token",
+    );
+    const response = await refresh(legacy);
+    expect(response.status).toBe(400);
+    expect(
+      (await response.json()) as { error: string; error_description: string },
+    ).toMatchObject({ error: "invalid_grant" });
   });
 
   it("keeps a re-authorized connector working across its first refresh", async () => {

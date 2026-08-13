@@ -56,6 +56,20 @@ export type BearerTokenKind = Exclude<TokenKind, "consent">;
 export interface AccessTokenClaims {
   /** RFC 8707 resource indicator: the MCP endpoint this token is good for. */
   aud: string;
+  /**
+   * The client this grant belongs to, absent on access tokens.
+   *
+   * It is what `gen` is counted against, and it is a *claim* rather than the
+   * `client_id` form field for one reason: the field is caller-supplied and
+   * never verified, so keying rotation on it let anyone holding a stolen
+   * refresh token opt out of replay detection by sending a different string —
+   * landing on a fresh counter and rotating undetected while the real client
+   * carried on in its own lane (#163).
+   *
+   * Optional on the interface because access tokens do not carry it, **not**
+   * because a refresh token may omit it: `handleRefresh` refuses one that does.
+   */
+  cid?: string;
   exp: number;
   /**
    * Refresh-token generation, absent on access tokens.

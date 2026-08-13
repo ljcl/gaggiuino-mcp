@@ -1756,6 +1756,32 @@ Things worth not re-breaking:
   one place a generation is minted and both grants go through it. The consequence
   worth stating is that a second authorization for the same `client_id`
   supersedes the first, which is what reconnecting should mean.
+
+  **The client is a claim (`cid`), never the `client_id` form field.** The field
+  is caller-supplied and nothing verifies it, so keying the counter on it let
+  anyone holding a stolen refresh token opt out of detection entirely: name a
+  different client, land on a fresh counter, rotate undetected while the real
+  client carried on in its own lane and nothing anywhere logged a thing (#163).
+  A precondition of a leaked token, so not urgent — but replay detection is the
+  *only* signal that would tell the owner a token had leaked, and being
+  side-stepped by exactly that attacker is a weaker claim than the documented
+  "bounded detection, not revocation", which is a statement about restarts.
+  `issue` seals the client into the refresh token and `handleRefresh` reads it
+  from there; the form field is now a cross-check, refused when it is present
+  and disagrees, accepted when absent because the token already answers it —
+  the same present-but-wrong rule the code grant applies to `redirect_uri`.
+
+  A refresh token carrying no `cid` is **refused**, not fallen back on. The
+  fallback would leave the bypass open for the token's whole ninety-day life
+  and, worse, let an attacker select that path by presenting an old token. The
+  cost is one consent prompt at the deploy that ships it, because
+  `invalid_grant` is what Claude re-runs the authorization flow on.
+
+  `flow.test.ts`'s "keeps each client's rotation independent" is worth reading
+  as a cautionary tale rather than a test: it asserted the stated property using
+  **one** client's token presented twice under two different `client_id` values,
+  so what it actually pinned was the bypass, as a feature. It now runs two
+  genuine authorizations, which is the only way to state independence at all.
 - **Every refusal from `/oauth/token` is logged**, not only the two successes.
   A silent denial is indistinguishable in the log from an exchange that never
   happened, and those are opposite diagnoses: `oauth.authorized` followed by

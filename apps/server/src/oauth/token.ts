@@ -112,14 +112,35 @@ function claimGeneration(
   return next;
 }
 
-function issue(
-  config: AuthServerConfig,
-  audience: string,
-  scopes: string[],
-  subject: string,
-  nowMs: number,
-  generation: number,
-): Response {
+/**
+ * Everything a token pair is minted from.
+ *
+ * An object rather than the seven positional parameters this grew to: four of
+ * them are strings, `audience`, `subject` and `clientId` sit next to each other,
+ * and a transposition between them type-checks. That is the same class of
+ * mistake as the hardcoded generation this endpoint shipped before — a value
+ * that looks right at the call site and is wrong in the token.
+ */
+interface IssueOptions {
+  audience: string;
+  /** The client this grant belongs to, sealed into the refresh token. */
+  clientId: string;
+  config: AuthServerConfig;
+  generation: number;
+  nowMs: number;
+  scopes: string[];
+  subject: string;
+}
+
+function issue({
+  audience,
+  clientId,
+  config,
+  generation,
+  nowMs,
+  scopes,
+  subject,
+}: IssueOptions): Response {
   const seconds = Math.floor(nowMs / 1000);
   const base = {
     aud: audience,
@@ -136,6 +157,10 @@ function issue(
   const refreshToken = signToken(
     {
       ...base,
+      // Only the refresh token carries the client, for the same reason only it
+      // carries `gen`: both exist for rotation, and the access token is checked
+      // by `authenticate`, which has no business with either.
+      cid: clientId,
       exp: seconds + REFRESH_TOKEN_TTL_SECONDS,
       gen: generation,
       jti: randomUUID(),
@@ -231,14 +256,15 @@ function handleAuthorizationCode(
   }
 
   logger.info("oauth.token_issued", { clientId, grant });
-  return issue(
-    deps.config,
-    audienceFor(deps.config, redeemed.resource),
-    redeemed.scopes,
-    "owner",
+  return issue({
+    audience: audienceFor(deps.config, redeemed.resource),
+    clientId,
+    config: deps.config,
+    generation: claimGeneration(deps, clientId),
     nowMs,
-    claimGeneration(deps, clientId),
-  );
+    scopes: redeemed.scopes,
+    subject: "owner",
+  });
 }
 
 function handleRefresh(
@@ -259,16 +285,46 @@ function handleRefresh(
     },
     "refresh-token",
   );
-  const clientId = form.get("client_id") ?? "";
+  const presentedClient = form.get("client_id");
   const grant = "refresh_token";
   if (!verdict.ok) {
     return oauthError("invalid_grant", "The refresh token is not valid", {
-      clientId,
+      clientId: presentedClient,
       grant,
     });
   }
 
   const claims: AccessTokenClaims = verdict.claims;
+  // The client is read from the token, never from the form. Everything below
+  // this line — the counter it is keyed by, the client the next token is sealed
+  // to — depends on the value being one this server signed.
+  const clientId = claims.cid;
+  if (!clientId) {
+    // A refresh token minted before `cid` existed. Refused rather than falling
+    // back to the form field, which would leave the bypass open for the token's
+    // whole ninety-day life and let an attacker choose that path by presenting
+    // an old token. `invalid_grant` is what Claude re-runs the authorization
+    // flow on, so the cost is one consent prompt, once, at the deploy that
+    // ships this.
+    return oauthError(
+      "invalid_grant",
+      "This refresh token predates a required change and can no longer be renewed; reconnect the connector to obtain a new one",
+      { clientId: presentedClient, grant },
+    );
+  }
+  // Present-but-wrong is a refusal; absent is fine. The same rule the code
+  // grant applies to `redirect_uri`, and for the same reason: the token already
+  // establishes the client, so the field is a cross-check rather than the
+  // answer, and requiring it would break a client that reasonably omits what
+  // its token already says.
+  if (presentedClient !== null && presentedClient !== clientId) {
+    return oauthError(
+      "invalid_grant",
+      "The refresh token was issued to a different client",
+      { clientId: presentedClient, grant },
+    );
+  }
+
   const seen = deps.generations.get(clientId) ?? 0;
   const generation = claims.gen ?? 0;
 
@@ -291,14 +347,17 @@ function handleRefresh(
   logger.info("oauth.token_issued", { clientId, grant });
   // The new refresh token is returned in the same response that supersedes the
   // old one, which is what rotation means for a public client.
-  return issue(
-    deps.config,
-    claims.aud,
-    claims.scope.split(" ").filter(Boolean),
-    claims.sub,
+  return issue({
+    audience: claims.aud,
+    // Carried forward from the token, so a grant's client is fixed at the
+    // authorization that created it and no rotation can move it.
+    clientId,
+    config: deps.config,
+    generation: claimGeneration(deps, clientId, generation),
     nowMs,
-    claimGeneration(deps, clientId, generation),
-  );
+    scopes: claims.scope.split(" ").filter(Boolean),
+    subject: claims.sub,
+  });
 }
 
 export async function handleToken(
