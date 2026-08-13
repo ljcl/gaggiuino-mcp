@@ -152,6 +152,8 @@ const ADJUSTMENT_POLICY = [
   "",
   "**A shot that collapsed carries no grind signal.** When `get_shot_data` lists, under one of the phases, an event whose text begins \"pressure fell\", the puck gave way instead of resisting, so that shot's time says nothing about the grind. Do not read a direction from it, and do not let it seed or halve the step — treat it as a round that did not happen, fix the cause (puck prep, distribution, basket, dose) and re-pull. The reverse does not hold: no event is not proof the puck held. It means either that nothing crossed the detector's threshold, or that the shot's profile named no phases at all — in which case the breakdown says so and no event could be reported either way.",
   "",
+  '**A shot the sensors misreported carries no signal either.** The guidance\'s "When Not to Trust the Data" section says how to recognise one — peak pressure far out of family with other shots on the same profile while the scale describes a normal extraction is the signature. Treat it as a round that did not happen: no direction, no step, and what needs fixing before the next pull is the sensor path, not the puck or the grind.',
+  "",
   "Brew ratio and extraction yield are outcome checks, not direction signals: pick the direction from extraction time, then confirm the ratio landed where the profile intended. If I give you a refractometer reading, extraction yield is (yield in grams x TDS%) / dose in grams, and the SCA Golden Cup band is 18-22%. The machine cannot measure TDS, so ask me for it rather than estimating it.",
 ];
 

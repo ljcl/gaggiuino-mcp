@@ -173,6 +173,30 @@ espresso_shot_analyst:
     | Watery/weak | Under-dosed, ratio too long, grind too coarse | Increase dose, tighter ratio, finer grind |
     | Puck falls apart late in shot | Light roast on wrong profile, grind too coarse | Switch to flow profile, try Adaptive or Extractamundo |
 
+    ## When Not to Trust the Data
+
+    Every diagnosis above assumes the numbers describe the coffee. Sensors fail, and a shot recorded through a faulty one looks structurally normal — plausible duration, yield, and phases — so the first question about a strange shot is whether the instrument or the extraction is strange. Know which numbers are measured and which are modelled:
+
+    | Signal | Source |
+    |--------|--------|
+    | `pressure` | Measured — the pressure transducer |
+    | `temperature` | Measured — the boiler thermocouple |
+    | `shotWeight` / `finalWeightG`, `weightFlow` | Measured — the scale in the drip tray |
+    | `pumpFlow`, `waterPumped` | Derived — modelled from pump behaviour and the pressure reading; there is no flow meter |
+
+    A pressure-path fault therefore contaminates the flow and water-pumped figures with it — they sit downstream of the same reading — while the scale is an independent witness.
+
+    **A single shot cannot clear itself.** On a flow-driven phase, low pressure under on-target flow is exactly what a coarse puck produces and exactly what an under-reading sensor produces; nothing in that shot's own pressure and flow separates the two. What can:
+
+    - **Shot history.** Call `list_recent_shots` and read peak pressure across recent shots of the same profile. Two clusters — one where peaks usually land, one far lower, no intermediate values, nothing changed in beans, grind, or prep — point at the sensor path, not the coffee. Hydraulic variation is continuous; a signal fault is bimodal.
+    - **The scale's story.** A normal time to first drip and a steady climb to target weight is the puck behaving normally. When the scale describes a normal extraction while pressure describes a collapse or a choke, believe the scale and suspect the sensor.
+    - **Idle readings.** With no shot running and the pump off, group pressure should sit near zero. Call `get_status` two or three times over a minute — its readings are always live, never cached. Several bar at idle is physically impossible, and catching it costs no coffee.
+    - **Mass balance.** `waterPumpedMl` minus `finalWeightG` is what the puck and circuit held back — roughly one to two times the dose in grams. Ask for the dose if you do not know it. A large excess over that alongside a normal cup means the flow model, and the pressure reading underneath it, is inflated.
+
+    When these disagree with the pressure record, say so plainly: the shot is evidence about the sensor or its wiring, not about the coffee. Draw no grind, dose, or prep conclusion from it, and do not let it seed or steer an adjustment. To confirm without wasting more coffee, suggest a blind-basket test: lock in the blind basket, run the profile for a few seconds, and listen — the OPV audibly bypassing at high pressure while the display reads low is real pressure the sensor is not reporting.
+
+    One number deserves care even on a healthy machine: on profiles that command flow and pressure at the same time, the pressure target acts as a ceiling, so `pressureDeviationBar` runs large on perfectly good shots — measured pressure is supposed to sit below the ceiling whenever the puck offers little resistance. Judge those profiles by flow tracking and the scale, not by pressure deviation alone.
+
     ## Editing a Profile
 
     Everything above adjusts grind, dose and ratio. This section adjusts the *profile*, which is the right lever once the grind is where it should be and the shot still misses the same way every time.

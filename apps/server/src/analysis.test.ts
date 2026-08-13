@@ -81,6 +81,38 @@ describe("extractOutcomeMetrics", () => {
     expect(metrics.timeToFirstDripSec).toBe(20.0);
   });
 
+  it("ignores tare noise the scale opened the shot with", () => {
+    // Condensed from live shot #362 (2026-08-13): the scale read 0.8g at the
+    // first sample — residual water, not coffee — decayed to zero, and only
+    // rose for real much later. Taking any sample above 0.5g reported first
+    // drip at 0.3s on that shot.
+    const shot = {
+      ...mockShotData,
+      datapoints: {
+        ...mockShotData.datapoints,
+        timeInShot: [3, 5, 6, 40, 80, 100, 106, 140, 210],
+        shotWeight: [8, 8, 6, 0, 4, 5, 7, 20, 102],
+      },
+    };
+    const metrics = extractOutcomeMetrics(shot);
+    expect(metrics.timeToFirstDripSec).toBe(10.6);
+  });
+
+  it("reports no first drip when the scale never settles below the threshold", () => {
+    // A reading that was above 0.5g before anything could have reached the cup
+    // is tare, and a tare that never clears leaves nothing to date a drip from.
+    const shot = {
+      ...mockShotData,
+      datapoints: {
+        ...mockShotData.datapoints,
+        timeInShot: [3, 5, 6, 40],
+        shotWeight: [8, 9, 12, 30],
+      },
+    };
+    const metrics = extractOutcomeMetrics(shot);
+    expect(metrics.timeToFirstDripSec).toBeNull();
+  });
+
   it("detects stable temperature", () => {
     const metrics = extractOutcomeMetrics(mockShotData);
     expect(metrics.tempStability).toBe("stable");

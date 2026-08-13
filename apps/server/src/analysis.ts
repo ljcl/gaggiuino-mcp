@@ -160,12 +160,23 @@ export function extractOutcomeMetrics(shotData: ShotData): OutcomeMetrics {
   const waterPumped = datapoints.waterPumped ?? [];
   const temperatures = datapoints.temperature ?? [];
 
-  // Find time to first drip (weight > 0.5g = 5 in API units)
+  // Find time to first drip: the first sample where the scale rose above 0.5g
+  // (5 in API units) — rose, not merely read. The scale can open a shot already
+  // above the threshold, from residual water on the drip tray or a tare still
+  // settling: live shot #362 (captured 2026-08-13) opened at 0.8g and decayed
+  // to zero while the cup stayed dry for another twenty seconds, and taking any
+  // sample above the threshold reported first drip at 0.3s on a 42-second shot
+  // — a gushing extraction the scale never saw. A sample only counts once the
+  // scale has been seen at or below the threshold, and a scale that never
+  // settles reports null rather than a time that describes the tare.
   let timeToFirstDripSec: number | null = null;
+  let scaleSettled = false;
   for (let i = 0; i < shotWeights.length; i += 1) {
     const weight = shotWeights[i];
     const time = times[i];
-    if (weight !== undefined && weight > 5 && time !== undefined) {
+    if (weight !== undefined && weight <= 5) {
+      scaleSettled = true;
+    } else if (scaleSettled && weight !== undefined && time !== undefined) {
       timeToFirstDripSec = normalizeValue(time, "timeInShot");
       break;
     }
