@@ -30,6 +30,7 @@ import { extractAnnotations, extractMeta, toChartData } from "./normalize";
 import { PressureFlowPlot } from "./PressureFlowPlot";
 import { derivePhaseRegions } from "./phases";
 import { ShotGraph } from "./ShotGraph";
+import { parseToolArgs, type ToolArgs } from "./toolArgs";
 import { type ShotData } from "./types";
 import "./global.css";
 
@@ -43,27 +44,6 @@ const RAW_JSON_TOOL = "get_shot_raw_json";
  * machine has never deleted one — and after shot #1 it asked for shot #0.
  */
 const PREVIOUS_JSON_TOOL = "get_previous_shot_json";
-
-interface ToolArgs {
-  shot_id: string;
-  compare_shot_id?: string;
-}
-
-/**
- * Narrow the host's tool arguments. Returning `null` keeps the app in its
- * "waiting for shot data" state rather than mounting a chart with no shot.
- */
-function parseToolArgs(
-  args: Record<string, unknown> | undefined,
-): ToolArgs | null {
-  const shotId = args?.shot_id;
-  if (typeof shotId !== "string" || shotId === "") return null;
-  const compareId = args?.compare_shot_id;
-  return {
-    compare_shot_id: typeof compareId === "string" ? compareId : undefined,
-    shot_id: shotId,
-  };
-}
 
 function parseShot(result: CallToolResult, toolName: string): ShotData {
   return readToolJson<ShotData>(result, toolName);
