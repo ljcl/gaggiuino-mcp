@@ -1,5 +1,19 @@
 # Changelog
 
+## [3.1.0](https://github.com/ljcl/gaggiuino-mcp/compare/v3.0.0...v3.1.0) (2026-08-13)
+
+
+### Features
+
+* **mcp-app:** plot pressure against flow as a parametric trace ([#159](https://github.com/ljcl/gaggiuino-mcp/issues/159)) ([95c969d](https://github.com/ljcl/gaggiuino-mcp/commit/95c969df937a9e067a000b7e3adf5dc0fe8e2f15))
+
+
+### Bug Fixes
+
+* **server:** a re-authorized connector no longer dies on its first refresh ([#162](https://github.com/ljcl/gaggiuino-mcp/issues/162)) ([712f9b4](https://github.com/ljcl/gaggiuino-mcp/commit/712f9b4afdeb3c30af918a00bc6a73f7dcd55c74))
+* **server:** key refresh replay detection on a claim, not the caller's client_id ([#164](https://github.com/ljcl/gaggiuino-mcp/issues/164)) ([f5526d9](https://github.com/ljcl/gaggiuino-mcp/commit/f5526d93f200b47aac539f5d7c169cf5fcb32311))
+* **server:** tare-proof first-drip timing and teach the guidance to spot sensor faults ([#166](https://github.com/ljcl/gaggiuino-mcp/issues/166)) ([17545b2](https://github.com/ljcl/gaggiuino-mcp/commit/17545b293b975a12a8d177b41c34df172f701e28))
+
 ## [3.0.0](https://github.com/ljcl/gaggiuino-mcp/compare/v2.0.0...v3.0.0) (2026-08-09)
 
 
