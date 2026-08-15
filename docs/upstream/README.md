@@ -125,6 +125,42 @@ continuously and unrequested. This one is a corroboration rather than a
 correction — the ambiguity is resolved in favour of what the message table
 already said.
 
+### A shot's `weightFlow` and `pumpFlow` are not two independent measurements
+
+Provenance differs from the entries above: this one is read from the **firmware
+source**, `Zer0-bit/gaggiuino` branch `release/stm32-blackpill`, `src/gaggiuino.ino`
+and `src/functional/predictive_weight.h`, read 2026-08-15. That branch is
+Blackpill-era and the current PCB's source is not public, so treat it as strong
+evidence about the model rather than as this machine's code.
+
+Nothing in `rest-api.md` says where a shot's series come from, so a reader has no
+reason not to treat `pumpFlow` and `weightFlow` as two instruments. They are not:
+
+```c
+currentState.shotWeight = currentState.scalesPresent
+  ? currentState.shotWeight
+  : currentState.shotWeight + actualFlow;
+```
+
+with `actualFlow` derived from `smoothedPumpFlow` and `pumpClicks *
+getPumpFlowPerClick(smoothedPressure)` — the latter being PZ, the pump-zero
+calibration constant `get_machine_settings` reports as `system.pumpFlowAtZero`.
+So **without a real scale the weight series is an integral of the flow model**,
+and comparing the two compares the model against itself.
+
+`weightFlow` is assigned only inside `if (currentState.scalesPresent)`, which
+gives a self-contained test on a shot record: an all-zero `weightFlow` series
+means no real scale was active for that shot. That matters because
+`get_machine_settings` reports what is configured *now*, not what was in force
+when a past shot was pulled.
+
+**Why it matters here.** The Gen 3 user manual's PZ calibration note recommends
+comparing pump flow against weight flow to improve the calibration, which reads
+like a ready-made health check to build a metric on. It is only meaningful with
+hardware or Bluetooth scales active, and
+`docs/plans/2026-08-15-upstream-flow-restriction.md` records the measurement
+showing the manual's stated window is dominated by transients besides.
+
 ### `POST /api/settings/{category}` — "should" means "must"
 
 Recorded in full at `client.ts`'s not-called list, where a tool author will
@@ -164,3 +200,7 @@ for f in rest-api.md websocket.md MQTT.md; do curl -sSfo "docs/upstream/$f" "$BA
 
 `docs/` is in `release-please-config.json`'s `exclude-paths`, so refreshing
 these files cannot cut an empty release on its own.
+
+**Last checked 2026-08-15**: all three re-downloaded and byte-identical to the
+vendored copies, so every line citation in `client.ts` and every line number in
+the Errata above is still valid. `master` and `main` both resolve.
