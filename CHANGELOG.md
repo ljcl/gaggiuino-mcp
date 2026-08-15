@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.2.0](https://github.com/ljcl/gaggiuino-mcp/compare/v3.1.0...v3.2.0) (2026-08-15)
+
+
+### Features
+
+* **server:** teach the guidance to recognise upstream flow restriction ([#169](https://github.com/ljcl/gaggiuino-mcp/issues/169)) ([5ccba17](https://github.com/ljcl/gaggiuino-mcp/commit/5ccba17b37dd838f4494b3462c6dd2726913d513))
+
+
+### Bug Fixes
+
+* **mcp-app:** accept a numeric shot id in the graph's tool-input parser ([#167](https://github.com/ljcl/gaggiuino-mcp/issues/167)) ([a428d6a](https://github.com/ljcl/gaggiuino-mcp/commit/a428d6a80f9e2004bdf8f1151b66051837cc08ee))
+
 ## [3.1.0](https://github.com/ljcl/gaggiuino-mcp/compare/v3.0.0...v3.1.0) (2026-08-13)
 
 
