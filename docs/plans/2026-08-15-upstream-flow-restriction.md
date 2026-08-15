@@ -1,13 +1,19 @@
 # Upstream flow restriction: what to build, and what not to
 
-Research record for the diagnosis of shots #364–#367, where one cause — a
-restriction upstream of the group, most often trapped air at the pump inlet —
-presented as three faults that each looked separate and each had a wrong-but-
-obvious explanation.
+Research record for the diagnosis of shots #364–#367, where one cause upstream
+of the group presented as three faults that each looked separate and each had a
+wrong-but-obvious explanation.
 
 The question asked was whether any of it belongs in this server. The answer is
-**guidance, not a tool**, and the interesting part is why the one genuinely
-computable candidate did not survive being measured.
+**guidance, not a tool**.
+
+Two things happened on the way. The one genuinely computable candidate did not
+survive being measured — and then the shots themselves were still on the
+machine, and they revised the diagnosis that prompted the work. The mechanism is
+a circuit that drains and has to be refilled, not a pump that cannot deliver;
+the free-flow test that appeared to prove a flow deficit was misread; and the
+detector worth having turned out to need no new metric at all. Those sections
+are last and are the ones to read.
 
 ---
 
@@ -41,14 +47,14 @@ that already exist, which is what this file is for.
 
 #166's mass-balance bullet reads a large `waterPumpedMl − finalWeightG` excess
 as evidence that the flow model, and the pressure reading under it, is inflated.
-That is one true reading of the observation. This diagnosis is the other: a
-restriction upstream of the group makes shots long, and a long shot moves real
-water inefficiently, so the excess is genuine rather than modelled.
+That is one true reading of the observation. The other is that the water is
+real and went into filling an empty circuit rather than into the cup — and the
+captures below show the excess reaching 127 ml on a single shot that way.
 
 Left alone, a model reading the existing bullet lands confidently on a sensor
-fault for a symptom whose cause was hydraulic — and the jug test had already
-shown the volume model was trustworthy to ~11%. The bullet now points at the new
-section rather than asserting the sensor reading as the only one.
+fault for a symptom that is hydraulic. The bullet now points at the new section,
+which separates the two by reading the excess against peak pressure rather than
+asserting either cause.
 
 ---
 
@@ -64,10 +70,10 @@ the Gen 3 user manual's PZ calibration note:
 `pumpFlow` and `weightFlow` are both in every shot record. A
 `pumpFlowVsWeightFlow` outcome metric — the model against the independent
 witness, inside upstream's own validity window — would put a number on exactly
-the deficit this diagnosis chased.
+the deficit this diagnosis appeared to show.
 
-It is not shippable, for three reasons. The first two are fixable and the third
-is not, yet.
+It is not shippable, for three reasons — and by the time the third was resolved
+there was no deficit left for it to measure.
 
 ### 1. The stated window is dominated by transients
 
@@ -118,11 +124,89 @@ cannot be derived from one side of the comparison, and this repo has been
 here before: `docs/plans/2026-08-08-flow-based-extraction-events.md` records the
 same shape of negative result for a flow-based event detector.
 
-**What would unblock it:** a capture of a shot pulled while the fault was
-present, with real scales active, alongside a known-good shot on the same
-profile and beans. Shots #364–#367 were that fault, and the machine keeps a
-bounded history — so if any survive, they are the missing evidence. With those,
-condition 1 becomes derivable and the metric becomes a real candidate.
+**Resolved — the machine still had them.** See the section below.
+
+---
+
+## What the machine's own shots then showed
+
+Shots #358–#367 were still in history and were pulled through this server's own
+tools. `get_machine_settings` reports `hwScalesEnabled: true` and
+`forcePredictive: false`, so blocker 2 above does not apply to any of them:
+`weightFlow` is a real measurement throughout.
+
+They **do not support the diagnosis they came from**, and the correction is the
+most valuable thing in this document.
+
+### The free-flow test did not show a flow deficit
+
+Shot #365 *is* the jug test — 15.6 s, no portafilter, pressure never above
+1.0 bar as expected with nothing to restrict it. The original reading was that
+delivery ran at 2.09 ml/s against a 4.9 ml/s command, i.e. 43% of it, and that
+this was the fault.
+
+`targetPumpFlow` in that record ramps **0.3 → 5.0 ml/s**. 4.9 is where the ramp
+*ends*, not what it asked for on average. Integrated, the profile commanded
+50.1 ml over the run and 32.6 g reached the jug — 65%. In steady state over the
+last three seconds:
+
+| | ml/s |
+| --- | --- |
+| commanded | 4.92 |
+| `pumpFlow` (model) | 4.73 |
+| `weightFlow` (scale) | 4.45 |
+
+That is 90% of command on the machine's own scale, and ~97% once the scale's
+own 11% under-read is applied. **There is no sustained flow deficit.** The
+apparent one is an artefact of comparing a whole-run average against a ramp's
+final value.
+
+Two further corrections fall out of the same record:
+
+- The "~11% under, so the volume model is trustworthy" note compared the
+  **machine's drip-tray scale** (29.1 g) against the external scale (32.6 g).
+  That is a scale calibration figure and says nothing about the volume model.
+- The volume model, `waterPumped`, read **46.7 ml against 32.6 g delivered —
+  43% high**. That is not an error: it counts water *pumped*, and 15.6 ml of it
+  went into filling the circuit before output started at t≈9.5 s. Reading it as
+  a delivery figure is what makes a correct counter look broken.
+
+### The real signature is a fill, not a deficit
+
+Shot #364 is the dead shot: 61.2 s, pressure never above 1.7 bar against targets
+of 6 → 2.5 → 9 bar, `shotWeight` flat at zero for **44.8 s**, then output at a
+steady 3.6–3.8 ml/s against a 3.5 ml/s command for the remaining 16.4 s.
+`pumpFlow` tracked `targetPumpFlow` the whole time.
+
+So the pump delivered command, and ~131 ml went in before anything reached the
+cup. Water entering an empty circuit meets no restriction, which is why pressure
+could not build. The mechanism is **drain-back and refill**, not a pump that
+cannot keep up — and it matches the notes' own "worst from cold, clears with a
+flush, returns overnight" better than a flow deficit does.
+
+### The detector that does work, and needs no new metric
+
+Excess volume (`waterPumpedMl − finalWeightG`) against `peakPressureBar`, across
+the eight puck shots in that run:
+
+| peak bar | 1.7 | 2.4 | 2.5 | 2.9 | 7.0 | 7.9 | 10.2 | 11.4 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| excess ml | 127 | 83 | 64 | 60 | 37 | 25 | 22 | 15 |
+
+Monotonic, no inversions, Pearson r = −0.87, and the two clusters do not touch:
+under 3 bar carries 60–127 ml, above 7 bar carries 15–37 ml, with nothing
+between 2.9 and 7.0 bar.
+
+**Both fields are already in `OutcomeMetricsSchema`**, so `list_recent_shots`
+already returns everything needed. This shipped as guidance telling the model to
+read the two together — no new metric, no schema change, **no permission grant
+re-keyed**, which is a better outcome than the flow-ratio metric would have been
+even had it worked.
+
+A `fillVolumeMl` metric — volume pumped before output begins — is the more
+direct statement of the same thing and remains a candidate. It needs a healthy
+baseline across more than one profile and a rule for shots with no real scale,
+neither of which one run of one profile settles.
 
 ---
 
@@ -220,4 +304,7 @@ Errata.
 - `Zer0-bit/gaggiuino`, branch `release/stm32-blackpill` — idle vent constants,
   predictive weight derivation.
 - `apps/server/src/__fixtures__/api-responses.ts` — the REST status capture.
-- The diagnosis notes for shots #364–#367.
+- Shots #358–#367, pulled off the machine through this server on 2026-08-15,
+  plus `get_machine_settings` confirming hardware scales active.
+- The diagnosis notes for shots #364–#367 — whose central conclusion these
+  captures revise.

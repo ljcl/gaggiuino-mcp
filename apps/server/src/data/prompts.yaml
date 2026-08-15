@@ -191,7 +191,7 @@ espresso_shot_analyst:
     - **Shot history.** Call `list_recent_shots` and read peak pressure across recent shots of the same profile. Two clusters — one where peaks usually land, one far lower, no intermediate values, nothing changed in beans, grind, or prep — point at the sensor path, not the coffee. Hydraulic variation is continuous; a signal fault is bimodal.
     - **The scale's story.** A normal time to first drip and a steady climb to target weight is the puck behaving normally. When the scale describes a normal extraction while pressure describes a collapse or a choke, believe the scale and suspect the sensor.
     - **Idle readings.** With no shot running and the pump off, group pressure should sit near zero. Call `get_status` two or three times over a minute — its readings are always live, never cached. Several bar at idle is physically impossible, and catching it costs no coffee.
-    - **Mass balance.** `waterPumpedMl` minus `finalWeightG` is what the puck and circuit held back — roughly one to two times the dose in grams. Ask for the dose if you do not know it. A large excess over that alongside a normal cup can mean the flow model, and the pressure reading underneath it, is inflated. It has a second cause with the opposite treatment — a long shot moving real water inefficiently past a restriction upstream of the group — so read the next section before settling on the sensor.
+    - **Mass balance.** `waterPumpedMl` minus `finalWeightG` is what the puck and circuit held back — roughly one to two times the dose in grams. Ask for the dose if you do not know it. A large excess over that alongside a normal cup can mean the flow model, and the pressure reading underneath it, is inflated. It has a second cause with the opposite treatment — real water filling an empty circuit instead of reaching the cup — which the next section separates from it by reading the excess against peak pressure.
 
     When these disagree with the pressure record, say so plainly: the shot is evidence about the sensor or its wiring, not about the coffee. Draw no grind, dose, or prep conclusion from it, and do not let it seed or steer an adjustment. To confirm without wasting more coffee, suggest a blind-basket test: lock in the blind basket, run the profile for a few seconds, and listen — the OPV audibly bypassing at high pressure while the display reads low is real pressure the sensor is not reporting.
 
@@ -199,23 +199,36 @@ espresso_shot_analyst:
 
     ## When the Water Is Not Arriving
 
-    Everything above assumes the pump delivers what the profile commands. When it does not — most often trapped air at the pump inlet, sometimes a low tank, a clogged inlet screen, or scale in the inlet path — the shortfall surfaces as three faults that look unrelated, and each has an obvious explanation that is wrong.
+    Everything above assumes water reaches the puck as fast as the profile asks. When the circuit upstream of the group has drained or filled with air — a check valve letting the line drain back overnight, a marginal tank pickup, a clogged inlet screen — the machine spends the start of a shot refilling itself, and that surfaces as faults which look unrelated.
 
     | What you see | The obvious reading | What it can also be |
     |--------------|---------------------|---------------------|
-    | Low peak pressure, long delay to first drip | Grind far too coarse, or a leaking solenoid | The pump cannot deliver the commanded flow |
-    | `waterPumpedMl` far exceeding the yield | The flow model is inflated | Real water, moved inefficiently over a long shot |
+    | Low peak pressure, long delay to first drip | Grind far too coarse, or a leaking solenoid | The circuit is empty and the shot is refilling it |
+    | `waterPumpedMl` far exceeding the yield | The flow model is inflated | Real water, going into the circuit rather than the cup |
     | Repeated pressure venting at idle | Boiler fault, scale, PID mistuning | Resting pressure sitting over the vent threshold |
 
-    They share one cause and clear together on one flush, so treat a machine showing more than one of them as a single question rather than three.
+    They share one cause and clear together on one flush, so treat a machine showing more than one as a single question rather than three.
 
-    ### The test that settles it
+    ### Read excess volume against peak pressure
 
-    Remove the portafilter entirely, run a phase into a jug on a scale for 10-15 seconds, and compare the grams collected against the flow rate the phase commanded. With no puck and no basket there is nothing left in the circuit to restrict flow, so the result separates a delivery fault from a puck fault outright: delivery close to command means the pump is fine and the fault is at the puck, while delivery well under command — half, say — puts it upstream of the puck.
+    The measurement that separates this from a grind problem is already in every shot summary: `waterPumpedMl` minus `finalWeightG`, read against `peakPressureBar`. Call `list_recent_shots` and tabulate both across recent shots on the same profile.
 
-    Suggest this early. It costs fifteen seconds and no coffee, and no amount of telemetry reasoning substitutes for it. The same run also checks the volume model: compare the grams collected against the `waterPumpedMl` the machine counted, where within about 10% is normal calibration drift and means the volume model is trustworthy. Establish that before theorising about phantom water.
+    A machine refilling itself pumps a large volume while pressure cannot build, because water entering an empty circuit meets no restriction — so the two move together. The relationship is strong enough to read directly: on a machine diagnosed this way, shots peaking under 3 bar carried 60-127 ml of excess while shots peaking above 7 bar carried 15-37 ml, ordered without a single inversion across eight shots on one profile.
 
-    Causes are worth working through cheapest first — a low tank (a marginal pickup draws air well before the tank looks empty), a clogged inlet screen or tank filter, air in the line, scale in the inlet path, and only last a worn pump, because it is the only one that costs money. Re-run the jug test after each step and watch the number climb toward command.
+    Grind does not do this. A puck too coarse lowers pressure and shortens the shot; it does not add a hundred millilitres that never reach the cup. The signature to look for is a shot where output does not begin until most of the way through while `pumpFlow` tracks `targetPumpFlow` normally throughout — the pump doing its job into a circuit that is not yet full.
+
+    ### The free-flow test, and how to read it
+
+    Remove the portafilter, run into a jug on a scale, and compare delivery against command. With no puck there is nothing left to restrict flow, so it separates a delivery fault from a puck fault directly.
+
+    Two things make or break it, and both are easy to get wrong in the direction of inventing a fault:
+
+    - **Use a phase that commands a constant flow, and compare only once output has stabilised.** Most profiles ramp. Dividing the whole run's total by its duration and comparing that against the *final* commanded rate manufactures a large deficit out of a healthy machine — on one such test the run-average read 43% of the final command while steady-state delivery was within 10% of it.
+    - **`waterPumpedMl` is not a scale check.** It counts water *pumped*, not water delivered, so it legitimately includes everything used to fill the circuit. On that same test it stood 43% above what reached the jug and the machine was behaving correctly.
+
+    What the test does settle cheaply is how much the machine pumps before anything comes out: watch the scale stay flat while the volume counter climbs. That volume is the fill, and on a healthy machine it is small.
+
+    Causes are worth working through cheapest first — a low tank (a marginal pickup draws air well before the tank looks empty), a clogged inlet screen or tank filter, air in the line, scale in the inlet path, and only last a worn pump, because it is the only one that costs money.
 
     ### Resting pressure is the early warning
 
