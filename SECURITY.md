@@ -50,11 +50,11 @@ public deployment needs both of these — see
 
 - **OAuth** (`MCP_PUBLIC_URL`, `MCP_OAUTH_SECRET`, `MCP_OAUTH_PASSPHRASE_HASH`)
   — access tokens are verified for signature, issuer, expiry and audience, and
-  the two tools that change the machine additionally require the
-  `espresso:write` scope. With none of it set, `/mcp` is unauthenticated and the
-  server says so at startup. Setting only some of them fails at startup rather
-  than falling back to open. This is the only way to authenticate `/mcp`; the
-  `MCP_AUTH_TOKEN` shared secret was removed in 2.0.0 and is no longer read.
+  the three tools that change the machine (`select_profile`, `upload_profile`,
+  `delete_profile`) additionally require the `espresso:write` scope. With none
+  of it set, `/mcp` is unauthenticated and the server says so at startup.
+  Setting only some of them fails at startup rather than falling back to open.
+  OAuth is the only way to authenticate `/mcp`.
 - **`MCP_ALLOWED_ORIGINS`** — the browser origins allowed to reach `/mcp`.
   Empty (the default) rejects every request that carries an `Origin` header,
   which is what stops a page the user visits from driving a server on their own
@@ -81,11 +81,11 @@ Verify a release before running it:
 
 ```bash
 # Signed provenance: who built this image, from which commit and workflow
-gh attestation verify oci://ghcr.io/ljcl/gaggiuino-mcp:1.0.1 --repo ljcl/gaggiuino-mcp
+gh attestation verify oci://ghcr.io/ljcl/gaggiuino-mcp:3.2.0 --repo ljcl/gaggiuino-mcp
 
 # SBOM and provenance recorded in the registry
-docker buildx imagetools inspect ghcr.io/ljcl/gaggiuino-mcp:1.0.1 --format '{{json .SBOM}}'
-docker buildx imagetools inspect ghcr.io/ljcl/gaggiuino-mcp:1.0.1 --format '{{json .Provenance}}'
+docker buildx imagetools inspect ghcr.io/ljcl/gaggiuino-mcp:3.2.0 --format '{{json .SBOM}}'
+docker buildx imagetools inspect ghcr.io/ljcl/gaggiuino-mcp:3.2.0 --format '{{json .Provenance}}'
 ```
 
 An image that fails `gh attestation verify` did not come from this repository's

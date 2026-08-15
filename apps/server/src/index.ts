@@ -21,9 +21,9 @@ try {
   security = loadSecurityConfig();
 } catch (error) {
   if (!(error instanceof ConfigError)) throw error;
-  // Fail before binding a port, and name the variable. A bad PORT used to bind
-  // NaN and a bad GAGGIUINO_URL used to surface much later as a failed fetch
-  // inside a tool call, blamed on the machine being offline.
+  // Fail before binding a port, and name the variable. Unvalidated, a bad PORT
+  // would bind NaN and a bad GAGGIUINO_URL would surface much later as a failed
+  // fetch inside a tool call, blamed on the machine being offline.
   logger.error("config.invalid", { message: error.message });
   process.exit(1);
 }

@@ -78,11 +78,11 @@ function withCors(response: Response, cors: Record<string, string>): Response {
  * the server's later `oninitialized` callback, so it is known at the moment the
  * session id is minted.
  *
- * `session.opened` used to carry only an opaque uuid, which answered none of
- * the questions an operator actually has when a host misbehaves: which client
- * is this, and is it re-handshaking on every turn or reusing a session? Both
- * are visible from the log now, and one line per turn from the same client name
- * is the signature of a host that has thrown its session away.
+ * An opaque uuid alone answers neither question an operator actually has when
+ * a host misbehaves: which client is this, and is it re-handshaking on every
+ * turn or reusing a session? Both are visible from the log, and one
+ * `session.opened` per turn from the same client name is the signature of a
+ * host that has thrown its session away.
  */
 function describeInitiator(body: InitializeRequest): Record<string, string> {
   const { clientInfo, protocolVersion } = body.params;
@@ -272,11 +272,11 @@ export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
         const auth = await authenticate(req, options.security);
         const rejection = await checkRequest(req, options.security, auth);
         if (rejection) {
-          // Rejections used to be silent, which made the two failures an
-          // operator actually hits — a host whose Origin is not on the
-          // allowlist, and a token that does not match — indistinguishable
-          // from the server being unreachable. The status carries which one it
-          // was; 403 is Origin or Host, 401 is the token.
+          // A silent rejection makes the two failures an operator actually
+          // hits — a host whose Origin is not on the allowlist, and a token
+          // that does not match — indistinguishable from the server being
+          // unreachable. The status carries which one it was; 403 is Origin or
+          // Host, 401 is the token.
           logger.warn("security.rejected", {
             // Whether a credential was presented at all, which is the one fact
             // that separates "the client never sent the token" from "the token

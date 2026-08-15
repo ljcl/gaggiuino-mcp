@@ -10,10 +10,6 @@
 #   pr-title  pr-title.yml  a non-Conventional-Commit PR title, which squashes
 #                           onto main as an unparseable subject and silently
 #                           skips the release
-#
-# `docker` and `pr-title` are aggregate/renamed job names introduced alongside
-# this change — apply this script only once they are on main, or protection
-# will wait on contexts that never report.
 set -euo pipefail
 
 REPO="$(gh repo view --json nameWithOwner --jq '.nameWithOwner')"

@@ -24,8 +24,8 @@ import { TOOL_DEFINITIONS } from "../tools";
  * is already asserted in both `server.test.ts` and `http.test.ts`. Deriving from
  * it means a new write tool inherits the scope gate instead of being forgotten;
  * a hand-written list is a second place to update and the one that gets missed.
- * A test pins the derived set to `{select_profile, upload_profile}` so that
- * inheritance stays visible rather than silent.
+ * A test pins the derived set to `{delete_profile, select_profile,
+ * upload_profile}` so that inheritance stays visible rather than silent.
  */
 export const PROTECTED_TOOLS: ReadonlySet<string> = new Set(
   TOOL_DEFINITIONS.filter(

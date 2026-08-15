@@ -7,7 +7,7 @@ A Remote [MCP](https://modelcontextprotocol.io) server for integrating a [Gaggiu
 ### MCP Tools
 
 **Shot Analysis**
-- `get_status` - Current machine status (temperature, pressure, flow, weight)
+- `get_status` - Current machine status (temperature, pressure, weight, water level)
 - `get_latest_shot_id` - Most recent shot, id and headline numbers in one call
 - `list_recent_shots` - The last few shots summarised, for trends over a session
 - `get_shot_data` - Structured shot summary with metrics
@@ -22,6 +22,7 @@ A Remote [MCP](https://modelcontextprotocol.io) server for integrating a [Gaggiu
 - `get_dial_in_guidance` - Expert guidance for analyzing espresso shots
 - `select_profile` - Switch the active profile (changes the machine; requires an authenticated server)
 - `upload_profile` - Save a new brew profile to the machine (changes the machine; requires an authenticated server). Creates only — it never updates, and the machine assigns a fresh id every time, so uploading twice leaves two profiles
+- `delete_profile` - Delete a profile from the machine (destructive and irreversible; requires an authenticated server). It demands the profile's exact name back as confirmation, refuses to delete the currently selected profile, and always prompts for approval in the host — even under a stored "always allow"
 
 **MCP Prompts** - workflow templates your host surfaces as slash commands or menu items:
 
@@ -80,8 +81,8 @@ The server is available at `http://<your-docker-host>:8000/mcp`.
 The compose file tracks `latest`. To pin a release, set `GAGGIUINO_MCP_TAG` in `.env`:
 
 ```bash
-GAGGIUINO_MCP_TAG=1.0    # latest 1.0.x patch
-GAGGIUINO_MCP_TAG=1.0.1  # exact release
+GAGGIUINO_MCP_TAG=3.2    # latest 3.2.x patch
+GAGGIUINO_MCP_TAG=3.2.0  # exact release
 ```
 
 Upgrade with:
@@ -114,7 +115,7 @@ docker compose pull && docker compose up -d
 ```json
 {
   "status": "ok",
-  "version": "1.1.0",
+  "version": "3.2.0",
   "uptimeSec": 3412,
   "machine": {
     "url": "http://gaggiuino.local",
@@ -198,17 +199,16 @@ wrong.
 
 #### Why OAuth and not a shared token
 
-There used to be a `MCP_AUTH_TOKEN` shared secret. It was removed in 2.0.0,
-because **a Claude connector could never present it.** A connector is added at
-the account level so one entry has to work on claude.ai, Claude Desktop and
-iOS, and on a personal plan the "Add custom connector" dialog offers an OAuth
-Client ID and Secret and no request-header field. A local stdio bridge is not a
-way around it either — it cannot run on iOS. So on the deployment this project
-is built for, the token could never leave the client, and the two write tools
-stayed permanently refused. If a long-lived `.env` still carries the variable,
-delete the line: nothing reads it, and it does not gate `/mcp`. (Through 2.0.x
-the server refused to start while it was set, so the removal could not pass
-unnoticed; that startup check has served its release and is gone.)
+OAuth is the only credential this server accepts, because **it is the only one
+a Claude connector can present.** A connector is added at the account level so
+one entry has to work on claude.ai, Claude Desktop and iOS, and on a personal
+plan the "Add custom connector" dialog offers an OAuth Client ID and Secret and
+no request-header field. A local stdio bridge is not a way around it either —
+it cannot run on iOS. A shared-secret header would sit in `.env` with no client
+able to send it, leaving the write tools permanently refused on exactly the
+deployment this project is built for. (If a long-lived `.env` still carries
+`MCP_AUTH_TOKEN` from a pre-2.0 install, delete the line: nothing reads it, and
+it does not gate `/mcp`.)
 
 When you connect, Claude discovers the endpoint, sends you to a consent page
 served by this server, and you type the passphrase. There is nothing to
@@ -221,9 +221,10 @@ unauthenticated — the container's healthcheck presents no credential, and a
 document a client fetches *in order to* authenticate cannot itself require
 authentication.
 
-`select_profile` and `upload_profile` — the two tools that change the machine —
-need the `espresso:write` scope. A token without it gets a `403` that prompts
-Claude to ask you for the extra permission rather than failing silently. With
+`select_profile`, `upload_profile` and `delete_profile` — the tools that change
+the machine — need the `espresso:write` scope. A token without it gets a `403`
+that prompts Claude to ask you for the extra permission rather than failing
+silently. With
 nothing configured at all they refuse to run and say so, which is why an open
 server is a defensible default for a LAN and a machine-control tool on one is
 not.
@@ -472,7 +473,7 @@ bun install          # Install all dependencies
 bun run build        # Build all packages (Turborepo)
 bun run test         # Run all tests
 bun run lint         # Lint all packages
-bun run check        # lint + test + typecheck + build + knip + boundaries
+bun run check        # lint + test + typecheck + build + knip + boundaries + size
 
 # Server
 cd apps/server

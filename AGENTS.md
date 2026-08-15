@@ -141,16 +141,16 @@ annotations, and the handler. Nothing about a tool is declared twice.
     one that **states no `idempotentHint` at all**. Absent is a third answer, not
     a synonym for `false`: deleting twice reaching the same end state depends on
     whether ids survive a delete, and the reference says nothing either way
-    (rest-api.md L41-44 is three lines with no response body and no status
-    codes). Claiming `true` invites a retry that could remove a *different*
+    (rest-api.md L41-44 documents the endpoint with no response body and no
+    status codes). Claiming `true` invites a retry that could remove a *different*
     profile; claiming `false` asserts a non-idempotence nobody has observed.
     `server.test.ts` therefore checks three states, with `IDEMPOTENCE_UNSTATED`
     beside the other sets — a tool losing the hint by accident still fails.
 
   `openWorldHint` is true for every tool that reaches the machine and false for
-  `get_dial_in_guidance`, now the only one that reads bundled YAML and nothing
-  else — `list_profiles` and `get_profile_info` flipped to open-world when they
-  started reading the machine's own inventory. `server.test.ts` names the write
+  `get_dial_in_guidance`, the only tool that reads bundled YAML and nothing
+  else — `list_profiles` and `get_profile_info` read the machine's own
+  inventory, so they are open-world too. `server.test.ts` names the write
   tools in a set rather than deriving them from the annotations under test, so a
   new write tool is a deliberate edit and a read tool that quietly loses
   `readOnlyHint` fails; `NON_IDEMPOTENT_TOOLS`, `IDEMPOTENCE_UNSTATED`,
@@ -167,7 +167,7 @@ annotations, and the handler. Nothing about a tool is declared twice.
   parses every machine response with zod. The schemas are deliberately loose
   (unknown keys preserved, only crash-critical fields required) so a firmware
   revision cannot take the server down, but an empty array or a truncated body
-  now fails with the offending path named instead of surfacing as
+  fails with the offending path named instead of surfacing as
   `Cannot read properties of undefined` several modules later.
 
 `resetClient(config?)` in `client.ts` is a labelled test seam: it drops the
@@ -204,8 +204,8 @@ looked reasonable in isolation.
 
 There is also an **overall deadline** (`overallTimeoutMs`, 20s) on top of the
 per-attempt timeout, because three attempts at 10s plus 1.5s and 3s of backoff
-is ~34s — past the point most hosts abandon a tool call, so the model got a
-timeout with no message instead of "the machine may be powered off". A retry
+is ~34s — past the point most hosts abandon a tool call, so the model would get
+a timeout with no message instead of "the machine may be powered off". A retry
 whose backoff will not fit in the remaining budget is not made at all: skipping
 the wait and retrying immediately is just hammering a machine that has already
 failed.
@@ -268,7 +268,7 @@ target-steady fall measured across three real captures on two profiles
 rate: a single noisy sample pair on a Zer0 plateau reaches 2.58 bar/s on its
 own, and half a second is at least three samples at this cadence.
 
-Four gates decide whether a window counts, and **each was kept because a real
+Four gates decide whether a window counts, and **each is kept because a real
 capture fails without it**:
 
 - `targetPressure` must be **commanded** at both ends. It is `0` while a profile
@@ -294,9 +294,9 @@ Overlapping windows **merge into one event**. A fall lasting a second trips
 every window along the way, and a model handed nine events describes nine
 problems.
 
-`normalize.ts` exists as of this work: `SCALE_BY_10` and `normalizeValue` used
-to live in `analysis.ts`, which `events.ts` cannot import without a cycle. This
-file is what AGENTS.md already claimed was there.
+`normalize.ts` holds `SCALE_BY_10` and `normalizeValue` in a module of their
+own because `events.ts` needs them and cannot import `analysis.ts` for them
+without a cycle.
 
 **There is deliberately no flow-based event**, and
 `docs/plans/2026-08-08-flow-based-extraction-events.md` records why so the
@@ -336,24 +336,24 @@ Excluding half a second either side of each target change was measured against
 both captured shots and moved the answer from 0.99 to 0.88 bar and from 1.12 to
 0.98 — not enough to justify the extra rule.
 
-**This is the change that cost permission grants.** `OutcomeMetricsSchema` is the
-advertised output of three tools — `get_shot_data`, `get_latest_shot_id` and
-`list_recent_shots` — so adding two fields re-keyed all three. Numeric rather
-than prose was chosen knowing that: `list_recent_shots` returns an array of these
-records, and a trend across shots is only readable if the values are numbers.
+**`OutcomeMetricsSchema` is a permission-grant surface.** It is the advertised
+output of three tools — `get_shot_data`, `get_latest_shot_id` and
+`list_recent_shots` — so any field added to it re-keys all three grants. The
+deviation fields are numeric rather than prose knowing that cost:
+`list_recent_shots` returns an array of these records, and a trend across shots
+is only readable if the values are numbers.
 
-`ShotDatapointsSchema` gained `targetTemperature` in the same change. Real
-machines send it — verified on the firmware serving shot #347 — and
-`SCALE_BY_10` had listed it all along, so the parsed type was missing a field
-the normalizer already knew about.
+`ShotDatapointsSchema` includes `targetTemperature`: real machines send it —
+verified on the firmware serving shot #347 — and `SCALE_BY_10` lists it, so the
+parsed type carries the field the normalizer already knows about.
 
 ### The machine owns what exists; the YAML owns what it means
 
 `profileCatalog.ts` joins `/api/profiles/all` to `data/profiles.yaml` on the
-profile's name. Before it, `list_profiles` served curated documentation as if it
-were the machine's inventory: a profile the user built never appeared, one they
-deleted still did, and dial-in advice could recommend switching to something
-that was not there.
+profile's name. Without the join, `list_profiles` would serve curated
+documentation as if it were the machine's inventory: a profile the user built
+would never appear, one they deleted still would, and dial-in advice could
+recommend switching to something that is not there.
 
 Three cases, and the widened `ProfileOutput` schema exists for the second:
 
@@ -374,9 +374,9 @@ lie the split exists to fix.
 
 `delete_profile` is the only tool here that destroys anything, and the endpoint
 behind it — `DELETE /api/profile-select/{id}` — differs from the *selector* by
-HTTP verb alone. It sat on `client.ts`'s not-called list until #105 for exactly
-that reason. What made it shippable is that reaching it is now deliberate at
-four independent points, and no two of them fail together:
+HTTP verb alone (`client.ts`'s not-called list still carries its struck-through
+entry as the record of that hazard). What makes it shippable is that reaching
+it is deliberate at four independent points, and no two of them fail together:
 
 - **The scope gate**, inherited rather than written: `PROTECTED_TOOLS` derives
   from `readOnlyHint === false`, so the tool joined the `espresso:write` set
@@ -431,8 +431,8 @@ has no delete endpoint", and the text says both rather than picking.
 
 `GET /api/profile/{id}` serves a profile's full definition — phases, targets,
 stop conditions, recipe — and `get_profile_info` reads it into `definition`
-(`profileDefinition.ts`). That is what turned "on the machine, undocumented"
-from a row of nulls into a real answer: a profile the user built themselves now
+(`profileDefinition.ts`). That is what makes "on the machine, undocumented"
+a real answer rather than a row of nulls: a profile the user built themselves
 describes itself.
 
 Four things about it are load-bearing.
@@ -495,13 +495,11 @@ would otherwise absorb them silently:
 
 - **Only `delete_profile` sets `_meta["anthropic/requiresUserInteraction"]`.**
   That flag falls through to the permission prompt in every mode, the host offers
-  no "don't ask again", and an existing allow rule does not skip it. This was a
-  blanket prohibition, justified as *"nothing here warrants it — every tool
-  reads"*. `delete_profile` does not read, and every property that makes the flag
-  a cost for a read tool is the point for a delete that cannot be undone. So the
-  rule became `ALWAYS_PROMPT_TOOLS`, a named set, rather than being deleted: the
-  prohibition still holds for every other tool, and the set is written out rather
-  than derived from `destructiveHint`, because a tool picking the flag up
+  no "don't ask again", and an existing allow rule does not skip it — every
+  property that makes it a pure cost for a read tool is the point for a delete
+  that cannot be undone, which is why the prohibition holds for every tool but
+  this one. `ALWAYS_PROMPT_TOOLS` is written out as a named set rather than
+  derived from `destructiveHint`, because a tool picking the flag up
   silently is the regression worth catching. `http.test.ts` re-asserts it over
   the transport — `_meta` is as droppable as `annotations`, and this flag is the
   only thing keeping a stored allow rule from letting a delete through
@@ -527,11 +525,11 @@ is not the cause.
 `createServer()` declares `tools`, `prompts`, and `resources`, and a host
 enumerating the server calls **everything** those capabilities cover — including
 `resources/templates/list`, which the spec's own resource message-flow puts
-directly after `resources/list`. That handler was missing, so the request fell
-through to the SDK default and came back `-32601 Method not found`; a host that
-treats a JSON-RPC error mid-discovery as a failed discovery abandoned the whole
-pass, tools included. This is what made "Refresh tools list" fail in the Claude
-connector settings while the already-cached tools kept working.
+directly after `resources/list`. A server that omits that handler falls
+through to the SDK default and answers `-32601 Method not found`; a host that
+treats a JSON-RPC error mid-discovery as a failed discovery abandons the whole
+pass, tools included. That is what makes "Refresh tools list" fail in the Claude
+connector settings while the already-cached tools keep working.
 
 The rule generalises: adding a capability to `createServer()` means registering
 every request handler that capability implies, not only the ones this server has
@@ -582,10 +580,10 @@ values and never re-checks presence. Four things follow from that shape.
 ### One template, two surfaces
 
 `guidance.ts` renders the dial-in guidance, and `get_dial_in_guidance` and the
-`espresso_shot_analyst` prompt both call it. They used to interpolate the same
-template independently, in two files, with the same pair of `.replace()` calls —
-so a placeholder added to `prompts.yaml` would be substituted on one surface and
-left raw on the other. `server.test.ts` asserts the two are byte-identical.
+`espresso_shot_analyst` prompt both call it. One renderer is the point:
+interpolating the same template independently in two files means a placeholder
+added to `prompts.yaml` gets substituted on one surface and left raw on the
+other. `server.test.ts` asserts the two are byte-identical.
 
 Both surfaces exist on purpose and neither is redundant: a **prompt** is
 user-invoked, so a model that decides mid-conversation it needs the guidance
@@ -594,28 +592,28 @@ returning the whole document rather than a pointer to the prompt, and the ~7KB i
 the price of the expertise it was asked for.
 
 The prompt's advertised **description** comes from the loaded template, not a
-literal. It was hardcoded in the ListPrompts handler, which made a
+literal. A literal in the ListPrompts handler would make a
 `prompts.local.yaml` override the loader honours everywhere else invisible on the
 one surface a host shows the user. That is also why `advertisedPrompts()` is a
 function rather than a module constant like `TOOLS` — the list is built per
 request so a local override stays authoritative.
 
-### The loop had no termination condition
+### The dial-in loop needs a termination policy
 
-The dial-in prompts told the model to change one variable and re-pull, and said
-nothing about **how far**, **which way after a reversal**, or **when to stop** —
-so a model suggests "a bit finer" indefinitely, oscillates around the target
-because nothing shrinks the step after an overshoot, and never says "this is
-dialled in".
+"Change one variable and re-pull" is not a complete loop. Without a policy for
+**how far**, **which way after a reversal**, and **when to stop**, a model
+suggests "a bit finer" indefinitely, oscillates around the target because
+nothing shrinks the step after an overshoot, and never says "this is dialled
+in".
 
-`ADJUSTMENT_POLICY` in `prompts.ts` is that missing policy, spliced into
+`ADJUSTMENT_POLICY` in `prompts.ts` is that policy, spliced into
 `dial_in_new_bag` and `diagnose_last_shot`. **It is text, not state, and that is
 the whole reason it fits here.** The obvious implementation is a session object
 holding the round history, and there is nowhere to put one — no database, no
 persisted user state, and the session TTL evicts anything in memory. None of it
 is needed: the round history *is* the conversation and the model already has it.
-What was missing was the policy for reading it, so this adds no tool, no schema,
-and re-keys no permission grant.
+The only missing piece is the policy for reading it, so this adds no tool, no
+schema, and re-keys no permission grant.
 
 Three details are load-bearing:
 
@@ -636,8 +634,8 @@ Three details are load-bearing:
 
 ### Which field to move, and the two levers that do nothing
 
-`get_profile_info` reads a profile and `upload_profile` writes one; what did not
-exist was the middle — which field to change for which symptom. The
+`get_profile_info` reads a profile and `upload_profile` writes one; the middle —
+which field to change for which symptom — is its own piece of knowledge. The
 "Editing a Profile" section of `prompts.yaml` is that table, and it is in the
 YAML rather than the plans because it is durable domain knowledge that every
 plan already picks up by calling `get_dial_in_guidance` in step 1.
@@ -659,16 +657,15 @@ Two rows were corrected rather than copied, for the same reason:
   documentation and not coffee. The field that actually ends a shot on yield is
   `globalStopConditions.weight`.
 - **`restriction` has no documented unit**, so no value can be advised for it —
-  but the guidance says *preserve* it rather than zero it, and that correction
-  is worth knowing about because the same mistake was in this repo already.
-  `profileShape.ts` cited `websocket.md` L221 ("both always send `0`") as
-  evidence about a phase's `restriction`. L221 is about
-  **`ProfileManualDto.restriction`** — the live `BREW_MANUAL` setpoint, a
-  different message (L213-216). Nothing says a *phase's* restriction is unused,
+  but the guidance says *preserve* it rather than zero it, and the misreading
+  that correction guards against is easy to repeat: `websocket.md` L221 ("both
+  always send `0`") is about **`ProfileManualDto.restriction`** — the live
+  `BREW_MANUAL` setpoint, a different message (L213-216) — not about a phase's
+  `restriction`. Nothing says a *phase's* restriction is unused,
   and `formatProfileDefinition` records the opposite from observation: a real
   lever profile sets it on sixteen of its nineteen phases. Telling a model the
   field is always zero invites it to normalise a lever profile's restrictions
-  away while editing one field. Fixed in `profileShape.ts` at the same time.
+  away while editing one field.
 
 Every stated range sits inside `ProfileUploadInput`'s own bounds — guidance that
 recommends a value the server then rejects is worse than none. The units section
@@ -706,11 +703,12 @@ The `view_shot_graph` tool renders an interactive Recharts chart in MCP-compatib
 — data key, metric, label, unit, colour, dash, axis, and `isComparison` — and
 `ShotGraph.tsx` renders from it rather than from ten hand-written `<Line>` blocks.
 
-It exists because a comparison series used to be identified by a `"(cmp)"` substring
-in its *display name*, matched independently by the tooltip (to filter them out), the
-chart (to fade them), and the legend (which spelled the suffix out four times). The
-suffix is now only ever a label; nothing parses it, and `SERIES_BY_KEY` is how a
-recharts tooltip payload entry finds out what it is.
+It exists so that nothing identifies a comparison series by parsing its *display
+name* — the alternative is a `"(cmp)"` substring matched independently by the
+tooltip (to filter them out), the chart (to fade them), and the legend (spelling
+the suffix out four times over). The suffix is only ever a label; nothing parses
+it, and `SERIES_BY_KEY` is how a recharts tooltip payload entry finds out what
+it is.
 
 Two consequences worth keeping:
 
@@ -726,20 +724,19 @@ Two consequences worth keeping:
 
 Phase regions come from `phases.ts`, which segments on target-series transitions and
 lets `profile.phases.length` bound the count — the same rule `apps/server`'s
-`extractPhaseSummary` uses, so the chart and `get_shot_data` name the same phases. It
-replaced an inference that de-duplicated boundaries with a magic `MIN_GAP = 4` seconds
-and then threw the phase *names* away.
+`extractPhaseSummary` uses, so the chart and `get_shot_data` name the same phases.
+Deliberately not an inference that de-duplicates boundaries with a magic
+`MIN_GAP` and then throws the phase *names* away.
 
-**That sameness is now asserted rather than intended, because for a while it was
-only half true.** Both files detected candidates identically; only `phases.ts` ever
-*bounded* them, so on a real two-phase shot `get_shot_data` reported seven phases —
-five typed `"UNKNOWN"`, three of zero duration — while the chart drew two. The claim
-sat in this file and in `phases.ts`'s own docblock the whole time, which is the
-argument for the test rather than for a third careful reading: `analysis.test.ts`
+**That sameness is asserted, not merely intended.** The two implementations
+detect candidates identically, and it is the *bounding* that keeps them
+agreeing: unbounded, a real two-phase shot reads as seven phases — five typed
+`"UNKNOWN"`, three of zero duration — while the chart draws two, and a docblock
+claiming the two files match does nothing to stop that. `analysis.test.ts`
 runs both implementations over `londiniumShot33`/`32` and compares count and
-boundaries. They are the shots `packages/shot-graph` already shipped for its
+boundaries. They are the shots `packages/shot-graph` already ships for its
 stories, reachable from `apps/server` through the package's `./fixtures` export, and
-they matter because the divergence was invisible at `mockShotData`'s five points at
+they matter because the divergence is invisible at `mockShotData`'s five points at
 ten-second spacing. Anything that re-forks the two rules fails there. Recharts hoists every `Label` into a shared
 z-index layer at the SVG root, which is why the labels carry `PHASE_LABEL_CLASS`: they
 do not stay inside their own `.recharts-reference-area` group.
@@ -797,7 +794,7 @@ build at all.
   nothing about this shot. A sample that recorded a pressure but no flow has no
   horizontal position at all, and **recharts only breaks a path where the point is
   still in the array with a null coordinate**, so filtering everything incomplete —
-  the tidy-looking version, and what this shipped as first — silently draws the
+  the tidy-looking version — silently draws the
   invented chord it was meant to prevent. Both fixtures carry equal-length arrays, so
   no real capture exercises it; `IncompleteSamples` is the story that does, asserting
   two subpaths, and it was verified to fail with the predicate flipped back to `&&`.
@@ -836,10 +833,11 @@ dependency list because `useModelContextSync` drops a summary identical to the l
 one, so a switch that did not change the string would be silently suppressed.
 
 `ShotGraph`'s `hidden` prop is optional and controlled-when-passed. A view switch
-unmounts `ShotGraph`, and while the set lived only inside it that unmount reset it to
-the default while `main.tsx`'s mirror — the copy `updateModelContext` reports — kept
-the user's choices. The legend and the chart always agree with each other, since both
-read the same value; what diverged was **the model's picture of the screen**, with
+unmounts `ShotGraph`; with the set living only inside the component, that unmount
+resets it to the default while `main.tsx`'s mirror — the copy
+`updateModelContext` reports — keeps the user's choices. The legend and the
+chart always agree with each other, since both
+read the same value; what diverges is **the model's picture of the screen**, with
 nothing rendered or logged to say so. `ControlledVisibility` remounts the chart and
 was verified to fail uncontrolled. Optional so the stories that render `ShotGraph`
 directly are unaffected.
@@ -848,7 +846,7 @@ directly are unaffected.
 
 Host plumbing lives in `packages/ui/src/host/` so a second espresso view (steam
 dashboard, shot trends) starts from the shell rather than a copy of `main.tsx`.
-`main.tsx` is now composition: parse tool input, fetch, render.
+`main.tsx` is composition: parse tool input, fetch, render.
 
 | Module | Responsibility |
 | --- | --- |
@@ -886,15 +884,15 @@ so an app that only listens for the notification never offers fullscreen.
 values. Nothing restates them: `src/tokens.ts` parses the stylesheet (`?raw`) into
 `DESIGN_TOKENS` / `TOKEN_GROUPS`, and the Colors and Token Reference stories render
 from that, so the docs cannot drift from what ships. There is deliberately no
-`COLORS`/`CHART_COLORS` constant object — that was a hand-synced third copy and it
-is gone. `shot-graph/src/constants.ts` references the tokens as `var(--chart-*)`
+`COLORS`/`CHART_COLORS` constant object — that would be a hand-synced third
+copy. `shot-graph/src/constants.ts` references the tokens as `var(--chart-*)`
 strings, which is the one indirection that stays.
 
 Dark mode is keyed on **`[data-theme="dark"]`**, the attribute
 `@modelcontextprotocol/ext-apps` sets on `documentElement` (`applyDocumentTheme`,
 called by `useHostStyles` with `hostContext.theme`). It is not a `.dark` class —
-nothing in the stack applies one, which is why the dark palette used to be dead code
-in every real host.
+nothing in the stack applies one, so a `.dark`-keyed palette is dead code in
+every real host.
 
 `hostContext.theme` is optional, so a second copy of the dark block lives under
 `@media (prefers-color-scheme: dark)` on `:root:not([data-theme="light"])` for hosts
@@ -970,8 +968,8 @@ Gaggiuino API returns values scaled by 10 (e.g., pressure 91 = 9.1 bar). The `no
 
 ## Test coverage
 
-Plain `bun run test` no longer computes coverage — it is opt-in via `bun run test:coverage`
-(`turbo run test:coverage`), which writes each package's `coverage/coverage-summary.json`.
+Coverage is opt-in: plain `bun run test` does not compute it, and `bun run test:coverage`
+(`turbo run test:coverage`) writes each package's `coverage/coverage-summary.json`.
 
 `apps/server` is the only package with a coverage threshold, defined in `apps/server/vitest.config.ts`
 (`coverage.thresholds`). Each `bun run test:coverage` run can rewrite those threshold numbers
@@ -999,10 +997,10 @@ Running `bun run test:coverage` twice on an unchanged tree writes at most once �
 floors to the number already committed. If you ever do hit a threshold you did not set,
 `git checkout apps/server/vitest.config.ts` and re-run.
 
-Coverage no longer depends on whether `apps/server/src/data/*.local.yaml` exists. `loader.ts`'s
-override-merge branches used to execute *only* when one of those gitignored files was present, so a
-dev machine measured ~2 points above what CI could reach and a ratcheted commit failed every
-subsequent run on `main` — which happened, on the first CI run this repo ever did. The merge is now
+Coverage must not depend on whether `apps/server/src/data/*.local.yaml` exists. Override-merge
+branches that execute *only* when one of those gitignored files is present make a
+dev machine measure ~2 points above what CI can reach, and a threshold ratcheted on the dev
+machine then fails every run on `main`. So the merge is
 `mergeProfileOverrides` / `mergePromptOverrides`, pure functions taking the overrides rather than
 reading them, and `readLocalOverrides` is exported so a test can point it at a temp directory. Both
 sides of every branch are covered by `loader.test.ts` regardless of what is on disk. Keep it that
@@ -1027,25 +1025,24 @@ Where an assertion lives depends on what it needs, not on which package it is in
   test runner — it is the same vitest the story tests and `apps/server` already use, just without
   a browser it has no reason to boot.
 
-  `packages/design-system` is in that list too, since #81. It used to be recorded here as the
-  exception — pure, but tested only through the Chart accessibility story because "the thing
-  worth asserting is what a *browser* resolves `var(--chart-*)` to." That reasoning was
-  incomplete rather than wrong: there are **two** things worth asserting about `color.ts`, and
+  `packages/design-system` is in that list too, and the reason is worth spelling out because
+  it looks like an exception: the thing the Chart accessibility story asserts is what a
+  *browser* resolves `var(--chart-*)` to, so it is tempting to conclude the package needs no
+  unit tests at all. There are **two** things worth asserting about `color.ts`, and
   only one of them needs a browser. Whether the palette clears its thresholds depends on what
-  the browser resolves, and the story still owns it. Whether the *ruler* is accurate does not
+  the browser resolves, and the story owns it. Whether the *ruler* is accurate does not
   depend on a browser at all, and the story structurally cannot answer it — it only ever asks
   "is this past the threshold?", so it cannot tell a correct 20 from a buggy 20.
 
   `color.test.ts` therefore lives next to the code it measures, and design-system has a
-  `test` script. Putting those assertions in `packages/shot-graph` instead — the other option
-  on #81, and a smaller diff since it already has a vitest project and already imports
-  `@gaggiuino/design-system/color` — would have picked the package by what was convenient
+  `test` script. Putting those assertions in `packages/shot-graph` instead — a smaller diff,
+  since that package already has a vitest project and already imports
+  `@gaggiuino/design-system/color` — would pick the package by what is convenient
   rather than by what the assertion needs, which is the one thing this section says not to do.
 
 None of them has a `test:coverage` script, so none produces a `coverage/` directory and the
-unthresholded rule above still holds — adding a `test` script to design-system did not change
-that. What does *not* belong anywhere is a jsdom harness for components: if it renders, it
-belongs in a story.
+unthresholded rule above still holds. What does *not* belong anywhere is a jsdom harness for
+components: if it renders, it belongs in a story.
 
 ### The ruler is asserted, not just the readings
 
@@ -1106,8 +1103,8 @@ removed, an otherwise-clean tree with a dirty `.env.example` reports
 key now moves when `.env.example` does, which is a file that changes about twice a year.
 
 `packages/design-system`'s `tsconfig.json` includes `stories` as well as `src` — the parser in
-`tokens.ts` and the stories that consume it are both type-checked in CI. Since #81 it also has a
-`test` script (`color.test.ts`), but still no `test:coverage`.
+`tokens.ts` and the stories that consume it are both type-checked in CI. It also has a
+`test` script (`color.test.ts`), but no `test:coverage`.
 
 `bun run coverage:summary` (`scripts/coverage-summary.ts`) globs every `apps/*/coverage/coverage-summary.json`
 and `packages/*/coverage/coverage-summary.json`, plus `coverage-stories/coverage-summary.json` when
@@ -1379,16 +1376,16 @@ covers **every** story in the repo, design-system docs stories included.
 Practically, this means a new story cannot ship an unlabelled control, and it also means the
 Storybook canvas is part of the contract: the preview decorator paints `document.body` with
 `--color-background-primary` unconditionally. Scoping that to "only when a host theme is active"
-left the dark stories drawing dark-mode text on Storybook's white canvas, which axe correctly
-reported at 1.05:1 across four story files. A host always supplies a background; the canvas has to
+leaves the dark stories drawing dark-mode text on Storybook's white canvas, which axe correctly
+reports as 1.05:1 contrast. A host always supplies a background; the canvas has to
 model that or every dark story reports contrast failures that do not exist in production.
 
-Two of the fixes made to clear the gate are worth not re-breaking:
+Two rules the gate enforces are worth not re-breaking:
 
 - **De-emphasis is a colour step, never stacked opacity.** `opacity: 0.6` over
-  `--color-text-secondary` composites to 3.4:1 and over `--color-text-tertiary` to 2.3:1; the
-  legend's hidden and comparison states were worse, at 1.7:1 and 2.7:1. Comparison headers and
-  legend states now step down to `--color-text-tertiary` at full strength (4.8:1 light, 4.7:1
+  `--color-text-secondary` composites to 3.4:1 and over `--color-text-tertiary` to 2.3:1, and a
+  faded legend state lands as low as 1.7:1. Comparison headers and
+  legend states step down to `--color-text-tertiary` at full strength (4.8:1 light, 4.7:1
   dark) instead.
 - **The chart wrapper is `role="group"`, not `role="img"`.** Recharts renders the legend's toggle
   buttons *inside* `ResponsiveContainer`, and `img` makes its whole subtree presentational — which
@@ -1506,11 +1503,11 @@ WS-only profile update path, or a firmware revision's type inconsistencies. The
 value is confined to process-level and in-host paths — which are real, since the
 MCP App had never been rendered in a real host without a machine.
 
-Landing it also removed the test scaffolding from the published image. The runner
-`COPY`s all of `apps/server/src`, so every `*.test.ts`, every `__fixtures__` file
-and `test-setup.ts` were shipping — unreachable at runtime (msw is a
-devDependency the runner never installs) but present. `.dockerignore` now excludes
-them, which is what makes "the fake never ships" true of its payloads and not just
+`.dockerignore` excludes every `*.test.ts`, every `__fixtures__` file and
+`test-setup.ts` from the image. The runner `COPY`s all of `apps/server/src`, so
+without those exclusions the whole test scaffolding ships — unreachable at
+runtime (msw is a devDependency the runner never installs) but present — and the
+exclusion is what makes "the fake never ships" true of its payloads and not just
 its executable.
 
 ## Testing the MCP endpoint
@@ -1535,7 +1532,7 @@ curl -X POST http://localhost:8000/mcp \
 | `HOST`                | `0.0.0.0`                | Bind address                                      |
 | `MCP_PUBLIC_URL`      | _(unset)_                | Public https origin, no path. With `MCP_OAUTH_SECRET`, enables OAuth and is advertised as the `resource` |
 | `MCP_OAUTH_SECRET`    | _(unset)_                | ≥32-char signing key for self-issued tokens; keep it stable across restarts |
-| `MCP_OAUTH_PASSPHRASE_HASH` | _(unset)_          | scrypt hash for the consent page. Required when the built-in AS runs; `bun run hash-passphrase` |
+| `MCP_OAUTH_PASSPHRASE_HASH` | _(unset)_          | scrypt hash for the consent page. Required when the built-in AS runs; `cd apps/server && bun run hash-passphrase` |
 | `MCP_OAUTH_ISSUER`    | _(unset)_                | External issuer to delegate to. Resource-server-only mode; refuses the two above |
 | `MCP_ALLOWED_ORIGINS` | _(empty)_                | Browser origins allowed on `/mcp`; `*` allows any |
 | `MCP_ALLOWED_HOSTS`   | _(empty)_                | `Host` values to accept; empty disables the check |
@@ -1576,14 +1573,15 @@ Five things about the gate are load-bearing:
   `checkOrigin` is half a cross-origin request; without
   `Access-Control-Allow-Origin` on the way back the browser discards a response
   the server was happy to send, so `MCP_ALLOWED_ORIGINS` allowed an origin that
-  still could not talk to the server. `handlePreflight` answers `OPTIONS` (which
-  used to 405), and `Access-Control-Expose-Headers: mcp-session-id` is
+  still could not talk to the server. `handlePreflight` answers `OPTIONS` — an
+  unanswered preflight is a 405 and a dead browser client — and
+  `Access-Control-Expose-Headers: mcp-session-id` is
   mandatory — it is not CORS-safelisted, and a Streamable HTTP client that
   cannot read it has no session to continue with. Preflights settle *before*
   the token check, because a browser sends `OPTIONS` with no `Authorization`
   header by design; they still require an allowlisted Origin.
 - **Every rejection is logged** (`security.rejected`, with method, origin, and
-  status). Silent 401s and 403s made the two failures an operator actually hits
+  status). A silent 401 or 403 leaves the two failures an operator actually hits
   indistinguishable from the server being unreachable.
 
 Validation runs as middleware in `fetch` rather than through the transport's
@@ -1597,8 +1595,8 @@ decoration — `timingSafeEqual` throws on a length mismatch, and the obvious
 guard (`a.length !== b.length`) leaks the secret's length. Two HMAC-SHA256
 digests are always 32 bytes, and the key is random per call and discarded, so
 the digest is evidence only within the call and cannot be password storage —
-which is what CodeQL keeps mistaking it for. With `MCP_AUTH_TOKEN` gone its
-only caller is `verifyPassphrase`, which passes the two scrypt outputs it has
+which is what CodeQL keeps mistaking it for. Its only caller is
+`verifyPassphrase`, which passes the two scrypt outputs it has
 just derived; that makes "do not put a KDF in here" easier to argue, not
 harder, since one has already run.
 
@@ -1614,31 +1612,23 @@ the status-code checks still run without it.
 
 ### OAuth, and why an auth refusal is not a tool result
 
-**OAuth is the only credential.** `MCP_AUTH_TOKEN` was a control the owner could
-not use: the connector is added at the account level so it works on claude.ai,
-Desktop and iOS, and on a personal plan the "Add custom connector" dialog
-exposes only an OAuth Client ID and Secret — there is no request-header field,
-and a local stdio bridge cannot run on iOS. The token could never leave the
-client, so the two write tools were permanently refused on the one deployment
-this repo is built for. It went in 2.0.0, and `authenticate` now has one
-credential path rather than a precedence rule between two.
+**OAuth is the only credential.** A shared-secret header is a control the owner
+could not use: the connector is added at the account level so it works on
+claude.ai, Desktop and iOS, and on a personal plan the "Add custom connector"
+dialog exposes only an OAuth Client ID and Secret — there is no request-header
+field, and a local stdio bridge cannot run on iOS. A token that can never leave
+the client leaves the write tools permanently refused on the one deployment
+this repo is built for, so `authenticate` has one credential path rather than a
+precedence rule between two.
 
-**Its removal shipped behind a one-release tombstone, now itself removed
-(#114).** Through 2.0.x, `loadServerConfig` kept reading `env.MCP_AUTH_TOKEN`
-solely to throw a `ConfigError` while it had a value, because a hard delete
-would have been silent in the only direction that matters: an unread variable
-is an ignored variable, so a deployment that gated `/mcp` with the token —
-which is what the README told those users to do — would have come up open on
-the next image pull with nothing in the log. The major version was not the
-protection either, because `docker.yml` publishes `latest` on every
-default-branch push and `docker-compose.yml` defaults to it, so the documented
-deployment received the change before a 2.0.0 tag existed; refusing to start is
-what made it visible. With the tombstone gone, nothing reads the variable — a
-value still set today is somebody's stale `.env` line, and the only remaining
+(`MCP_AUTH_TOKEN` was that shared secret, removed in 2.0.0. Nothing reads it —
+a value still set today is somebody's stale `.env` line, and the only remaining
 mention in code is the unauthenticated-startup warning, which names the removal
-so that log line explains itself. The `.env.example` entry and `turbo.json`
-pass-through left with the tombstone, in the same commit, because
-`envExample.test.ts` requires template and code to agree in both directions.
+so that log line explains itself; `mcpAuth.test.ts` pins that the variable is
+ignored rather than re-gating. The removal shipped behind a one-release
+`ConfigError` tombstone rather than a silent delete, because an unread variable
+is an ignored variable — a deployment gating `/mcp` with the token would
+otherwise have come up open on the next image pull with nothing in the log.)
 
 `oauth/` holds the resource-server half: `metadata.ts` (RFC 9728 document and the
 `WWW-Authenticate` challenges), `tokens.ts` (sign/verify), `scopes.ts`, and
@@ -1752,7 +1742,7 @@ Things worth not re-breaking:
   refresh as `oauth.refresh_replayed` — this server refusing, as stolen, the
   credential it had itself issued a hour earlier. Re-consenting produced
   generation 1 again, so the loop was stable and looked like a client bug; only a
-  restart, which empties the map, appeared to fix it. `claimGeneration` is now the
+  restart, which empties the map, appeared to fix it. `claimGeneration` is the
   one place a generation is minted and both grants go through it. The consequence
   worth stating is that a second authorization for the same `client_id`
   supersedes the first, which is what reconnecting should mean.
@@ -1767,7 +1757,7 @@ Things worth not re-breaking:
   side-stepped by exactly that attacker is a weaker claim than the documented
   "bounded detection, not revocation", which is a statement about restarts.
   `issue` seals the client into the refresh token and `handleRefresh` reads it
-  from there; the form field is now a cross-check, refused when it is present
+  from there; the form field is a cross-check, refused when it is present
   and disagrees, accepted when absent because the token already answers it —
   the same present-but-wrong rule the code grant applies to `redirect_uri`.
 
@@ -1777,11 +1767,11 @@ Things worth not re-breaking:
   cost is one consent prompt at the deploy that ships it, because
   `invalid_grant` is what Claude re-runs the authorization flow on.
 
-  `flow.test.ts`'s "keeps each client's rotation independent" is worth reading
-  as a cautionary tale rather than a test: it asserted the stated property using
-  **one** client's token presented twice under two different `client_id` values,
-  so what it actually pinned was the bypass, as a feature. It now runs two
-  genuine authorizations, which is the only way to state independence at all.
+  `flow.test.ts`'s "keeps each client's rotation independent" runs two genuine
+  authorizations, which is the only way to state independence at all — its
+  earlier shape is worth remembering as a cautionary tale: asserting the
+  property with **one** client's token presented twice under two different
+  `client_id` values pins the bypass, as a feature.
 - **Every refusal from `/oauth/token` is logged**, not only the two successes.
   A silent denial is indistinguishable in the log from an exchange that never
   happened, and those are opposite diagnoses: `oauth.authorized` followed by
@@ -1802,13 +1792,13 @@ Things worth not re-breaking:
   `malformed` whatever key signed it — meaning a bare `ok: false` passes just as
   happily when the two share one key, which is the thing being tested.
 - **The consent page's `request_token` is stateless, and that is an availability
-  fix rather than a style choice.** It used to be a key into a bounded map that
-  `GET /oauth/authorize` filled *before* checking any credential, so anyone who
-  could reach that route could park 65 requests, evict the consent page the owner
-  had open, and turn their submit into "this page has expired" (#119). The GET
-  path never consults the rate limiter — deliberately; a page that has asked for
-  nothing yet should be free — so the flood was unmetered. Raising the cap moves
-  the number without changing the shape, so the store went instead:
+  fix rather than a style choice.** The alternative — a key into a bounded map
+  that `GET /oauth/authorize` fills *before* checking any credential — lets
+  anyone who can reach that route park 65 requests, evict the consent page the
+  owner has open, and turn their submit into "this page has expired" (#119). The
+  GET path never consults the rate limiter — deliberately; a page that has asked
+  for nothing yet should be free — so such a flood is unmetered, and raising the
+  cap moves the number without changing the shape. So there is no store at all:
   `signConsentToken` HMACs the pending authorization plus an expiry under a third
   HKDF `info`, and there is nothing left to evict.
 
@@ -1818,7 +1808,7 @@ Things worth not re-breaking:
   page gets a dead end and a human who has to start over. Eviction is survivable
   there and *is* the attack here.
 
-  **The stated cost is that a consent token is no longer single-use**, so a
+  **The stated cost is that a consent token is not single-use**, so a
   captured submission can be replayed inside its TTL. Acceptable, and the reason
   is worth keeping: the token carries no authority on its own, the passphrase is
   checked on every submission, and a submission an attacker captured *contains*
@@ -1830,9 +1820,9 @@ Things worth not re-breaking:
   which would otherwise be byte-identical on a fast clock.
 
   `verifyConsentToken` rebuilds the `PendingAuthorization` field by field rather
-  than spreading the payload. The store it replaced got that wrong in the quiet
-  direction: `recall` was declared to return a `PendingAuthorization` and actually
-  handed back the map entry with the store's own `expiresAt` still attached.
+  than spreading the payload — a spread passes along whatever extra fields the
+  payload happens to carry under a signature that promises otherwise, which is
+  exactly how the store this replaced leaked its own `expiresAt`.
 - **An unrecognised scope is dropped, not refused.** Claude appends
   `offline_access`; refusing the whole request over a scope this server does not
   model would break the flow it exists for.
@@ -1856,9 +1846,9 @@ built-in AS does not mount, protected-resource metadata advertises the external
 issuer, and `externalIssuer.ts` verifies RS256/ES256 tokens against the issuer's
 JWKS. Unset, nothing changes — the built-in AS is still the default.
 
-**The rename is the change.** `OAuthConfig.issuer` used to mean two things at
-once — this server's public origin *and* the token issuer — which was invisible
-while they were the same string. They are now `publicOrigin` and `issuer`, and
+**`publicOrigin` and `issuer` are two fields on purpose.** One field meaning
+both — this server's public origin *and* the token issuer — is invisible while
+they are the same string and wrong the day they differ, and
 the distinction is load-bearing in one place above all: `metadataUrl` builds the
 401's `resource_metadata` pointer, and building it from `issuer` would send a
 client to the *IdP* for a document only this server publishes, breaking the exact
@@ -1904,14 +1894,13 @@ longer mounts, so a deployment carrying them holds a belief about this server
 that is false, and silently dropping them is how that belief survives to the day
 it matters.
 
-`authenticate` and `checkRequest` are async now, because fetching a key is. One
-consequence worth keeping: `checkRequest` no longer evaluates `authenticate` as a
-default argument, so Origin and Host are checked *first* and a cross-origin probe
+`authenticate` and `checkRequest` are async, because fetching a key is. One
+detail worth keeping: `checkRequest` does not evaluate `authenticate` as a
+default argument — Origin and Host are checked *first*, so a cross-origin probe
 can never make this server call out to its IdP.
 
 `writeToolDisabled` (`tools.ts`) answers only the third state — no authorization
-server configured at all — and with the shared secret gone it is a single check
-on `oauth` rather than a question about which of two credentials is present.
+server configured at all — as a single check on `oauth`.
 That state must stay an `isError`: a 401 pointing at metadata that does not
 exist produces Anthropic's documented "Couldn't reach the MCP server."
 
@@ -1922,18 +1911,19 @@ redundant: the TTL reclaims sessions whose client vanished without a DELETE — 
 dropped tunnel, a restarted host — and the cap bounds anything that outruns it.
 
 **The cap evicts rather than refuses, and `reserve()` therefore always
-succeeds.** It used to answer 503 over the cap, which read as prudent and was
+succeeds.** Refusing with a 503 over the cap reads as prudent and is
 not: Claude opens a fresh session per tool call and never sends a DELETE — five
 `session.opened` records in forty seconds with no `session.closed` between them,
-observed on the real deployment once `describeInitiator` made it visible.
-Nothing that arrived inside the 30-minute TTL is sweepable, so ~64 tool calls in
-half an hour ended a working conversation, and the advice that 503 carried
+observed on the real deployment.
+Nothing that arrives inside the 30-minute TTL is sweepable, so a refusing cap
+ends a working conversation at ~64 tool calls in
+half an hour, and the advice a 503 carries
 ("retry shortly") is another `initialize` — the thing that filled the map.
 
 What makes eviction survivable is the 404 rule below: an evicted client's next
 request gets the spec's own re-handshake signal and recovers on its own, where a
 503 on `initialize` has no recovery at all. That asymmetry is the argument, not
-the raw capacity number — the cap now bounds *memory* rather than conversation
+the raw capacity number — the cap bounds *memory* rather than conversation
 length. `reserve()` still sweeps first, because reclaiming a client that is
 genuinely gone always beats closing one that is merely oldest, and it evicts by
 **least recently seen** rather than oldest-opened, so the session doing the work
@@ -1961,20 +1951,21 @@ a run of `capacity` evictions is the signature of a host that is not reusing its
 sessions, which is a different problem from clients going away.
 
 `index.ts` handles **SIGTERM as well as SIGINT** — `docker stop` sends SIGTERM,
-so handling only SIGINT meant the container was killed after the grace period
+so handling only SIGINT leaves the container killed after the grace period
 with every session still open. It stops the listener before draining, so nothing
 lands on a transport that is closing.
 
 **An unrecognised session id is a 404 on every method**, and the distinction
 from 400 is the whole point: 404 is the Streamable HTTP spec's signal that a
-session is gone and the client should re-handshake with `initialize`. GET and
-DELETE used to answer 400 — "your request is malformed" — for an expired session
-as well as a missing header, and no client recovers from that by re-handshaking,
-so a session the idle TTL reclaimed stranded its client instead of prompting a
-reconnect. 400 now means only what it says: the `Mcp-Session-Id` header is
+session is gone and the client should re-handshake with `initialize`. Answering
+400 — "your request is malformed" — for an expired session
+as well as a missing header strands the client, because no client recovers from
+a 400 by re-handshaking: a session the idle TTL reclaimed would sit dead instead
+of prompting a
+reconnect. 400 means only what it says: the `Mcp-Session-Id` header is
 absent.
 
-That rule carries more weight than it used to: it is what the capacity eviction
+That rule is what the capacity eviction
 above is built on. Closing a live session is only acceptable because its client
 gets a 404 and re-handshakes, so anything that softened this back toward a 400
 would turn every eviction into a stranded client.
@@ -1998,7 +1989,7 @@ logs `tool.error` at error level with the stack.
 `session.opened` carries `client`, `clientVersion`, and `protocolVersion`, read
 from the `initialize` request itself rather than the server's later
 `oninitialized` callback so they are known when the session id is minted. An
-opaque uuid answered neither question an operator has when a host misbehaves:
+opaque uuid alone answers neither question an operator has when a host misbehaves:
 which client is this, and is it re-handshaking every turn or reusing a session?
 One `session.opened` per turn from the same client name is the signature of a
 host that threw its session away — which is worth knowing before blaming this
@@ -2012,8 +2003,8 @@ Upstream state is a field, never the status code.
 `machine.state` and `machine.versions` are observed from the requests the server
 already makes (`recordUpstream` / `recordVersions` in `client.ts`), not from a
 probe — the upstream is an ESP32
-on Wi-Fi and a timer-driven ping would load the one device the caching work in
-#30 is trying to spare. So an unused server honestly reports `unknown` and
+on Wi-Fi and a timer-driven ping would load the one device the caching layer
+exists to spare. So an unused server honestly reports `unknown` and
 `versions: null`. Any HTTP response counts as reachable, including a 404: it
 proves the network path works. `resetClient` clears both observed values along
 with the client, so one test's failed fetch cannot leak into the next.
@@ -2036,9 +2027,9 @@ a spread would publish whatever key a future firmware adds under `versions`
 without anyone deciding it should be public.
 
 `config.ts` validates `PORT` and `GAGGIUINO_URL` before the port is bound and
-names the offending variable. `PORT` previously went through a bare `Number()`
-with no NaN guard, and `GAGGIUINO_URL` was never parsed — a missing `http://`
-surfaced much later as a failed fetch blamed on the machine being offline.
+names the offending variable. Unvalidated, a bad `PORT` binds NaN and a missing
+`http://` in `GAGGIUINO_URL` surfaces much later as a failed fetch blamed on
+the machine being offline.
 
 ## Backlog and issue tracking
 
