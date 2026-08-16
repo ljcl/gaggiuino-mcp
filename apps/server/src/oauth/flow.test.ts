@@ -667,7 +667,7 @@ describe("/oauth/token", () => {
     });
   });
 
-  it("records a refused exchange, which only success used to log", async () => {
+  it("records a refused exchange, not only a successful one", async () => {
     // The gap this closes: a connector that consents and then never connects
     // leaves `oauth.authorized` with nothing after it, and the log could not
     // say whether the code was presented and refused or never presented at

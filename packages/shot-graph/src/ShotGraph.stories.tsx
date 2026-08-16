@@ -114,9 +114,8 @@ export const ComparisonStyling: Story = {
 };
 
 /**
- * Phase regions labeled from `profile.phases[].type`. The chart used to infer
- * unlabeled hairlines from the target series and discard the phase names the
- * machine had already sent.
+ * Phase regions labeled from `profile.phases[].type` — the machine sends the
+ * names, so the chart shows them rather than unlabeled boundaries.
  */
 export const PhaseRegions: Story = {
   args: {

@@ -57,6 +57,12 @@
           "format": "string"
         },
         {
+          "name": "MCP_OAUTH_ISSUER",
+          "description": "External OAuth issuer URL to delegate token issuing to (e.g. a Keycloak or Authentik realm). Puts the server in resource-server-only mode; requires MCP_PUBLIC_URL and refuses to start alongside MCP_OAUTH_SECRET or MCP_OAUTH_PASSPHRASE_HASH",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
           "name": "MCP_ALLOWED_ORIGINS",
           "description": "Comma-separated browser origins allowed to call /mcp, or * to allow any (unsafe). Requests with no Origin header are unaffected",
           "isRequired": false,
@@ -65,6 +71,12 @@
         {
           "name": "MCP_ALLOWED_HOSTS",
           "description": "Comma-separated Host header values to accept on /mcp. Empty disables host validation",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "LOG_LEVEL",
+          "description": "Log verbosity: debug, info, warn, error, or silent (default info). Logs are one JSON object per line on stderr",
           "isRequired": false,
           "format": "string"
         }
