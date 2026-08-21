@@ -1,4 +1,4 @@
-import { OAuthMetadataSchema } from "@modelcontextprotocol/sdk/shared/auth.js";
+import { OAuthMetadataSchema } from "@modelcontextprotocol/core";
 import { type AuthServerConfig } from "./metadata";
 import { ALL_SCOPES } from "./scopes";
 

@@ -1,9 +1,7 @@
 import { readFileSync } from "node:fs";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { type ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import {
   mockLatestShotResponse,
   mockMachineStatus,
@@ -12,40 +10,30 @@ import {
 import { resetClient } from "./client";
 import { loadPrompts } from "./loader";
 import { setLogLevel } from "./logging";
-import { createServer, TOOLS } from "./server";
+import { connectTestClient, type McpTestClient } from "./mcpTestClient";
+import { TOOLS } from "./server";
 import { mockServer } from "./test-setup";
 import {
   normalizeToolContract,
   serializeToolContract,
   TOOL_CONTRACT_PATH,
 } from "./toolContract";
+import { TOOLS_BY_NAME } from "./tools";
 import { SERVER_NAME, SERVER_VERSION } from "./version";
 
 /**
- * These tests drive the server through a real MCP client over an in-memory
- * transport rather than calling handlers directly, so the request schemas, the
- * result schemas, and the client's own `outputSchema` validation all
- * participate. `listTools()` is called during setup because that is what makes
- * the client cache output-schema validators — without it, `callTool` would not
- * check `structuredContent` against what we advertise.
+ * These tests drive the server over the wire — real `Request`s through the
+ * fetch handler in the legacy era — rather than calling handlers directly, so
+ * the era codec and everything it serializes participate. The modern era's
+ * own assertions live in `modern.test.ts`; the surface-parity tests there are
+ * what tie the two eras to one advertised surface.
  */
-let client: Client;
+let client: McpTestClient;
 let close: () => Promise<void>;
 
 async function connect(): Promise<void> {
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  const server = createServer();
-  client = new Client({ name: "test-client", version: "1.0.0" });
-  await Promise.all([
-    server.connect(serverTransport),
-    client.connect(clientTransport),
-  ]);
-  await client.listTools();
-  close = async () => {
-    await client.close();
-    await server.close();
-  };
+  client = await connectTestClient("test-client");
+  close = client.close;
 }
 
 /**
@@ -90,7 +78,7 @@ async function toolNamed(name: string) {
   return tool;
 }
 
-function firstContent(result: ReadResourceResult): {
+function firstContent(result: { contents: unknown[] }): {
   _meta?: Record<string, unknown>;
   mimeType?: string;
   text?: string;
@@ -185,6 +173,62 @@ describe("tool call logging", () => {
     expect(
       records.find((record) => record.event === "tool.call"),
     ).toMatchObject({ outcome: "error", tool: "get_shot_data" });
+  });
+
+  it("logs a genuine bug at error level with the stack, and still answers", async () => {
+    // Expected failures are results; anything else is a bug, and the model
+    // result cannot carry a stack — the log is the only place it survives.
+    // No shipped tool throws on demand, so one is planted in the registry
+    // `handleToolCall` dispatches from.
+    TOOLS_BY_NAME.set("planted_bug", {
+      annotations: { openWorldHint: false, readOnlyHint: true },
+      description: "test-only",
+      handler: () => {
+        throw new Error("planted bug");
+      },
+      inputSchema: z.object({}),
+      name: "planted_bug",
+      title: "Planted bug",
+    });
+    const { records, restore } = captureLogs();
+    try {
+      const result = await call("planted_bug");
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain("planted bug");
+    } finally {
+      restore();
+      TOOLS_BY_NAME.delete("planted_bug");
+    }
+    const entry = records.find((record) => record.event === "tool.error");
+    expect(entry).toMatchObject({ reason: "planted bug", tool: "planted_bug" });
+    expect(String(entry?.stack)).toContain("planted bug");
+  });
+
+  it("survives a bug that throws something that is not an Error", async () => {
+    // `throw "string"` has no message and no stack; the log and the result
+    // must not crash on the shape of what a broken handler hurled.
+    TOOLS_BY_NAME.set("planted_string_bug", {
+      annotations: { openWorldHint: false, readOnlyHint: true },
+      description: "test-only",
+      handler: () => {
+        throw "planted string";
+      },
+      inputSchema: z.object({}),
+      name: "planted_string_bug",
+      title: "Planted string bug",
+    });
+    const { records, restore } = captureLogs();
+    try {
+      const result = await call("planted_string_bug");
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain("planted string");
+    } finally {
+      restore();
+      TOOLS_BY_NAME.delete("planted_string_bug");
+    }
+    expect(
+      records.find((record) => record.event === "tool.error"),
+    ).toMatchObject({ reason: "planted string" });
   });
 });
 
@@ -440,7 +484,11 @@ describe("the advertised contract", () => {
     // so", and a re-fetch is what re-keys the cached tools a grant is stored
     // against. Every list here is a module-level constant, so claiming it would
     // be a lie as well as an invitation to invalidate the user's permissions.
-    const capabilities = client.getServerCapabilities();
+    const capabilities = client.getServerCapabilities() as {
+      prompts?: { listChanged?: boolean };
+      resources?: { listChanged?: boolean; subscribe?: boolean };
+      tools?: { listChanged?: boolean };
+    };
     expect(capabilities?.tools?.listChanged).toBeUndefined();
     expect(capabilities?.prompts?.listChanged).toBeUndefined();
     expect(capabilities?.resources?.listChanged).toBeUndefined();

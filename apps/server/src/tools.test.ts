@@ -692,6 +692,22 @@ describe("tool dispatch", () => {
       expect(result.text).toContain("someFutureKnob: 3");
     });
 
+    it("prints booleans and numbers the firmware sends as strings", async () => {
+      // The hardware capture shows this firmware habit: scalar values arrive
+      // as "155"/"false" strings rather than JSON numbers and booleans. They
+      // are recognisable values, not secrets to redact.
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/settings", () =>
+          HttpResponse.json([
+            { system: { steamDelay: "155", warmupEnabled: "false" } },
+          ]),
+        ),
+      );
+      const result = await handleToolCall("get_machine_settings", {});
+      expect(result.text).toContain("warmupEnabled: false");
+      expect(result.text).toContain("steamDelay: 155");
+    });
+
     it("reports an unreachable machine rather than inventing defaults", async () => {
       mockServer.use(
         http.get("http://gaggiuino.local/api/settings", () =>

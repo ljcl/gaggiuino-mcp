@@ -4,7 +4,22 @@ import {
   MISSING_GUIDANCE_TEXT,
   renderDialInGuidance,
 } from "./guidance";
-import { advertisedPrompts, PROMPT_DEFINITIONS, renderPrompt } from "./prompts";
+import {
+  advertisedPrompts,
+  PROMPT_DEFINITIONS,
+  tryRenderPrompt,
+} from "./prompts";
+
+/**
+ * The old throwing surface, rebuilt locally: the production wrapper died with
+ * the split-era handlers (one dual-era `prompts/get` consumes the outcome
+ * value directly), and these tests read better against a throw.
+ */
+function renderPrompt(name: string, args?: Record<string, string>): string {
+  const outcome = tryRenderPrompt(name, args);
+  if ("invalid" in outcome) throw new Error(outcome.invalid);
+  return outcome.text;
+}
 
 /**
  * The protocol-level behaviour of these prompts is asserted in `server.test.ts`,

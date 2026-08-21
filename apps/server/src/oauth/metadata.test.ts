@@ -1,4 +1,4 @@
-import { OAuthProtectedResourceMetadataSchema } from "@modelcontextprotocol/sdk/shared/auth.js";
+import { OAuthProtectedResourceMetadataSchema } from "@modelcontextprotocol/core";
 import { describe, expect, it } from "vitest";
 import { TEST_OAUTH_CONFIG } from "./__fixtures__";
 import {

@@ -1,4 +1,4 @@
-import { type Tool } from "@modelcontextprotocol/sdk/types.js";
+import { type Tool } from "@modelcontextprotocol/server";
 
 /**
  * The committed record of what `tools/list` advertises.

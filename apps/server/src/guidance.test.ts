@@ -19,7 +19,7 @@ vi.mock("./loader", async (importOriginal) => ({
 const { MISSING_GUIDANCE_TEXT, renderDialInGuidance } = await import(
   "./guidance"
 );
-const { advertisedPrompts, renderPrompt } = await import("./prompts");
+const { advertisedPrompts, tryRenderPrompt } = await import("./prompts");
 const { TOOLS_BY_NAME } = await import("./tools");
 
 beforeEach(() => {
@@ -41,8 +41,11 @@ describe("with the dial-in prompt missing from prompts.yaml", () => {
     expect(reply).toEqual({ isError: true, text: MISSING_GUIDANCE_TEXT });
   });
 
-  it("has the prompt throw, since prompts have no isError channel", () => {
-    expect(() => renderPrompt("espresso_shot_analyst", {})).toThrow(
+  it("has the prompt's render throw, since that is a config bug, not a bad request", () => {
+    // Arguments were valid, so this is not an `invalid` outcome: the render
+    // function itself throws, and a genuine bug propagates rather than being
+    // dressed up as a caller mistake.
+    expect(() => tryRenderPrompt("espresso_shot_analyst", {})).toThrow(
       "Missing prompt: espresso_shot_analyst",
     );
   });

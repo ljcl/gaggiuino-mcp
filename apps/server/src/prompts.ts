@@ -1,7 +1,4 @@
-import {
-  type Prompt,
-  type PromptArgument,
-} from "@modelcontextprotocol/sdk/types.js";
+import { type Prompt, type PromptArgument } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { formatFieldIssues } from "./errors";
 import { DIAL_IN_PROMPT_NAME, renderDialInGuidance } from "./guidance";
@@ -340,27 +337,41 @@ export function advertisedPrompts(): Prompt[] {
 }
 
 /**
+ * A rendered prompt, or the refusal text a bad request earns. `invalid` is
+ * written for the caller — it is what both eras put in the JSON-RPC error.
+ */
+export type PromptRenderOutcome = { text: string } | { invalid: string };
+
+/**
  * The one place a prompt is rendered.
  *
  * Mirrors `handleToolCall`: arguments are parsed against the same schema the
  * advertised `arguments` array was generated from, so a render function receives
  * typed values and never re-checks presence. Prompts have no `isError` channel,
- * so a bad request throws — which is what a host needs in order to put the
- * missing field back in front of the user.
+ * so a bad request is a JSON-RPC error — which is what a host needs in order to
+ * put the missing field back in front of the user.
+ *
+ * The expected failure is a *value*, not an exception, and the `prompts/get`
+ * handler depends on that: it turns `invalid` into the SDK's typed Invalid
+ * Params error, and text read off a caught exception is exactly what flows a
+ * genuine bug's internals into an HTTP response body (CodeQL's
+ * stack-trace-exposure rule treats every catch parameter as such a source,
+ * and it is right to). A render function that throws is a genuine bug and
+ * propagates.
  */
-export function renderPrompt(
+export function tryRenderPrompt(
   name: string,
   args: Record<string, string> | undefined,
-): string {
+): PromptRenderOutcome {
   const prompt = PROMPTS_BY_NAME.get(name);
   if (!prompt) {
-    throw new Error(`Unknown prompt: ${name}`);
+    return { invalid: `Unknown prompt: ${name}` };
   }
   const parsed = prompt.argsSchema.safeParse(args ?? {});
   if (!parsed.success) {
-    throw new Error(
-      `Invalid arguments for prompt ${name}:\n${formatFieldIssues(parsed.error)}\nSupply the listed arguments and request the prompt again.`,
-    );
+    return {
+      invalid: `Invalid arguments for prompt ${name}:\n${formatFieldIssues(parsed.error)}\nSupply the listed arguments and request the prompt again.`,
+    };
   }
-  return prompt.render(parsed.data);
+  return { text: prompt.render(parsed.data) };
 }
