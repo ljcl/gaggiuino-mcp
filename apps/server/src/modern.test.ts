@@ -598,9 +598,9 @@ describe("resources/read", () => {
   });
 
   it("lets a genuine read failure propagate as the bug it is", async () => {
-    // Only ResourceNotFoundError maps to -32602; anything else is a bug and
-    // must not be dressed up as an invalid-params answer the client would
-    // retry with different params.
+    // Only the `missing` value maps to -32602; a throw is a bug and must not
+    // be dressed up as an invalid-params answer the client would retry with
+    // different params — nor have its message read into a response body.
     vi.mocked(serverModule.readResource).mockRejectedValueOnce(
       new Error("bundle missing from disk"),
     );
@@ -666,20 +666,24 @@ describe("the security gate, modern era", () => {
     oauth: TEST_OAUTH_CONFIG,
   };
 
+  // Duplicated from `http.test.ts` on purpose, like its assertion sets: the
+  // signing constants stay local to the file that mints test tokens.
+  const ISSUER = "https://box.tail1234.ts.net";
+  const SECRET = "s".repeat(64);
+
   function bearer(scope: string): Record<string, string> {
     const issuedAt = Math.floor(Date.now() / 1000);
     const token = signToken(
       {
-        aud: `${TEST_OAUTH_CONFIG.publicOrigin}/mcp`,
+        aud: `${ISSUER}/mcp`,
         exp: issuedAt + 3600,
         iat: issuedAt,
-        iss: TEST_OAUTH_CONFIG.issuer,
+        iss: ISSUER,
         jti: "id",
         scope,
         sub: "owner",
       },
-      // The built-in branch of the discriminated union always carries it.
-      (TEST_OAUTH_CONFIG as { secret: string }).secret,
+      SECRET,
       "access-token",
     );
     return { authorization: `Bearer ${token}` };

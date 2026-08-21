@@ -1,10 +1,9 @@
 import { logger } from "./logging";
-import { advertisedPrompts, renderPrompt } from "./prompts";
+import { advertisedPrompts, tryRenderPrompt } from "./prompts";
 import {
   callTool,
   RESOURCE_TEMPLATES,
   RESOURCES,
-  ResourceNotFoundError,
   readResource,
   SERVER_CAPABILITIES,
   TOOLS,
@@ -368,21 +367,22 @@ export async function handleModernRequest(
     case "prompts/get": {
       // A prompt has no `isError` channel in any era: a bad request is a
       // JSON-RPC error, which is what a host needs to put the missing field
-      // back in front of the user. `renderPrompt` throws for an unknown name
-      // and for invalid arguments, and both are Invalid Params here. The
-      // Mcp-Name validation already proved `params.name` is a string.
-      let text: string;
-      try {
-        text = renderPrompt(
-          params.name as string,
-          asRecord(params.arguments) as Record<string, string> | undefined,
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return errorResponse(400, id, INVALID_PARAMS, message);
+      // back in front of the user. The refusal arrives as a value — this
+      // dispatcher deliberately reads nothing off a caught exception into a
+      // response, so a genuine bug propagates instead of leaking its
+      // internals as an "invalid params" answer. The Mcp-Name validation
+      // already proved `params.name` is a string.
+      const outcome = tryRenderPrompt(
+        params.name as string,
+        asRecord(params.arguments) as Record<string, string> | undefined,
+      );
+      if ("invalid" in outcome) {
+        return errorResponse(400, id, INVALID_PARAMS, outcome.invalid);
       }
       return resultResponse(id, {
-        messages: [{ content: { text, type: "text" }, role: "user" }],
+        messages: [
+          { content: { text: outcome.text, type: "text" }, role: "user" },
+        ],
       });
     }
 
@@ -397,19 +397,13 @@ export async function handleModernRequest(
 
     case "resources/read": {
       // `Mcp-Name` validation above already proved `params.uri` is a string.
-      try {
-        return resultResponse(id, {
-          ...CACHEABLE,
-          ...(await readResource(params.uri as string)),
-        });
-      } catch (error) {
-        if (error instanceof ResourceNotFoundError) {
-          // -32602, not the retired -32002: this revision renumbered resource
-          // not found onto Invalid Params.
-          return errorResponse(400, id, INVALID_PARAMS, error.message);
-        }
-        throw error;
+      const read = await readResource(params.uri as string);
+      if ("missing" in read) {
+        // -32602, not the retired -32002: this revision renumbered resource
+        // not found onto Invalid Params.
+        return errorResponse(400, id, INVALID_PARAMS, read.missing);
       }
+      return resultResponse(id, { ...CACHEABLE, ...read });
     }
 
     case "subscriptions/listen":

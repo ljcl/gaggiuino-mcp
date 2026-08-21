@@ -252,16 +252,6 @@ export const RESOURCE_TEMPLATES = [
   },
 ];
 
-/**
- * A `resources/read` naming something this server does not hold.
- *
- * Typed so each era can answer in its own vocabulary: the legacy SDK path lets
- * it propagate as the generic JSON-RPC error it always produced, while the
- * modern dispatcher maps it to `-32602` — the 2026-07-28 revision retired the
- * old `-32002` resource-not-found code in favour of Invalid Params.
- */
-export class ResourceNotFoundError extends Error {}
-
 /** A `type` for the same implicit-index-signature reason as {@link CallToolResultShape}. */
 export type ResourceContents = {
   contents: Array<{
@@ -272,8 +262,20 @@ export type ResourceContents = {
   }>;
 };
 
-/** Read one resource by URI, shared by both eras' `resources/read`. */
-export async function readResource(uri: string): Promise<ResourceContents> {
+/**
+ * Read one resource by URI, shared by both eras' `resources/read`.
+ *
+ * A URI this server does not hold comes back as `{ missing }` — text written
+ * for the caller — rather than a throw, so each era answers in its own
+ * vocabulary without reading a caught exception into a response body: the
+ * modern dispatcher maps it to `-32602` (the 2026-07-28 revision retired the
+ * old `-32002` resource-not-found code in favour of Invalid Params), and the
+ * legacy handler converts it to the thrown error the SDK path always
+ * produced.
+ */
+export async function readResource(
+  uri: string,
+): Promise<ResourceContents | { missing: string }> {
   if (uri === "gaggiuino://profiles") {
     return {
       contents: [{ uri, mimeType: "text/plain", text: getAllProfilesText() }],
@@ -283,8 +285,7 @@ export async function readResource(uri: string): Promise<ResourceContents> {
   const profileId = profileMatch?.[1];
   if (profileId) {
     const profile = getProfile(profileId);
-    if (!profile)
-      throw new ResourceNotFoundError(`Profile not found: ${profileId}`);
+    if (!profile) return { missing: `Profile not found: ${profileId}` };
     return {
       contents: [
         {
@@ -308,7 +309,7 @@ export async function readResource(uri: string): Promise<ResourceContents> {
       ],
     };
   }
-  throw new ResourceNotFoundError(`Unknown resource: ${uri}`);
+  return { missing: `Unknown resource: ${uri}` };
 }
 
 export function createServer() {
@@ -345,9 +346,13 @@ export function createServer() {
   server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
     resourceTemplates: RESOURCE_TEMPLATES,
   }));
-  server.setRequestHandler(ReadResourceRequestSchema, async (request) =>
-    readResource(request.params.uri),
-  );
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const outcome = await readResource(request.params.uri);
+    // The throw the SDK path has always answered with; the missing text is a
+    // value so the modern era never has to read it off a caught exception.
+    if ("missing" in outcome) throw new Error(outcome.missing);
+    return outcome;
+  });
 
   return server;
 }

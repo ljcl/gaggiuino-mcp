@@ -340,27 +340,56 @@ export function advertisedPrompts(): Prompt[] {
 }
 
 /**
+ * A rendered prompt, or the refusal text a bad request earns. `invalid` is
+ * written for the caller — it is what both eras put in the JSON-RPC error.
+ */
+export type PromptRenderOutcome = { text: string } | { invalid: string };
+
+/**
  * The one place a prompt is rendered.
  *
  * Mirrors `handleToolCall`: arguments are parsed against the same schema the
  * advertised `arguments` array was generated from, so a render function receives
  * typed values and never re-checks presence. Prompts have no `isError` channel,
- * so a bad request throws — which is what a host needs in order to put the
- * missing field back in front of the user.
+ * so a bad request is a JSON-RPC error — which is what a host needs in order to
+ * put the missing field back in front of the user.
+ *
+ * The expected failure is a *value*, not an exception, and the modern-era
+ * dispatcher depends on that: text read off a caught exception is exactly what
+ * flows a genuine bug's internals into an HTTP response body (CodeQL's
+ * stack-trace-exposure rule treats every catch parameter as such a source, and
+ * it is right to). The legacy SDK path needs a throw, and `renderPrompt` below
+ * is that wrapper.
+ */
+export function tryRenderPrompt(
+  name: string,
+  args: Record<string, string> | undefined,
+): PromptRenderOutcome {
+  const prompt = PROMPTS_BY_NAME.get(name);
+  if (!prompt) {
+    return { invalid: `Unknown prompt: ${name}` };
+  }
+  const parsed = prompt.argsSchema.safeParse(args ?? {});
+  if (!parsed.success) {
+    return {
+      invalid: `Invalid arguments for prompt ${name}:\n${formatFieldIssues(parsed.error)}\nSupply the listed arguments and request the prompt again.`,
+    };
+  }
+  return { text: prompt.render(parsed.data) };
+}
+
+/**
+ * The throwing surface the legacy SDK path requires: `prompts/get` has only
+ * the JSON-RPC error channel, and the SDK builds it from what a handler
+ * throws.
  */
 export function renderPrompt(
   name: string,
   args: Record<string, string> | undefined,
 ): string {
-  const prompt = PROMPTS_BY_NAME.get(name);
-  if (!prompt) {
-    throw new Error(`Unknown prompt: ${name}`);
+  const outcome = tryRenderPrompt(name, args);
+  if ("invalid" in outcome) {
+    throw new Error(outcome.invalid);
   }
-  const parsed = prompt.argsSchema.safeParse(args ?? {});
-  if (!parsed.success) {
-    throw new Error(
-      `Invalid arguments for prompt ${name}:\n${formatFieldIssues(parsed.error)}\nSupply the listed arguments and request the prompt again.`,
-    );
-  }
-  return prompt.render(parsed.data);
+  return outcome.text;
 }

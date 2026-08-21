@@ -558,10 +558,14 @@ values and never re-checks presence. Four things follow from that shape.
 - **A prompt has no `isError` channel.** A tool answers a bad call with a result
   the model can read; `prompts/get` has only the JSON-RPC error, which is also
   what a host needs in order to put the missing field back in front of the user.
-  So `renderPrompt` throws where `handleToolCall` returns. Both render the
-  offending fields through `formatFieldIssues` in `errors.ts` — same list of
-  fields, different closing advice, because "check the input schema" is advice for
-  a model and not for a person filling in a form.
+  `tryRenderPrompt` returns the refusal as a value (`{ invalid }`), and
+  `renderPrompt` is the thin throwing wrapper the legacy SDK path needs —
+  `prompts/get` there builds its JSON-RPC error from what a handler throws,
+  while the modern dispatcher serves the value directly and never reads text
+  off a caught exception. Both render the offending fields through
+  `formatFieldIssues` in `errors.ts` — same list of fields, different closing
+  advice, because "check the input schema" is advice for a model and not for a
+  person filling in a form.
 - **Blank and absent are the same argument.** Hosts render prompt arguments as
   form fields and an untouched field arrives as `""`, so a required argument
   trims to `.min(1)` and an optional one transforms `""` back to `undefined`.
@@ -1669,8 +1673,17 @@ Things worth not re-breaking:
   version does not have. Legacy clients never see this list; they negotiate
   through `initialize` as before.
 - **Resource not found is `-32602`, modern-side only.** The revision retired
-  `-32002` and forbids emitting it; `ResourceNotFoundError` in `server.ts` is
-  the seam that lets each era answer in its own vocabulary.
+  `-32002` and forbids emitting it. `readResource` returns the missing text as
+  a value (`{ missing }`), the modern dispatcher maps it to `-32602`, and the
+  legacy handler converts it to the thrown error the SDK path always produced.
+- **`modern.ts` contains no `catch` that answers the caller, on purpose.**
+  Expected failures arrive as values (`tryRenderPrompt`'s `{ invalid }`,
+  `readResource`'s `{ missing }`, `callTool`'s `isError` results), so nothing
+  read off a caught exception ever reaches a response body — text from a
+  genuine bug stays in the log, and a bug propagates instead of being dressed
+  up as an invalid-params answer. CodeQL's stack-trace-exposure rule treats
+  every catch parameter as a tainted source flowing to HTTP responses, and on
+  this point it is right; the fix was this shape, not a suppression.
 - **Cacheable results claim `ttlMs: 3600000, cacheScope: "private"`.**
   An hour, because everything under them is a module-level constant that
   changes only on redeploy — the same fact behind the missing `listChanged`
