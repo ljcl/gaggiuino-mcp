@@ -478,8 +478,8 @@ likely to make a self-hosted connector worse behaved than a directory one.
 The churn worth guarding is rarely deliberate. Nobody renames a tool by
 accident, but the advertised JSON Schema is **generated** — `z.toJSONSchema` over
 the same zod schemas the dispatcher enforces — so a routine `zod` or
-`@modelcontextprotocol/sdk` bump can reshape every input schema in the server
-without a line of this repo's code changing.
+`@modelcontextprotocol/server` bump can reshape every input schema in the
+server without a line of this repo's code changing.
 
 `apps/server/src/tool-contract.json` is that surface, committed;
 `toolContract.ts` normalizes it (keys sorted, so a cosmetic reordering does not
@@ -545,27 +545,26 @@ data for. An empty list is a valid answer; `-32601` is not.
 | `choose_profile`        | **roast_level**, drink, notes             | Pick a profile the machine actually holds          |
 
 `prompts.ts` mirrors the tool contract: one `definePrompt(...)` per prompt, and
-`renderPrompt` is the only place a prompt is rendered — it `safeParse`s the
+`tryRenderPrompt` is the only place a prompt is rendered — it `safeParse`s the
 arguments before the render function runs, so a render function receives typed
 values and never re-checks presence. Four things follow from that shape.
 
 - **The advertised `arguments` array is generated, never hand-written.**
   `promptArguments` runs the same `z.toJSONSchema` path the tool schemas use over
-  the schema `renderPrompt` enforces, so a name, description, or required flag
+  the schema `tryRenderPrompt` enforces, so a name, description, or required flag
   cannot drift from what is actually accepted. Every schema is a **string**
   schema, because strings are all the protocol carries; `prompts.test.ts` asserts
   that, since a number-accepting schema would advertise a shape no host can send.
 - **A prompt has no `isError` channel.** A tool answers a bad call with a result
   the model can read; `prompts/get` has only the JSON-RPC error, which is also
   what a host needs in order to put the missing field back in front of the user.
-  `tryRenderPrompt` returns the refusal as a value (`{ invalid }`), and
-  `renderPrompt` is the thin throwing wrapper the legacy SDK path needs —
-  `prompts/get` there builds its JSON-RPC error from what a handler throws,
-  while the modern dispatcher serves the value directly and never reads text
-  off a caught exception. Both render the offending fields through
-  `formatFieldIssues` in `errors.ts` — same list of fields, different closing
-  advice, because "check the input schema" is advice for a model and not for a
-  person filling in a form.
+  `tryRenderPrompt` returns the refusal as a value (`{ invalid }`), and the
+  one dual-era `prompts/get` handler turns it into the SDK's typed Invalid
+  Params error — never reading text off a caught exception, so a render
+  function that throws is a genuine bug and propagates. The offending fields
+  render through `formatFieldIssues` in `errors.ts` — the same helper the
+  tool dispatcher uses, different closing advice, because "check the input
+  schema" is advice for a model and not for a person filling in a form.
 - **Blank and absent are the same argument.** Hosts render prompt arguments as
   form fields and an untouched field arrives as `""`, so a required argument
   trims to `.min(1)` and an optional one transforms `""` back to `undefined`.
@@ -1560,16 +1559,15 @@ AGENTS.md ".env.example is checked against the code that reads it".
 which is why it stays out of the coverage set. Everything it delegates to is
 covered:
 
-- `http.ts` — `createFetchHandler({ security })` returns a `fetch` plus the live
-  session map. Tests drive it with real `Request` objects and never bind a port.
+- `http.ts` — `createFetchHandler({ security })` returns a `fetch` plus a
+  `shutdown`. Tests drive it with real `Request` objects and never bind a
+  port. The `/mcp` half is the v2 SDK's `createMcpHandler`; see Dual-era
+  protocol support below.
 - `mcpAuth.ts` — `loadSecurityConfig` / `checkRequest` / `describeSecurity`,
   plus `handlePreflight` / `corsHeaders`. `checkRequest` returns the `Response`
   to send, or `undefined` to proceed.
-- `mcpSession.ts` — the bounded, expiring transport registry. Generic over a
-  minimal `ClosableSession`, and its clock is injected, so its tests assert
-  "after 31 minutes of silence" without a timer or a wait.
-- `modern.ts` — the stateless 2026-07-28 dispatcher; see Dual-era protocol
-  support below.
+- `mcpTestClient.ts` — the era-parameterized wire client the suites share
+  (excluded from the coverage set with `test-setup.ts`; it is scaffolding).
 
 Five things about the gate are load-bearing:
 
@@ -1598,11 +1596,10 @@ Five things about the gate are load-bearing:
   status). A silent 401 or 403 leaves the two failures an operator actually hits
   indistinguishable from the server being unreachable.
 
-Validation runs as middleware in `fetch` rather than through the transport's
-`enableDnsRebindingProtection` / `allowedHosts` / `allowedOrigins` options:
-those are all `@deprecated` as of SDK 1.30.0 in favour of external middleware,
-and doing it here rejects a request before the body is read or a transport is
-allocated.
+Validation runs as middleware in `fetch`, ahead of the SDK handler: a
+rejected request costs nothing, and the v1 SDK's transport-level equivalents
+(`enableDnsRebindingProtection` and friends) were deprecated in favour of
+exactly this shape before the v2 migration removed them entirely.
 
 `secretsMatch` hashes both values before `timingSafeEqual`. That is not
 decoration — `timingSafeEqual` throws on a length mismatch, and the obvious
@@ -1626,65 +1623,74 @@ the status-code checks still run without it.
 
 ### Dual-era protocol support
 
-The 2026-07-28 MCP revision removed the `initialize` handshake and the
-`Mcp-Session-Id` header: every request carries its protocol version and client
+The 2026-07-28 MCP revision removed the `initialize` handshake and
+protocol-level sessions: every request carries its protocol version and client
 capabilities in `_meta` (mirrored into `MCP-Protocol-Version` / `Mcp-Method` /
 `Mcp-Name` headers), and the server answers each one statelessly. Its
-versioning spec defines the **dual-era server** this repo now is: a request
-carrying modern per-request `_meta` is served statelessly by `modern.ts`, an
-`initialize` selects the legacy session flow, and both are served concurrently
-on the same `/mcp` endpoint. The SDK (1.30.0) tops out at protocol 2025-11-25
-and knows nothing of the modern era, so `modern.ts` implements it directly;
-when the SDK grows native support, the dispatcher is the thing to replace.
+versioning spec defines the **dual-era server** this repo now is, and the v2
+SDK (`@modelcontextprotocol/server`, with the schemas in
+`@modelcontextprotocol/core`) implements both eras natively: `http.ts` builds
+one `createMcpHandler(() => createServer(), { legacy: "stateless" })` and the
+SDK does the era split, the header–body validation, `server/discover`,
+`resultType`, the `ttlMs`/`cacheScope` stamps (from the `cacheHints` server
+option), and per-result `serverInfo`. `strava-mcp` (the sister repo) took the
+same shape in its #346, and its `createMcpHandler` behaviour notes apply here.
 
 Things worth not re-breaking:
 
-- **The era split is keyed on the request, never the connection.** `http.ts`
-  routes to `handleModernRequest` when the body carries
-  `_meta["io.modelcontextprotocol/protocolVersion"]`, when the
-  `MCP-Protocol-Version` header names a modern version, or when the method is
-  modern-only (`server/discover`, `subscriptions/listen`). The last two exist
-  so a *broken* modern client still gets a modern-shaped error — a non-modern
-  error body is exactly what tells a dual-era client to fall back to
-  `initialize` against this server, which would be wrong. Batches stay legacy:
-  the modern body is a single request.
-- **The split runs after the security gate and the scope gate**, so the modern
-  era inherited both rather than reimplementing them. Auth stays an HTTP
-  status in every era, and a modern write call on a read-only token 403s
-  before dispatch.
+- **The era split is keyed on the request's `_meta` envelope, never the
+  connection.** A request carrying the reserved
+  `io.modelcontextprotocol/protocolVersion` key is served under 2026-07-28
+  semantics; anything else — `initialize`, bare method calls, JSON-RPC
+  batches — is legacy traffic. A modern `MCP-Protocol-Version` header on a
+  body with no envelope gets a modern-shaped 400 naming the missing keys, so
+  a half-migrated client is corrected rather than silently served legacy
+  semantics. The method name alone is *not* an era marker: a bare
+  `server/discover` with no envelope is legacy traffic and earns the legacy
+  `-32601` (`modern.test.ts` pins all of this).
+- **Both eras are served statelessly, by one `createServer` factory.**
+  Protocol sessions left with the revision that removed them: no
+  `Mcp-Session-Id` is minted (the 2025 spec always made the header
+  server-optional — an initialize simply gets no session to carry), a stale
+  session id from a pre-3.x deployment is ignored rather than 404ed, and the
+  2025 session operations — GET's standalone stream and DELETE — answer 405,
+  which that spec allows. The GET stream carried only server-initiated
+  messages this server never sends (no `listChanged`, no subscriptions), so
+  nothing a legacy client can observe was lost with it. The session
+  registry, its eviction policy, and the 404 re-handshake contract died with
+  the sessions; `git log` has the reasoning if a sessionful transport ever
+  returns.
+- **The split runs after the security gate and the scope gate**, so both eras
+  inherit them: `http.ts` parses each POST body once (the parse-error answer,
+  the scope gate, and the SDK's `parsedBody` all read the same parse), and a
+  modern write call on a read-only token 403s before dispatch. Auth stays an
+  HTTP status in every era.
 - **Both eras serve one advertised surface.** `TOOLS`, `advertisedPrompts()`,
   `RESOURCES`, `RESOURCE_TEMPLATES` and `SERVER_CAPABILITIES` are the shared
-  constants both handlers read, and `modern.test.ts` asserts deep equality
-  with the legacy list — a host migrating eras must see byte-identical tools
-  or its stored permission grants silently drop. `callTool` in `server.ts` is
-  the shared dispatch-and-log layer, so "every call is one record" holds in
-  both eras.
-- **Modern errors ride HTTP statuses.** 400 for header/body mismatch
-  (`-32020 HeaderMismatch`), unsupported version (`-32022`, with
-  `data.supported` for the client to retry from) and invalid params
-  (`-32602`); 404 with `-32601` for an unknown method — the body is what
-  distinguishes a modern server missing the method from a legacy HTTP+SSE
-  server missing the endpoint. Every refusal is logged as `modern.rejected`,
-  for the same reason the gate logs `security.rejected`. Tool failures stay
-  `isError` *results* at 200, as in the legacy era.
+  constants the one set of handlers reads, and `modern.test.ts` asserts the
+  modern `tools/list` deep-equals the legacy list — a host migrating eras
+  must see byte-identical tools or its stored permission grants silently
+  drop. `callTool` in `server.ts` is the shared dispatch-and-log layer, so
+  "every call is one record" holds in both eras.
 - **The advertised `supported` versions list only `2026-07-28`.** Padding it
-  with the legacy versions the SDK half negotiates would invite a modern
+  with the legacy versions the handshake negotiates would invite a modern
   client to retry `2025-11-25` with per-request metadata — semantics that
   version does not have. Legacy clients never see this list; they negotiate
   through `initialize` as before.
-- **Resource not found is `-32602`, modern-side only.** The revision retired
-  `-32002` and forbids emitting it. `readResource` returns the missing text as
-  a value (`{ missing }`), the modern dispatcher maps it to `-32602`, and the
-  legacy handler converts it to the thrown error the SDK path always produced.
-- **`modern.ts` contains no `catch` that answers the caller, on purpose.**
-  Expected failures arrive as values (`tryRenderPrompt`'s `{ invalid }`,
-  `readResource`'s `{ missing }`, `callTool`'s `isError` results), so nothing
-  read off a caught exception ever reaches a response body — text from a
-  genuine bug stays in the log, and a bug propagates instead of being dressed
-  up as an invalid-params answer. CodeQL's stack-trace-exposure rule treats
-  every catch parameter as a tainted source flowing to HTTP responses, and on
-  this point it is right; the fix was this shape, not a suppression.
-- **Cacheable results claim `ttlMs: 3600000, cacheScope: "private"`.**
+- **Resource not found is `-32602` in both eras**, the code the revision
+  renumbered it onto (never the retired `-32002`). `readResource` returns the
+  missing text as a value (`{ missing }`) and the handler throws the SDK's
+  typed `ResourceNotFoundError` from it, whose `data` echoes the uri — how a
+  client tells this `-32602` from ordinary invalid params.
+- **No handler reads text off a caught exception into a response, on
+  purpose.** Expected failures arrive as values (`tryRenderPrompt`'s
+  `{ invalid }` becomes a typed Invalid Params throw, `readResource`'s
+  `{ missing }`, `callTool`'s `isError` results), so a genuine bug propagates
+  to the SDK's error shaping instead of being dressed up as a caller
+  mistake. CodeQL's stack-trace-exposure rule treats every catch parameter
+  as a tainted source flowing to HTTP responses, and on this point it is
+  right; the fix was this shape, not a suppression.
+- **Cacheable results claim `ttlMs: 3600000` and the SDK's `private` scope.**
   An hour, because everything under them is a module-level constant that
   changes only on redeploy — the same fact behind the missing `listChanged`
   claims. `private` although nothing served is user-specific: the documented
@@ -1692,20 +1698,16 @@ Things worth not re-breaking:
   intermediaries caching across authorization contexts can never serve a
   gated answer to a caller the gate would refuse; `public` would only buy
   shared-gateway caching, worth nothing on a single-user server.
-- **`subscriptions/listen` acknowledges an empty honoured set and closes.**
-  This server has nothing to put on the stream (no `listChanged`, no
-  `resources.subscribe` — every list is a constant), and the spec has the
-  server omit every unsupported type from the acknowledgement. Ack-then-
-  graceful-close is the honest answer; holding a socket open per client to
-  never send anything says nothing the empty acknowledgement has not.
-- **Two spec-reserved errors are deliberately never emitted.**
-  `-32021 MissingRequiredClientCapability`: this server requires no client
-  capabilities — it never samples, elicits, or lists roots, so the MRTR
-  pattern has nothing here to carry. And `-32002`, per above.
-- **Legacy stays until clients migrate, then `modern.ts` outlives it.** The
-  session registry, the GET/DELETE routes and the SDK transport are the
-  legacy era's whole footprint; removing them later is deleting the branch,
-  not untangling it.
+- **`subscriptions/listen` acknowledges an empty honoured set.** This server
+  has nothing to put on the stream (every list is a constant), and the spec
+  has the server omit every unsupported type from the acknowledgement; the
+  SDK holds the stream open for the subscription's lifetime, and a client
+  that saw the empty set has learned nothing will ever arrive on it.
+- **Every modern validation refusal reaches the log** through the handler's
+  `onerror` (`mcp.error`), for the same reason the gate logs
+  `security.rejected`: a silent 4xx leaves a half-migrated client
+  indistinguishable from an unreachable server. Tool failures stay `isError`
+  *results* at 200, as in the legacy era.
 
 ### OAuth, and why an auth refusal is not a tool result
 
@@ -1899,11 +1901,13 @@ Things worth not re-breaking:
   `signConsentToken` HMACs the pending authorization plus an expiry under a third
   HKDF `info`, and there is nothing left to evict.
 
-  This is the same bounded-map question `mcpSession.ts` answers the opposite way,
-  and the difference is the recovery path, not the capacity. An evicted MCP
-  session gets the spec's 404 and re-handshakes on its own; an evicted consent
-  page gets a dead end and a human who has to start over. Eviction is survivable
-  there and *is* the attack here.
+  This is the same bounded-map question the session-era transport registry
+  answered the opposite way (an evicted MCP session got the spec's 404 and
+  re-handshook on its own — survivable), and the difference was always the
+  recovery path, not the capacity: an evicted consent page gets a dead end and
+  a human who has to start over. Eviction *is* the attack here. The session
+  registry has since left with protocol sessions themselves, which resolves
+  its half of the question the strongest way — no map at all.
 
   **The stated cost is that a consent token is not single-use**, so a
   captured submission can be replayed inside its TTL. Acceptable, and the reason
@@ -2001,76 +2005,10 @@ server configured at all — as a single check on `oauth`.
 That state must stay an `isError`: a 401 pointing at metadata that does not
 exist produces Anthropic's documented "Couldn't reach the MCP server."
 
-### Session lifetime
-
-Sessions expire on an idle TTL (30 min) and are capped (64). The two are not
-redundant: the TTL reclaims sessions whose client vanished without a DELETE — a
-dropped tunnel, a restarted host — and the cap bounds anything that outruns it.
-
-**The cap evicts rather than refuses, and `reserve()` therefore always
-succeeds.** Refusing with a 503 over the cap reads as prudent and is
-not: Claude opens a fresh session per tool call and never sends a DELETE — five
-`session.opened` records in forty seconds with no `session.closed` between them,
-observed on the real deployment.
-Nothing that arrives inside the 30-minute TTL is sweepable, so a refusing cap
-ends a working conversation at ~64 tool calls in
-half an hour, and the advice a 503 carries
-("retry shortly") is another `initialize` — the thing that filled the map.
-
-What makes eviction survivable is the 404 rule below: an evicted client's next
-request gets the spec's own re-handshake signal and recovers on its own, where a
-503 on `initialize` has no recovery at all. That asymmetry is the argument, not
-the raw capacity number — the cap bounds *memory* rather than conversation
-length. `reserve()` still sweeps first, because reclaiming a client that is
-genuinely gone always beats closing one that is merely oldest, and it evicts by
-**least recently seen** rather than oldest-opened, so the session doing the work
-is the last to go.
-
-Three details are load-bearing. `evict()` deletes each entry before calling
-`close()`, because the real transport's `onclose` calls straight back into
-`delete` — closing first means mutating the map mid-iteration. Each `close()` is
-individually caught, so one transport that refuses to die does not strand the
-rest. And the eviction walks a **snapshot** of ids sorted by `lastSeen` rather
-than re-finding the oldest in a `while`: it frees more than one slot when a cap
-lowered between restarts has left the map over the new ceiling, and a finite
-list cannot spin the way a loop conditioned on `sessions.size` could if an entry
-ever failed to leave the map. `maxSessions` is clamped to at least 1 so
-`reserve()`'s promise stays total. All have tests named after the failure.
-
-That shape was also chosen against the coverage rule: the obvious version —
-`while (size >= cap)` around a `leastRecentlySeen()` that returns
-`string | undefined` — needs a guard for an `undefined` that `cap >= 1` makes
-unreachable. Restructuring removed the dead branch rather than paying for it, or
-worse, weakening the threshold to accommodate it.
-
-`onEvicted` reports `idle` or `capacity`, and the distinction is the diagnostic:
-a run of `capacity` evictions is the signature of a host that is not reusing its
-sessions, which is a different problem from clients going away.
-
-`index.ts` handles **SIGTERM as well as SIGINT** — `docker stop` sends SIGTERM,
-so handling only SIGINT leaves the container killed after the grace period
-with every session still open. It stops the listener before draining, so nothing
-lands on a transport that is closing.
-
-**An unrecognised session id is a 404 on every method**, and the distinction
-from 400 is the whole point: 404 is the Streamable HTTP spec's signal that a
-session is gone and the client should re-handshake with `initialize`. Answering
-400 — "your request is malformed" — for an expired session
-as well as a missing header strands the client, because no client recovers from
-a 400 by re-handshaking: a session the idle TTL reclaimed would sit dead instead
-of prompting a
-reconnect. 400 means only what it says: the `Mcp-Session-Id` header is
-absent.
-
-That rule is what the capacity eviction
-above is built on. Closing a live session is only acceptable because its client
-gets a 404 and re-handshakes, so anything that softened this back toward a 400
-would turn every eviction into a stranded client.
-
 ### Logging, health, and startup validation
 
 `logging.ts` writes one JSON object per line to stderr, each with an `event`
-name (`tool.call`, `session.opened`, `security.unauthenticated`,
+name (`tool.call`, `mcp.initialize`, `security.unauthenticated`,
 `config.invalid`, …). The level resolves **lazily on first use**, not at module
 load — that is what lets `test-setup.ts` call `setLogLevel("silent")` and have
 it apply regardless of import order. `createLogger` takes an injectable sink and
@@ -2083,14 +2021,18 @@ expected failure it also carries `reason` — the same actionable text the model
 got, because a bare `"error"` throws away the only useful part. A genuine bug
 logs `tool.error` at error level with the stack.
 
-`session.opened` carries `client`, `clientVersion`, and `protocolVersion`, read
-from the `initialize` request itself rather than the server's later
-`oninitialized` callback so they are known when the session id is minted. An
-opaque uuid alone answers neither question an operator has when a host misbehaves:
-which client is this, and is it re-handshaking every turn or reusing a session?
-One `session.opened` per turn from the same client name is the signature of a
-host that threw its session away — which is worth knowing before blaming this
-server for a connector that keeps re-prompting.
+`mcp.initialize` carries `client`, `clientVersion`, and `protocolVersion`,
+read from the `initialize` request body in `http.ts` — the successor to the
+session era's `session.opened`. Under stateless legacy serving a handshake per
+turn is the expected cadence rather than a session thrown away, but the client
+name and negotiated version are still the two facts an operator needs when a
+host misbehaves; modern-era requests carry the same identity in their `_meta`
+envelope and send no `initialize` at all.
+
+`index.ts` handles **SIGTERM as well as SIGINT** — `docker stop` sends
+SIGTERM, so handling only SIGINT leaves the container killed after the grace
+period with work still in flight. It stops the listener before closing the
+handler, so nothing lands on an endpoint that is shutting down.
 
 `/health` returns JSON (`buildHealth` in `health.ts`) and **stays 200 while the
 machine is unreachable**. That is load-bearing: the container HEALTHCHECK reads

@@ -1023,6 +1023,8 @@ describe("the token the flow produced", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("mcp-session-id")).toBeTruthy();
+    // Stateless serving mints no session id; the 200 on the handshake is the
+    // proof the token cleared the gate.
+    expect(response.headers.get("mcp-session-id")).toBeNull();
   });
 });

@@ -1,4 +1,4 @@
-import { OAuthProtectedResourceMetadataSchema } from "@modelcontextprotocol/sdk/shared/auth.js";
+import { OAuthProtectedResourceMetadataSchema } from "@modelcontextprotocol/core";
 import { type ExternalIssuer } from "./externalIssuer";
 import { ALL_SCOPES, ALL_SCOPES_HEADER } from "./scopes";
 

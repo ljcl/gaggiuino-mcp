@@ -1,5 +1,5 @@
 import { webcrypto } from "node:crypto";
-import { checkResourceAllowed } from "@modelcontextprotocol/sdk/shared/auth-utils.js";
+import { checkResourceAllowed } from "@modelcontextprotocol/server";
 import { createCache, type TtlCache } from "../cache";
 import { logger } from "../logging";
 import { type TokenFailure } from "./tokens";

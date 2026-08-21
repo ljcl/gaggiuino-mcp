@@ -1,7 +1,4 @@
-import {
-  type Prompt,
-  type PromptArgument,
-} from "@modelcontextprotocol/sdk/types.js";
+import { type Prompt, type PromptArgument } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { formatFieldIssues } from "./errors";
 import { DIAL_IN_PROMPT_NAME, renderDialInGuidance } from "./guidance";
@@ -354,12 +351,13 @@ export type PromptRenderOutcome = { text: string } | { invalid: string };
  * so a bad request is a JSON-RPC error — which is what a host needs in order to
  * put the missing field back in front of the user.
  *
- * The expected failure is a *value*, not an exception, and the modern-era
- * dispatcher depends on that: text read off a caught exception is exactly what
- * flows a genuine bug's internals into an HTTP response body (CodeQL's
- * stack-trace-exposure rule treats every catch parameter as such a source, and
- * it is right to). The legacy SDK path needs a throw, and `renderPrompt` below
- * is that wrapper.
+ * The expected failure is a *value*, not an exception, and the `prompts/get`
+ * handler depends on that: it turns `invalid` into the SDK's typed Invalid
+ * Params error, and text read off a caught exception is exactly what flows a
+ * genuine bug's internals into an HTTP response body (CodeQL's
+ * stack-trace-exposure rule treats every catch parameter as such a source,
+ * and it is right to). A render function that throws is a genuine bug and
+ * propagates.
  */
 export function tryRenderPrompt(
   name: string,
@@ -376,20 +374,4 @@ export function tryRenderPrompt(
     };
   }
   return { text: prompt.render(parsed.data) };
-}
-
-/**
- * The throwing surface the legacy SDK path requires: `prompts/get` has only
- * the JSON-RPC error channel, and the SDK builds it from what a handler
- * throws.
- */
-export function renderPrompt(
-  name: string,
-  args: Record<string, string> | undefined,
-): string {
-  const outcome = tryRenderPrompt(name, args);
-  if ("invalid" in outcome) {
-    throw new Error(outcome.invalid);
-  }
-  return outcome.text;
 }

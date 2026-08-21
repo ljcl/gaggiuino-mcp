@@ -1,4 +1,4 @@
-import { type Tool } from "@modelcontextprotocol/sdk/types.js";
+import { type Tool } from "@modelcontextprotocol/server";
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getClient, resetClient } from "./client";
@@ -149,23 +149,22 @@ describe("/mcp security gate", () => {
     const response = await handler.fetch(post(initializeBody()));
     expect(response.status).toBe(401);
     expect(response.headers.get("WWW-Authenticate")).toContain("Bearer");
-    // Nothing was allocated for a request that never got past the gate.
-    expect(handler.sessions.size).toBe(0);
   });
 
-  it("rejects a browser origin with 403 before touching the transport", async () => {
+  it("rejects a browser origin with 403 before touching the handler", async () => {
     const response = await handler.fetch(
       post(initializeBody(), authorized({ origin: "https://evil.test" })),
     );
     expect(response.status).toBe(403);
-    expect(handler.sessions.size).toBe(0);
   });
 
-  it("completes the handshake and registers a session with a valid token", async () => {
+  it("answers the handshake with a valid token, minting no session", async () => {
+    // The 2026-07-28 revision removed protocol sessions; the stateless legacy
+    // fallback never mints one, which the 2025 spec allows — the session
+    // header was always server-optional.
     const response = await handler.fetch(post(initializeBody(), authorized()));
     expect(response.status).toBe(200);
-    expect(response.headers.get("mcp-session-id")).toBeTruthy();
-    expect(handler.sessions.size).toBe(1);
+    expect(response.headers.get("mcp-session-id")).toBeNull();
   });
 
   it("serves an unauthenticated deployment when no token is configured", async () => {
@@ -176,76 +175,43 @@ describe("/mcp security gate", () => {
 });
 
 describe("/mcp routing", () => {
-  it("rejects a POST that is neither initialize nor a known session", async () => {
+  it("serves a legacy request with no prior handshake — each stands alone", async () => {
+    // Stateless legacy serving: a fresh server instance answers every POST,
+    // so a host that never sent initialize (or whose turn opens mid-flight)
+    // is served rather than told "no valid session ID".
     const response = await handler.fetch(
       post(
         JSON.stringify({ id: 1, jsonrpc: "2.0", method: "tools/list" }),
         authorized(),
       ),
     );
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(200);
   });
 
-  it("rejects a POST naming a session that does not exist", async () => {
+  it("ignores a stale Mcp-Session-Id from the session era", async () => {
+    // A client that stored a session id from a pre-3.x deployment must not be
+    // stranded: the header is ignored, not 404ed — the id addresses nothing.
     const response = await handler.fetch(
       post(
         JSON.stringify({ id: 1, jsonrpc: "2.0", method: "tools/list" }),
-        authorized({ "mcp-session-id": "not-a-session" }),
+        authorized({ "mcp-session-id": "from-the-session-era" }),
       ),
     );
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(200);
   });
 
-  it("rejects a GET with no session id", async () => {
-    const response = await handler.fetch(
-      new Request("http://localhost:8000/mcp", {
-        headers: authorized({ accept: "text/event-stream" }),
-      }),
-    );
-    expect(response.status).toBe(400);
-  });
-
-  it("answers a GET naming an expired session with 404, not 400", async () => {
-    // 404 is the spec's signal that a session id is not recognised, and it is
-    // what tells a client to re-handshake. This used to answer 400 — "your
-    // request is malformed" — which no client recovers from by sending
-    // initialize, so a session reclaimed by the idle TTL stranded its client.
-    const response = await handler.fetch(
-      new Request("http://localhost:8000/mcp", {
-        headers: authorized({
-          accept: "text/event-stream",
-          "mcp-session-id": "reclaimed-by-the-reaper",
+  it("answers the 2025 session operations (GET and DELETE) with 405", async () => {
+    // Stateless serving has no standalone stream to open and no session to
+    // delete; the 2025 spec allows a server to answer both with 405.
+    for (const method of ["GET", "DELETE"]) {
+      const response = await handler.fetch(
+        new Request("http://localhost:8000/mcp", {
+          headers: authorized({ accept: "text/event-stream" }),
+          method,
         }),
-      }),
-    );
-    expect(response.status).toBe(404);
-    const body = (await response.json()) as { error: { message: string } };
-    expect(body.error.message).toContain("initialize");
-  });
-
-  it("answers a DELETE naming an expired session with 404", async () => {
-    const response = await handler.fetch(
-      new Request("http://localhost:8000/mcp", {
-        headers: authorized({ "mcp-session-id": "already-gone" }),
-        method: "DELETE",
-      }),
-    );
-    expect(response.status).toBe(404);
-  });
-
-  it("closes a session on DELETE and drops it from the map", async () => {
-    const init = await handler.fetch(post(initializeBody(), authorized()));
-    const sessionId = init.headers.get("mcp-session-id") ?? "";
-    expect(handler.sessions.size).toBe(1);
-
-    const response = await handler.fetch(
-      new Request("http://localhost:8000/mcp", {
-        headers: authorized({ "mcp-session-id": sessionId }),
-        method: "DELETE",
-      }),
-    );
-    expect(response.status).toBeLessThan(300);
-    expect(handler.sessions.size).toBe(0);
+      );
+      expect(response.status, method).toBe(405);
+    }
   });
 
   it("answers an unsupported method with 405", async () => {
@@ -265,65 +231,6 @@ describe("/mcp routing", () => {
     expect(response.status).toBe(400);
     const body = (await response.json()) as { error: { code: number } };
     expect(body.error.code).toBe(-32700);
-  });
-});
-
-describe("session capacity", () => {
-  it("admits a new session at the cap by evicting, never by refusing", async () => {
-    // #122: Claude opens a session per tool call and never DELETEs, so at the
-    // cap a 503 would end a working conversation — and its "retry shortly" is
-    // another initialize, which is what filled the map.
-    handler = createFetchHandler({
-      security: GATED,
-      sessions: { maxSessions: 1 },
-    });
-    const first = await handler.fetch(post(initializeBody(), authorized()));
-    expect(first.status).toBe(200);
-    const evicted = first.headers.get("mcp-session-id");
-
-    const second = await handler.fetch(post(initializeBody(), authorized()));
-    expect(second.status).toBe(200);
-    expect(handler.sessions.size).toBe(1);
-    expect(second.headers.get("mcp-session-id")).not.toBe(evicted);
-  });
-
-  it("answers the evicted session's next request with 404, not 400", async () => {
-    // The eviction is only survivable because of this: 404 is the Streamable
-    // HTTP signal to re-handshake, so a client whose slot was taken recovers
-    // on its own. 400 would strand it.
-    handler = createFetchHandler({
-      security: GATED,
-      sessions: { maxSessions: 1 },
-    });
-    const first = await handler.fetch(post(initializeBody(), authorized()));
-    const evicted = first.headers.get("mcp-session-id") ?? "";
-    await handler.fetch(post(initializeBody(), authorized()));
-
-    const stranded = await handler.fetch(
-      post(
-        JSON.stringify({ id: 2, jsonrpc: "2.0", method: "tools/list" }),
-        authorized({ "mcp-session-id": evicted }),
-      ),
-    );
-    expect(stranded.status).toBe(404);
-  });
-
-  it("admits a new session once an abandoned one ages out", async () => {
-    // The leak this bounds is a client that vanishes without a DELETE: a
-    // dropped tunnel, a restarted host. Its session must not hold a slot
-    // forever.
-    let now = 1_000_000;
-    handler = createFetchHandler({
-      security: GATED,
-      sessions: { idleTimeoutMs: 1_000, maxSessions: 1, now: () => now },
-    });
-    await handler.fetch(post(initializeBody(), authorized()));
-    expect(handler.sessions.size).toBe(1);
-
-    now += 2_000;
-    const second = await handler.fetch(post(initializeBody(), authorized()));
-    expect(second.status).toBe(200);
-    expect(handler.sessions.size).toBe(1);
   });
 });
 
@@ -364,12 +271,6 @@ describe("browser origins", () => {
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe(
       "https://claude.ai",
     );
-    // The session id is not CORS-safelisted; unexposed, the client has no
-    // session to continue with even though the handshake succeeded.
-    expect(response.headers.get("Access-Control-Expose-Headers")).toContain(
-      "mcp-session-id",
-    );
-    expect(response.headers.get("mcp-session-id")).toBeTruthy();
   });
 
   it("adds no CORS headers for a client that sent no Origin", async () => {
@@ -401,12 +302,10 @@ describe("tools/list over the real transport", () => {
    * here would have told us.
    */
   async function listTools(): Promise<Tool[]> {
-    const init = await handler.fetch(post(initializeBody(), authorized()));
-    const sessionId = init.headers.get("mcp-session-id") ?? "";
     const response = await handler.fetch(
       post(
         JSON.stringify({ id: 2, jsonrpc: "2.0", method: "tools/list" }),
-        authorized({ "mcp-session-id": sessionId }),
+        authorized(),
       ),
     );
     expect(response.status).toBe(200);
@@ -503,10 +402,11 @@ describe("tools/list over the real transport", () => {
   });
 });
 
-describe("session logging", () => {
-  it("records which client opened the session", async () => {
-    // An opaque uuid answered neither question an operator has when a host
-    // re-prompts: which client is this, and is it re-handshaking every turn?
+describe("initialize logging", () => {
+  it("records which client is handshaking, and at which revision", async () => {
+    // The successor to the session era's session.opened record: which client
+    // is this, and what did it negotiate? Under stateless legacy serving an
+    // initialize per turn is the expected cadence, not a session thrown away.
     const records: Array<Record<string, unknown>> = [];
     const spy = vi.spyOn(console, "error").mockImplementation((line) => {
       records.push(JSON.parse(String(line)));
@@ -519,12 +419,42 @@ describe("session logging", () => {
       setLogLevel("silent");
     }
     expect(
-      records.find((entry) => entry.event === "session.opened"),
+      records.find((entry) => entry.event === "mcp.initialize"),
     ).toMatchObject({
       client: "test",
       clientVersion: "1.0",
       protocolVersion: "2025-06-18",
     });
+  });
+
+  it("still records a handshake whose params carry no client identity", async () => {
+    // clientInfo is the client's own claim; a broken client that omits it
+    // must not crash the log line that exists to diagnose broken clients.
+    const records: Array<Record<string, unknown>> = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((line) => {
+      records.push(JSON.parse(String(line)));
+    });
+    setLogLevel("info");
+    try {
+      await handler.fetch(
+        post(
+          JSON.stringify({ id: 1, jsonrpc: "2.0", method: "initialize" }),
+          authorized(),
+        ),
+      );
+    } finally {
+      spy.mockRestore();
+      setLogLevel("silent");
+    }
+    expect(
+      records.find((entry) => entry.event === "mcp.initialize"),
+    ).toBeTruthy();
+  });
+
+  it("passes a JSON body that is not an object through without logging", async () => {
+    // `null` parses fine; the SDK answers it as the malformed message it is.
+    const response = await handler.fetch(post("null", authorized()));
+    expect(response.status).toBeGreaterThanOrEqual(400);
   });
 });
 
@@ -557,11 +487,13 @@ describe("rejection logging", () => {
 });
 
 describe("shutdown", () => {
-  it("closes every live session", async () => {
-    await handler.fetch(post(initializeBody(), authorized()));
-    expect(handler.sessions.size).toBe(1);
-    await handler.shutdown();
-    expect(handler.sessions.size).toBe(0);
+  it("resolves with nothing in flight", async () => {
+    // There are no sessions to drain any more; close aborts in-flight
+    // exchanges and resolves.
+    await handler
+      .fetch(post(initializeBody(), authorized()))
+      .then((response) => response.text());
+    await expect(handler.shutdown()).resolves.toBeUndefined();
   });
 });
 
@@ -710,10 +642,7 @@ describe("OAuth", () => {
 
   describe("the scope step-up", () => {
     async function callTool(name: string, scope: string): Promise<Response> {
-      const init = await oauthHandler.fetch(
-        post(initializeBody(), bearer(scope)),
-      );
-      const sessionId = init.headers.get("mcp-session-id") ?? "";
+      // No handshake: stateless legacy serving answers each POST alone.
       return oauthHandler.fetch(
         post(
           JSON.stringify({
@@ -722,7 +651,7 @@ describe("OAuth", () => {
             method: "tools/call",
             params: { arguments: {}, name },
           }),
-          { ...bearer(scope), "mcp-session-id": sessionId },
+          bearer(scope),
         ),
       );
     }
@@ -802,10 +731,6 @@ describe("OAuth", () => {
       );
       resetClient();
 
-      const init = await oauthHandler.fetch(
-        post(initializeBody(), bearer("espresso:read espresso:write")),
-      );
-      const sessionId = init.headers.get("mcp-session-id") ?? "";
       const response = await oauthHandler.fetch(
         post(
           JSON.stringify({
@@ -817,10 +742,7 @@ describe("OAuth", () => {
               name: "select_profile",
             },
           }),
-          {
-            ...bearer("espresso:read espresso:write"),
-            "mcp-session-id": sessionId,
-          },
+          bearer("espresso:read espresso:write"),
         ),
       );
 

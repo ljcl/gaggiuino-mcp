@@ -4,7 +4,7 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "node:crypto";
-import { checkResourceAllowed } from "@modelcontextprotocol/sdk/shared/auth-utils.js";
+import { checkResourceAllowed } from "@modelcontextprotocol/server";
 import { type PendingAuthorization } from "./codes";
 
 /**

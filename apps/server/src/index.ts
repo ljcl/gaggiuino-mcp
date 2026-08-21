@@ -44,8 +44,6 @@ const server = Bun.serve({
   port: config.port,
 });
 
-const stopReaper = handler.startReaper();
-
 logger.info("server.listening", {
   host: config.host,
   mcpEndpoint: `http://${config.host}:${config.port}/mcp`,
@@ -54,15 +52,15 @@ logger.info("server.listening", {
 
 /**
  * `docker stop` sends SIGTERM, so handling only SIGINT meant the container was
- * killed after the grace period with every session still open. Stop accepting
- * first, then drain, so nothing lands on a transport that is being closed.
+ * killed after the grace period with work still in flight. Stop accepting
+ * first, then abort what remains, so nothing lands on a handler that is
+ * closing.
  */
 let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
-  logger.info("server.stopping", { sessions: handler.sessions.size, signal });
-  stopReaper();
+  logger.info("server.stopping", { signal });
   await server.stop();
   await handler.shutdown();
   logger.info("server.stopped", { signal });

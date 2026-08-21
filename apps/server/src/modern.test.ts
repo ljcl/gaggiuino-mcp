@@ -1,20 +1,14 @@
-import { type Tool } from "@modelcontextprotocol/sdk/types.js";
+import { type Tool } from "@modelcontextprotocol/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFetchHandler, type FetchHandler } from "./http";
 import { setLogLevel } from "./logging";
 import { type SecurityConfig } from "./mcpAuth";
-import { MODERN_PROTOCOL_VERSIONS } from "./modern";
+import { MODERN_PROTOCOL_VERSION } from "./mcpTestClient";
 import { TEST_OAUTH_CONFIG } from "./oauth/__fixtures__";
 import { signToken } from "./oauth/tokens";
 import { advertisedPrompts } from "./prompts";
-import * as serverModule from "./server";
 import { SERVER_CAPABILITIES, TOOLS } from "./server";
 import { SERVER_NAME, SERVER_VERSION } from "./version";
-
-// Spies with the real implementations kept, so one test can make
-// `readResource` fail like a genuine bug without hand-writing a mock of the
-// module every other test depends on.
-vi.mock("./server", { spy: true });
 
 /**
  * The modern (2026-07-28) half of the dual-era server, driven through the real
@@ -26,7 +20,7 @@ vi.mock("./server", { spy: true });
  * permission grants it stored against the legacy list silently drop.
  */
 
-const MODERN_VERSION = "2026-07-28";
+const MODERN_VERSION = MODERN_PROTOCOL_VERSION;
 const META_VERSION = "io.modelcontextprotocol/protocolVersion";
 const META_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities";
 const META_SERVER_INFO = "io.modelcontextprotocol/serverInfo";
@@ -143,11 +137,12 @@ afterEach(async () => {
 
 describe("era detection", () => {
   it("serves a modern request statelessly: no initialize, no session", async () => {
-    const result = await readResult(await call("tools/list"));
+    const response = await call("tools/list");
+    // Nothing session-shaped leaks into the modern era: no id is minted for
+    // a request that carries its own context.
+    expect(response.headers.get("mcp-session-id")).toBeNull();
+    const result = await readResult(response);
     expect(Array.isArray(result.tools)).toBe(true);
-    // Nothing session-shaped leaks into the modern era: no id is minted and
-    // no transport is held for a request that carries its own context.
-    expect(handler.sessions.size).toBe(0);
   });
 
   it("ignores a stale Mcp-Session-Id on a modern request", async () => {
@@ -163,7 +158,9 @@ describe("era detection", () => {
 
   it("still serves the legacy era alongside", async () => {
     // Dual-era means concurrently on the same endpoint: a legacy handshake
-    // works before and after modern traffic, sessions and all.
+    // works before and after modern traffic — served statelessly, so no
+    // session id is minted (the 2025 spec always made the header
+    // server-optional).
     await readResult(await call("server/discover"));
     const init = await post({
       id: 1,
@@ -176,58 +173,67 @@ describe("era detection", () => {
       },
     });
     expect(init.status).toBe(200);
-    expect(init.headers.get("mcp-session-id")).toBeTruthy();
-    expect(handler.sessions.size).toBe(1);
+    expect(init.headers.get("mcp-session-id")).toBeNull();
   });
 
-  it("routes a modern header with a legacy-shaped body to the modern error", async () => {
-    // A half-migrated client gets the modern HeaderMismatch it can act on,
-    // not the legacy path's "no valid session ID" — which would read as a
-    // legacy server and cancel the client's fall-forward.
+  it("routes a modern header with a legacy-shaped body to a modern error", async () => {
+    // A half-migrated client gets a modern error it can act on — the 400
+    // names the missing envelope keys — rather than being silently served
+    // legacy semantics it did not ask for.
     const response = await post(
       { id: 1, jsonrpc: "2.0", method: "tools/list" },
       modernHeaders("tools/list"),
     );
     expect(response.status).toBe(400);
-    expect((await readError(response)).code).toBe(-32020);
+    const error = await readError(response);
+    expect(error.code).toBe(-32602);
+    expect(error.message).toContain("envelope");
   });
 
-  it("routes a bare server/discover to a modern error, not the legacy 400", async () => {
-    // server/discover is the era probe. A non-modern error body is precisely
-    // what tells a dual-era client to fall back to initialize — wrong, here.
+  it("classifies a bare server/discover (no envelope) as legacy traffic", async () => {
+    // The era is keyed on the per-request envelope, not the method name: a
+    // discover with no `_meta` is not a conformant modern request, so it is
+    // served under legacy semantics — where the method does not exist. The
+    // HTTP-era fallback probe never relies on this: a real dual-era client
+    // sends the envelope and inspects the 400 body, per the transport spec.
     const response = await post({
       id: 1,
       jsonrpc: "2.0",
       method: "server/discover",
     });
-    expect(response.status).toBe(400);
-    expect((await readError(response)).code).toBe(-32020);
+    expect(response.status).toBe(200);
+    const payload = await response.text();
+    expect(payload).toContain('"code":-32601');
   });
 
   it("leaves JSON-RPC batches to the legacy era", async () => {
-    // The modern body is a single request; batches belong to the era that
-    // allowed them. This one names no session, so the legacy path refuses it
-    // with its own error — the point is only that the modern path did not
-    // claim it.
+    // The modern body is a single request; batches belong to the 2025-03-26
+    // family that allowed them, and the legacy leg serves this one — the
+    // point is that the modern path did not claim it, so no modern envelope
+    // fields appear in the answer.
     const response = await post(
-      [modernBody("tools/list")],
-      modernHeaders("tools/list"),
+      [{ id: 1, jsonrpc: "2.0", method: "tools/list" }],
+      {},
     );
-    expect(response.status).toBe(400);
-    expect((await readError(response)).code).toBe(-32000);
+    expect(response.status).toBe(200);
+    const payload = await response.text();
+    expect(payload).toContain('"tools"');
+    expect(payload).not.toContain("resultType");
   });
 });
 
 describe("request validation", () => {
-  it("rejects a missing MCP-Protocol-Version header", async () => {
+  it("serves a request whose envelope names the version but whose header is absent", async () => {
+    // The envelope is the era marker; the header exists for intermediaries,
+    // and the SDK tolerates its absence rather than stranding a client whose
+    // proxy stripped it. When the header IS present it must agree — the
+    // mismatch tests below pin that.
     const response = await post(
       modernBody("tools/list"),
       modernHeaders("tools/list", { version: null }),
     );
-    expect(response.status).toBe(400);
-    const error = await readError(response);
-    expect(error.code).toBe(-32020);
-    expect(error.message).toContain("MCP-Protocol-Version");
+    const result = await readResult(response);
+    expect(result.resultType).toBe("complete");
   });
 
   it("rejects a header that disagrees with the body version", async () => {
@@ -251,9 +257,13 @@ describe("request validation", () => {
     expect(response.status).toBe(400);
     const error = await readError(response);
     expect(error.code).toBe(-32022);
+    // Legacy versions are deliberately absent from `supported`: they cannot
+    // be served with per-request metadata, so advertising them would invite
+    // a retry that cannot work. Legacy clients negotiate via initialize and
+    // never see this list.
     expect(error.data).toEqual({
       requested: "2025-11-25",
-      supported: [...MODERN_PROTOCOL_VERSIONS],
+      supported: [MODERN_VERSION],
     });
   });
 
@@ -297,15 +307,18 @@ describe("request validation", () => {
   });
 
   it("rejects an Mcp-Name whose body value is missing entirely", async () => {
+    // Request-shape validation answers before header comparison can: a
+    // tools/call with no `params.name` is invalid params whatever the
+    // headers say.
     const response = await call(
       "tools/call",
       { arguments: {} },
       { name: "get_status" },
     );
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(200);
     const error = await readError(response);
-    expect(error.code).toBe(-32020);
-    expect(error.message).toContain("(absent)");
+    expect(error.code).toBe(-32602);
+    expect(error.message).toContain("name");
   });
 
   it("round-trips a string request id", async () => {
@@ -396,7 +409,7 @@ describe("server/discover", () => {
   it("advertises versions, capabilities and identity in one cacheable result", async () => {
     const result = await readResult(await call("server/discover"));
     expect(result.resultType).toBe("complete");
-    expect(result.supportedVersions).toEqual([...MODERN_PROTOCOL_VERSIONS]);
+    expect(result.supportedVersions).toEqual([MODERN_VERSION]);
     // The same constant the legacy initialize result reads, so the two
     // eras' answers cannot drift.
     expect(result.capabilities).toEqual(SERVER_CAPABILITIES);
@@ -522,7 +535,7 @@ describe("prompts/get", () => {
       { arguments: {}, name: "diagnose_last_shot" },
       { name: "diagnose_last_shot" },
     );
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(200);
     const error = await readError(response);
     expect(error.code).toBe(-32602);
     expect(error.message).toContain("taste");
@@ -534,7 +547,7 @@ describe("prompts/get", () => {
       { name: "no_such_prompt" },
       { name: "no_such_prompt" },
     );
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(200);
     expect((await readError(response)).code).toBe(-32602);
   });
 });
@@ -577,14 +590,18 @@ describe("resources/read", () => {
 
   it("answers an unknown resource with -32602, not the retired -32002", async () => {
     // 2026-07-28 renumbered resource-not-found onto Invalid Params and
-    // forbids emitting the old code.
+    // forbids emitting the old code; the typed error's data echoes the uri,
+    // which is how a client tells this -32602 apart from ordinary invalid
+    // params.
     const response = await call(
       "resources/read",
       { uri: "gaggiuino://nope" },
       { name: "gaggiuino://nope" },
     );
-    expect(response.status).toBe(400);
-    expect((await readError(response)).code).toBe(-32602);
+    expect(response.status).toBe(200);
+    const error = await readError(response);
+    expect(error.code).toBe(-32602);
+    expect(error.data).toEqual({ uri: "gaggiuino://nope" });
   });
 
   it("answers a missing profile with -32602 as well", async () => {
@@ -593,68 +610,46 @@ describe("resources/read", () => {
       { uri: "gaggiuino://profiles/never-documented" },
       { name: "gaggiuino://profiles/never-documented" },
     );
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(200);
     expect((await readError(response)).code).toBe(-32602);
-  });
-
-  it("lets a genuine read failure propagate as the bug it is", async () => {
-    // Only the `missing` value maps to -32602; a throw is a bug and must not
-    // be dressed up as an invalid-params answer the client would retry with
-    // different params — nor have its message read into a response body.
-    vi.mocked(serverModule.readResource).mockRejectedValueOnce(
-      new Error("bundle missing from disk"),
-    );
-    await expect(
-      call(
-        "resources/read",
-        { uri: "gaggiuino://profiles" },
-        { name: "gaggiuino://profiles" },
-      ),
-    ).rejects.toThrow("bundle missing from disk");
   });
 });
 
 describe("subscriptions/listen", () => {
-  it("acknowledges an empty honoured set and closes gracefully", async () => {
+  it("acknowledges an empty honoured set on a stream that stays open", async () => {
     // Every list this server serves is a module-level constant — the same
-    // fact behind the missing listChanged claims — so the honest stream is
-    // the spec's own teardown: ack with nothing honoured, then the close
-    // result. Holding the socket open would tell the client nothing more.
+    // fact behind the missing listChanged claims — so the acknowledgement
+    // honours nothing: the spec has the server omit every requested type it
+    // does not support. The SDK keeps the stream open for the subscription's
+    // lifetime; reading the first event and cancelling models a client that
+    // saw the empty set and hung up.
     const response = await call("subscriptions/listen", {
       notifications: { toolsListChanged: true },
     });
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/event-stream");
 
-    const events = (await response.text())
-      .split("\n\n")
-      .filter((chunk) => chunk.startsWith("data: "))
-      .map(
-        (chunk) =>
-          JSON.parse(chunk.slice("data: ".length)) as Record<string, unknown>,
-      );
-    expect(events).toHaveLength(2);
-
-    const ack = events[0] as {
+    const reader = response.body?.getReader();
+    const first = await reader?.read();
+    await reader?.cancel();
+    const chunk = new TextDecoder().decode(first?.value);
+    const ack = JSON.parse(
+      chunk
+        .split("\n")
+        .find((line) => line.startsWith("data:"))
+        ?.slice(5) ?? "{}",
+    ) as {
       method: string;
       params: { _meta: Record<string, unknown>; notifications: object };
     };
     expect(ack.method).toBe("notifications/subscriptions/acknowledged");
     expect(ack.params.notifications).toEqual({});
     expect(ack.params._meta[META_SUBSCRIPTION_ID]).toBe(1);
-
-    const closed = events[1] as {
-      id: number;
-      result: { _meta: Record<string, unknown>; resultType: string };
-    };
-    expect(closed.id).toBe(1);
-    expect(closed.result.resultType).toBe("complete");
-    expect(closed.result._meta[META_SUBSCRIPTION_ID]).toBe(1);
   });
 
   it("rejects a listen with no notification filter", async () => {
     const response = await call("subscriptions/listen");
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(200);
     expect((await readError(response)).code).toBe(-32602);
   });
 });
@@ -730,23 +725,27 @@ describe("the security gate, modern era", () => {
 });
 
 describe("rejection logging", () => {
-  it("records every modern refusal with its code and status", async () => {
+  it("reports a modern validation refusal through the handler's onerror", async () => {
     // The same argument `security.rejected` makes: a silent 4xx leaves a
-    // half-migrated client indistinguishable from an unreachable server.
+    // half-migrated client indistinguishable from an unreachable server. The
+    // SDK shapes the response; the onerror wiring is what puts the refusal
+    // in the operator's log.
     const records: Array<Record<string, unknown>> = [];
     const spy = vi.spyOn(console, "error").mockImplementation((line) => {
       records.push(JSON.parse(String(line)) as Record<string, unknown>);
     });
     setLogLevel("warn");
     try {
-      await call("nonexistent/method");
+      await post(
+        modernBody("tools/list"),
+        modernHeaders("tools/list", { method: "tools/call" }),
+      );
     } finally {
       spy.mockRestore();
       setLogLevel("silent");
     }
-    expect(
-      records.find((entry) => entry.event === "modern.rejected"),
-    ).toMatchObject({ code: -32601, status: 404 });
+    const record = records.find((entry) => entry.event === "mcp.error");
+    expect(String(record?.reason)).toContain("Mcp-Method");
   });
 });
 

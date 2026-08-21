@@ -462,11 +462,13 @@ AI Tool (Claude Desktop, etc.)
 +-----------------------------+
 ```
 
-The `/mcp` endpoint is **dual-era**: it serves the stateless 2026-07-28 MCP
-revision (per-request metadata, `server/discover`, no sessions) and the legacy
-`initialize`-handshake revisions (2025-03-26 through 2025-11-25) concurrently,
-so clients keep working unchanged while hosts migrate to the new
-specification.
+The `/mcp` endpoint is **dual-era**, via the official v2 MCP SDK: it serves
+the stateless 2026-07-28 revision (per-request metadata, `server/discover`, no
+sessions) and the legacy `initialize`-handshake revisions (2025-03-26 through
+2025-11-25) concurrently, so clients keep working while hosts migrate to the
+new specification. Both eras are served statelessly — no session ids are
+minted (the 2025 spec always made them optional), and the legacy GET/DELETE
+session operations answer 405.
 
 ## Development
 
