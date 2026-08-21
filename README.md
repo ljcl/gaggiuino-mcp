@@ -462,6 +462,12 @@ AI Tool (Claude Desktop, etc.)
 +-----------------------------+
 ```
 
+The `/mcp` endpoint is **dual-era**: it serves the stateless 2026-07-28 MCP
+revision (per-request metadata, `server/discover`, no sessions) and the legacy
+`initialize`-handshake revisions (2025-03-26 through 2025-11-25) concurrently,
+so clients keep working unchanged while hosts migrate to the new
+specification.
+
 ## Development
 
 ```bash

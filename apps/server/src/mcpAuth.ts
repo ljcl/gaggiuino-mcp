@@ -267,13 +267,17 @@ function checkOrigin(req: Request, allowed: string[]): Response | undefined {
 /**
  * The request headers a Streamable HTTP client sends. `mcp-session-id` and
  * `mcp-protocol-version` are the transport's own; `last-event-id` is how a
- * client resumes a dropped SSE stream. Omitting any one of them makes the
- * browser fail the preflight for a request the allowlist was meant to permit.
+ * legacy client resumes a dropped SSE stream; `mcp-method` and `mcp-name` are
+ * the 2026-07-28 revision's mirrored request-metadata headers, required on
+ * every modern POST. Omitting any one of them makes the browser fail the
+ * preflight for a request the allowlist was meant to permit.
  */
 const ALLOWED_REQUEST_HEADERS = [
   "authorization",
   "content-type",
   "last-event-id",
+  "mcp-method",
+  "mcp-name",
   "mcp-protocol-version",
   "mcp-session-id",
 ].join(", ");

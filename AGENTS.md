@@ -5,7 +5,7 @@ Remote MCP server for integrating a Gaggiuino espresso machine with AI tools.
 ## Architecture
 
 - **Runtime**: Bun (TypeScript)
-- **Transport**: Streamable HTTP on port 8000 (`/mcp` endpoint)
+- **Transport**: Streamable HTTP on port 8000 (`/mcp` endpoint), dual-era — the stateless 2026-07-28 revision and legacy `initialize` sessions on one endpoint
 - **Deployment**: Docker container (any Docker host), exposed via HTTPS tunnel or reverse proxy
 - **Monorepo**: Bun workspaces with Turborepo (`apps/*` + `packages/*`)
 
@@ -1516,11 +1516,19 @@ its executable.
 # Health check
 curl http://localhost:8000/health
 
-# Initialize session
+# Legacy era: initialize a session
 curl -X POST http://localhost:8000/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "1.0"}}}'
+
+# Modern era (2026-07-28): stateless, no initialize — one POST per request
+curl -X POST http://localhost:8000/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "MCP-Protocol-Version: 2026-07-28" \
+  -H "Mcp-Method: server/discover" \
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {"_meta": {"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {}, "io.modelcontextprotocol/clientInfo": {"name": "test", "version": "1.0"}}}}'
 ```
 
 ## Environment Variables
@@ -1556,6 +1564,8 @@ covered:
 - `mcpSession.ts` — the bounded, expiring transport registry. Generic over a
   minimal `ClosableSession`, and its clock is injected, so its tests assert
   "after 31 minutes of silence" without a timer or a wait.
+- `modern.ts` — the stateless 2026-07-28 dispatcher; see Dual-era protocol
+  support below.
 
 Five things about the gate are load-bearing:
 
@@ -1609,6 +1619,80 @@ CIMD or a `registration_endpoint`, a `401` carrying `resource_metadata` and
 path no connector takes, and the failure that bites most often — `MCP_PUBLIC_URL`
 disagreeing with the URL the user typed — is invisible there. `jq` is optional;
 the status-code checks still run without it.
+
+### Dual-era protocol support
+
+The 2026-07-28 MCP revision removed the `initialize` handshake and the
+`Mcp-Session-Id` header: every request carries its protocol version and client
+capabilities in `_meta` (mirrored into `MCP-Protocol-Version` / `Mcp-Method` /
+`Mcp-Name` headers), and the server answers each one statelessly. Its
+versioning spec defines the **dual-era server** this repo now is: a request
+carrying modern per-request `_meta` is served statelessly by `modern.ts`, an
+`initialize` selects the legacy session flow, and both are served concurrently
+on the same `/mcp` endpoint. The SDK (1.30.0) tops out at protocol 2025-11-25
+and knows nothing of the modern era, so `modern.ts` implements it directly;
+when the SDK grows native support, the dispatcher is the thing to replace.
+
+Things worth not re-breaking:
+
+- **The era split is keyed on the request, never the connection.** `http.ts`
+  routes to `handleModernRequest` when the body carries
+  `_meta["io.modelcontextprotocol/protocolVersion"]`, when the
+  `MCP-Protocol-Version` header names a modern version, or when the method is
+  modern-only (`server/discover`, `subscriptions/listen`). The last two exist
+  so a *broken* modern client still gets a modern-shaped error — a non-modern
+  error body is exactly what tells a dual-era client to fall back to
+  `initialize` against this server, which would be wrong. Batches stay legacy:
+  the modern body is a single request.
+- **The split runs after the security gate and the scope gate**, so the modern
+  era inherited both rather than reimplementing them. Auth stays an HTTP
+  status in every era, and a modern write call on a read-only token 403s
+  before dispatch.
+- **Both eras serve one advertised surface.** `TOOLS`, `advertisedPrompts()`,
+  `RESOURCES`, `RESOURCE_TEMPLATES` and `SERVER_CAPABILITIES` are the shared
+  constants both handlers read, and `modern.test.ts` asserts deep equality
+  with the legacy list — a host migrating eras must see byte-identical tools
+  or its stored permission grants silently drop. `callTool` in `server.ts` is
+  the shared dispatch-and-log layer, so "every call is one record" holds in
+  both eras.
+- **Modern errors ride HTTP statuses.** 400 for header/body mismatch
+  (`-32020 HeaderMismatch`), unsupported version (`-32022`, with
+  `data.supported` for the client to retry from) and invalid params
+  (`-32602`); 404 with `-32601` for an unknown method — the body is what
+  distinguishes a modern server missing the method from a legacy HTTP+SSE
+  server missing the endpoint. Every refusal is logged as `modern.rejected`,
+  for the same reason the gate logs `security.rejected`. Tool failures stay
+  `isError` *results* at 200, as in the legacy era.
+- **The advertised `supported` versions list only `2026-07-28`.** Padding it
+  with the legacy versions the SDK half negotiates would invite a modern
+  client to retry `2025-11-25` with per-request metadata — semantics that
+  version does not have. Legacy clients never see this list; they negotiate
+  through `initialize` as before.
+- **Resource not found is `-32602`, modern-side only.** The revision retired
+  `-32002` and forbids emitting it; `ResourceNotFoundError` in `server.ts` is
+  the seam that lets each era answer in its own vocabulary.
+- **Cacheable results claim `ttlMs: 3600000, cacheScope: "private"`.**
+  An hour, because everything under them is a module-level constant that
+  changes only on redeploy — the same fact behind the missing `listChanged`
+  claims. `private` although nothing served is user-specific: the documented
+  deployment gates `/mcp` behind OAuth, and a scope that forbids shared
+  intermediaries caching across authorization contexts can never serve a
+  gated answer to a caller the gate would refuse; `public` would only buy
+  shared-gateway caching, worth nothing on a single-user server.
+- **`subscriptions/listen` acknowledges an empty honoured set and closes.**
+  This server has nothing to put on the stream (no `listChanged`, no
+  `resources.subscribe` — every list is a constant), and the spec has the
+  server omit every unsupported type from the acknowledgement. Ack-then-
+  graceful-close is the honest answer; holding a socket open per client to
+  never send anything says nothing the empty acknowledgement has not.
+- **Two spec-reserved errors are deliberately never emitted.**
+  `-32021 MissingRequiredClientCapability`: this server requires no client
+  capabilities — it never samples, elicits, or lists roots, so the MRTR
+  pattern has nothing here to carry. And `-32002`, per above.
+- **Legacy stays until clients migrate, then `modern.ts` outlives it.** The
+  session registry, the GET/DELETE routes and the SDK transport are the
+  legacy era's whole footprint; removing them later is deleting the branch,
+  not untangling it.
 
 ### OAuth, and why an auth refusal is not a tool result
 

@@ -19,6 +19,7 @@ import {
   type SessionManager,
   type SessionManagerOptions,
 } from "./mcpSession";
+import { handleModernRequest, isModernRequest } from "./modern";
 import { insufficientScopeChallenge } from "./oauth/metadata";
 import { createOAuthRouter, type OAuthRouterOptions } from "./oauth/router";
 import { protectedToolsIn } from "./oauth/scopeGate";
@@ -206,9 +207,22 @@ export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
 
       // Before the message reaches the SDK, and before a session is reserved:
       // past `transport.handleRequest` the answer is already destined to be a
-      // 200, and a 200 does not produce an auth prompt.
+      // 200, and a 200 does not produce an auth prompt. It runs before the era
+      // split below so the modern era inherits the gate rather than
+      // reimplementing it — `protectedToolsIn` reads the same body shape in
+      // both eras.
       const insufficient = checkScopes(body, grant);
       if (insufficient) return insufficient;
+
+      // The dual-era split, keyed on the request per the 2026-07-28 versioning
+      // spec: a request carrying modern per-request `_meta` is served
+      // statelessly, and an `initialize` selects the legacy session flow
+      // below. Checked ahead of the session branch because a modern request
+      // must be served even when a stale `Mcp-Session-Id` header rides along —
+      // the modern transport says to ignore that header, not to 404 on it.
+      if (isModernRequest(req, body)) {
+        return handleModernRequest(req, body);
+      }
 
       // Reuse existing session
       if (sessionId) {

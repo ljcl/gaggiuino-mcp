@@ -127,64 +127,202 @@ export async function handleToolCall(
   };
 }
 
+/**
+ * The capabilities both eras advertise: the legacy `initialize` result and the
+ * modern `server/discover` result read this one constant, so the two answers
+ * cannot drift. Deliberately no `listChanged` (and no `resources.subscribe`):
+ * every list this server serves is a module-level constant, and `listChanged`
+ * is a promise to tell the host to re-fetch — a re-fetch being exactly what
+ * re-keys the cached tools a permission grant is stored against.
+ */
+export const SERVER_CAPABILITIES = {
+  prompts: {},
+  resources: {},
+  tools: {},
+} as const;
+
+/**
+ * The one JSON-RPC shape a `tools/call` answer takes, whichever era asked.
+ * A `type` rather than an `interface` because the SDK's handler signature
+ * demands an implicit index signature, which only object type aliases carry.
+ */
+export type CallToolResultShape = {
+  content: Array<{ text: string; type: "text" }>;
+  isError?: boolean;
+  structuredContent?: Record<string, unknown>;
+};
+
+/**
+ * Run one tool call and log it, whatever the outcome.
+ *
+ * This is the layer both eras dispatch through — the legacy SDK handler and the
+ * modern stateless dispatcher — so the logging contract ("every call is one
+ * record") holds without either era knowing about the other. Expected failures
+ * come back as `isError` results, which is right for the model but would leave
+ * the operator blind if nothing reached the logs.
+ */
+export async function callTool(
+  name: string,
+  args: Record<string, unknown>,
+): Promise<CallToolResultShape> {
+  const startedAt = performance.now();
+  const finish = (outcome: string, fields?: Record<string, unknown>) => {
+    logger.info("tool.call", {
+      durationMs: Math.round(performance.now() - startedAt),
+      outcome,
+      tool: name,
+      ...fields,
+    });
+  };
+
+  try {
+    const outcome = await handleToolCall(name, args);
+    const result: CallToolResultShape = {
+      content: [{ text: outcome.text, type: "text" }],
+    };
+    if (outcome.isError) result.isError = true;
+    if (outcome.structuredContent) {
+      result.structuredContent = outcome.structuredContent;
+    }
+    // The text of an expected failure is written to be actionable, so it is
+    // worth carrying into the log rather than a bare "error".
+    finish(outcome.isError ? "error" : "ok", {
+      ...(outcome.isError ? { reason: outcome.text } : {}),
+    });
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    // Reaching here means a bug rather than an upstream failure, so it logs
+    // at error level with the stack the model result cannot carry.
+    logger.error("tool.error", {
+      durationMs: Math.round(performance.now() - startedAt),
+      reason: message,
+      stack: error instanceof Error ? error.stack : undefined,
+      tool: name,
+    });
+    return {
+      content: [{ text: `Tool error: ${message}`, type: "text" }],
+      isError: true,
+    };
+  }
+}
+
+/** The advertised resource list, shared by both eras' `resources/list`. */
+export const RESOURCES = [
+  {
+    uri: "gaggiuino://profiles",
+    name: "Available Brew Profiles",
+    description:
+      "Documented brew profiles as a plain-text summary: type, suitable roast levels, target ratio, and target time for each. This is bundled documentation — call list_profiles for what is actually loaded on the machine.",
+    mimeType: "text/plain",
+  },
+  {
+    uri: "ui://shot-graph/app.html",
+    name: "Shot Graph",
+    description:
+      "The interactive shot chart rendered by view_shot_graph. Hosts fetch this to display that tool's result; there is nothing here to read as text.",
+    mimeType: "text/html;profile=mcp-app",
+    _meta: {
+      ui: {
+        prefersBorder: false,
+      },
+    },
+  },
+];
+
+/**
+ * The advertised resource templates, shared by both eras.
+ *
+ * Declaring the `resources` capability commits the server to the whole
+ * resource discovery flow, and `resources/templates/list` is part of it — the
+ * spec's own message flow puts it immediately after `resources/list`. Without
+ * a handler the request fell through to the SDK's default and came back
+ * `-32601 Method not found`, so a host enumerating the server mid-refresh saw
+ * a hard JSON-RPC error and abandoned the whole discovery pass, tools
+ * included. Answering it also makes the `gaggiuino://profiles/{id}` branch of
+ * `readResource` reachable, which was previously advertised nowhere.
+ */
+export const RESOURCE_TEMPLATES = [
+  {
+    description:
+      "Documentation for a single brew profile. Ids come from list_profiles or the gaggiuino://profiles resource.",
+    mimeType: "text/plain",
+    name: "Brew Profile",
+    uriTemplate: "gaggiuino://profiles/{id}",
+  },
+];
+
+/**
+ * A `resources/read` naming something this server does not hold.
+ *
+ * Typed so each era can answer in its own vocabulary: the legacy SDK path lets
+ * it propagate as the generic JSON-RPC error it always produced, while the
+ * modern dispatcher maps it to `-32602` — the 2026-07-28 revision retired the
+ * old `-32002` resource-not-found code in favour of Invalid Params.
+ */
+export class ResourceNotFoundError extends Error {}
+
+/** A `type` for the same implicit-index-signature reason as {@link CallToolResultShape}. */
+export type ResourceContents = {
+  contents: Array<{
+    _meta?: Record<string, unknown>;
+    mimeType: string;
+    text: string;
+    uri: string;
+  }>;
+};
+
+/** Read one resource by URI, shared by both eras' `resources/read`. */
+export async function readResource(uri: string): Promise<ResourceContents> {
+  if (uri === "gaggiuino://profiles") {
+    return {
+      contents: [{ uri, mimeType: "text/plain", text: getAllProfilesText() }],
+    };
+  }
+  const profileMatch = uri.match(/^gaggiuino:\/\/profiles\/(.+)$/);
+  const profileId = profileMatch?.[1];
+  if (profileId) {
+    const profile = getProfile(profileId);
+    if (!profile)
+      throw new ResourceNotFoundError(`Profile not found: ${profileId}`);
+    return {
+      contents: [
+        {
+          uri,
+          mimeType: "text/plain",
+          text: `# ${profile.name}\n\n${profile.description}`,
+        },
+      ],
+    };
+  }
+  if (uri === "ui://shot-graph/app.html") {
+    const html = await fs.readFile(SHOT_GRAPH_HTML_PATH, "utf-8");
+    return {
+      contents: [
+        {
+          uri,
+          mimeType: "text/html;profile=mcp-app",
+          text: html,
+          _meta: { ui: { prefersBorder: false } },
+        },
+      ],
+    };
+  }
+  throw new ResourceNotFoundError(`Unknown resource: ${uri}`);
+}
+
 export function createServer() {
   const server = new Server(
     { name: SERVER_NAME, version: SERVER_VERSION },
-    { capabilities: { tools: {}, prompts: {}, resources: {} } },
+    { capabilities: SERVER_CAPABILITIES },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: TOOLS,
   }));
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args } = request.params;
-    // Expected failures come back as `isError` results, which is right for the
-    // model but left the operator blind: a tool could fail every call and
-    // nothing reached the logs. Every call is now one record, whatever the
-    // outcome.
-    const startedAt = performance.now();
-    const finish = (outcome: string, fields?: Record<string, unknown>) => {
-      logger.info("tool.call", {
-        durationMs: Math.round(performance.now() - startedAt),
-        outcome,
-        tool: name,
-        ...fields,
-      });
-    };
-
-    try {
-      const outcome = await handleToolCall(name, args ?? {});
-      const result: {
-        content: Array<{ text: string; type: "text" }>;
-        isError?: boolean;
-        structuredContent?: Record<string, unknown>;
-      } = { content: [{ text: outcome.text, type: "text" }] };
-      if (outcome.isError) result.isError = true;
-      if (outcome.structuredContent) {
-        result.structuredContent = outcome.structuredContent;
-      }
-      // The text of an expected failure is written to be actionable, so it is
-      // worth carrying into the log rather than a bare "error".
-      finish(outcome.isError ? "error" : "ok", {
-        ...(outcome.isError ? { reason: outcome.text } : {}),
-      });
-      return result;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      // Reaching here means a bug rather than an upstream failure, so it logs
-      // at error level with the stack the model result cannot carry.
-      logger.error("tool.error", {
-        durationMs: Math.round(performance.now() - startedAt),
-        reason: message,
-        stack: error instanceof Error ? error.stack : undefined,
-        tool: name,
-      });
-      return {
-        content: [{ text: `Tool error: ${message}`, type: "text" }],
-        isError: true,
-      };
-    }
-  });
+  server.setRequestHandler(CallToolRequestSchema, async (request) =>
+    callTool(request.params.name, request.params.arguments ?? {}),
+  );
 
   server.setRequestHandler(ListPromptsRequestSchema, async () => ({
     prompts: advertisedPrompts(),
@@ -202,86 +340,14 @@ export function createServer() {
   }));
 
   server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-    resources: [
-      {
-        uri: "gaggiuino://profiles",
-        name: "Available Brew Profiles",
-        description:
-          "Documented brew profiles as a plain-text summary: type, suitable roast levels, target ratio, and target time for each. This is bundled documentation — call list_profiles for what is actually loaded on the machine.",
-        mimeType: "text/plain",
-      },
-      {
-        uri: "ui://shot-graph/app.html",
-        name: "Shot Graph",
-        description:
-          "The interactive shot chart rendered by view_shot_graph. Hosts fetch this to display that tool's result; there is nothing here to read as text.",
-        mimeType: "text/html;profile=mcp-app",
-        _meta: {
-          ui: {
-            prefersBorder: false,
-          },
-        },
-      },
-    ],
+    resources: RESOURCES,
   }));
-  /**
-   * Declaring the `resources` capability commits the server to the whole
-   * resource discovery flow, and `resources/templates/list` is part of it — the
-   * spec's own message flow puts it immediately after `resources/list`. Without
-   * this handler the request fell through to the SDK's default and came back
-   * `-32601 Method not found`, so a host enumerating the server mid-refresh saw
-   * a hard JSON-RPC error and abandoned the whole discovery pass, tools
-   * included. Answering it also makes the `gaggiuino://profiles/{id}` branch of
-   * ReadResource reachable, which was previously advertised nowhere.
-   */
   server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
-    resourceTemplates: [
-      {
-        description:
-          "Documentation for a single brew profile. Ids come from list_profiles or the gaggiuino://profiles resource.",
-        mimeType: "text/plain",
-        name: "Brew Profile",
-        uriTemplate: "gaggiuino://profiles/{id}",
-      },
-    ],
+    resourceTemplates: RESOURCE_TEMPLATES,
   }));
-  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-    const { uri } = request.params;
-    if (uri === "gaggiuino://profiles") {
-      return {
-        contents: [{ uri, mimeType: "text/plain", text: getAllProfilesText() }],
-      };
-    }
-    const profileMatch = uri.match(/^gaggiuino:\/\/profiles\/(.+)$/);
-    const profileId = profileMatch?.[1];
-    if (profileId) {
-      const profile = getProfile(profileId);
-      if (!profile) throw new Error(`Profile not found: ${profileId}`);
-      return {
-        contents: [
-          {
-            uri,
-            mimeType: "text/plain",
-            text: `# ${profile.name}\n\n${profile.description}`,
-          },
-        ],
-      };
-    }
-    if (uri === "ui://shot-graph/app.html") {
-      const html = await fs.readFile(SHOT_GRAPH_HTML_PATH, "utf-8");
-      return {
-        contents: [
-          {
-            uri,
-            mimeType: "text/html;profile=mcp-app",
-            text: html,
-            _meta: { ui: { prefersBorder: false } },
-          },
-        ],
-      };
-    }
-    throw new Error(`Unknown resource: ${uri}`);
-  });
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) =>
+    readResource(request.params.uri),
+  );
 
   return server;
 }

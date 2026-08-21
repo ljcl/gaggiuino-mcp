@@ -4,6 +4,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { type ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import {
   mockLatestShotResponse,
   mockMachineStatus,
@@ -19,6 +20,7 @@ import {
   serializeToolContract,
   TOOL_CONTRACT_PATH,
 } from "./toolContract";
+import { TOOLS_BY_NAME } from "./tools";
 import { SERVER_NAME, SERVER_VERSION } from "./version";
 
 /**
@@ -185,6 +187,35 @@ describe("tool call logging", () => {
     expect(
       records.find((record) => record.event === "tool.call"),
     ).toMatchObject({ outcome: "error", tool: "get_shot_data" });
+  });
+
+  it("logs a genuine bug at error level with the stack, and still answers", async () => {
+    // Expected failures are results; anything else is a bug, and the model
+    // result cannot carry a stack — the log is the only place it survives.
+    // No shipped tool throws on demand, so one is planted in the registry
+    // `handleToolCall` dispatches from.
+    TOOLS_BY_NAME.set("planted_bug", {
+      annotations: { openWorldHint: false, readOnlyHint: true },
+      description: "test-only",
+      handler: () => {
+        throw new Error("planted bug");
+      },
+      inputSchema: z.object({}),
+      name: "planted_bug",
+      title: "Planted bug",
+    });
+    const { records, restore } = captureLogs();
+    try {
+      const result = await call("planted_bug");
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain("planted bug");
+    } finally {
+      restore();
+      TOOLS_BY_NAME.delete("planted_bug");
+    }
+    const entry = records.find((record) => record.event === "tool.error");
+    expect(entry).toMatchObject({ reason: "planted bug", tool: "planted_bug" });
+    expect(String(entry?.stack)).toContain("planted bug");
   });
 });
 
