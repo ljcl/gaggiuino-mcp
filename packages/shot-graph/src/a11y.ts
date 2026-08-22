@@ -158,7 +158,8 @@ function describeDelta(delta: number, unit: string): string {
  * a sighted viewer is most likely to draw from the shape, and it is not one this
  * function measures — a "the trace doubles back" sentence would need a threshold
  * on what counts, which is the kind of unearned judgement `apps/server`'s
- * `events.ts` exists to make with measured thresholds, not this function.
+ * `events.ts` exists to keep out of this codebase: report what was measured,
+ * never what it means.
  */
 export function describePressureFlowPlot({
   comparison,

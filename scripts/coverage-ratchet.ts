@@ -2,10 +2,12 @@
  * Raise `apps/server`'s coverage thresholds to match what the last
  * `test:coverage` run actually measured, floored to one decimal place.
  *
- * vitest's own `coverage.thresholds.autoUpdate` writes thresholds at full
- * precision mid-tree, so an ordinary edit can fail a run against an
- * uncommitted number nobody committed; flooring to a tenth gives the ratchet
- * a step ordinary edits move within.
+ * vitest's own `coverage.thresholds.autoUpdate` writes the measured percentage
+ * back *rounded to nearest*, so a threshold can land above what the run that
+ * wrote it just measured — a number no state of the tree can ever reach, and
+ * `autoUpdate` only ever raises. Flooring to a tenth makes
+ * `threshold <= measured` an invariant of every write, and gives the ratchet a
+ * step ordinary edits move within rather than through.
  *
  * Three properties are the point:
  *

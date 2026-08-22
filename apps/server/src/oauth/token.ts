@@ -322,8 +322,8 @@ function handleRefresh(
     //
     // Kept alongside the `oauth.token_denied` line `oauthError` writes, rather
     // than folded into it: `generation` and `seen` are what make a replay
-    // attributable — the gap between them distinguishes a genuine replay from
-    // a fresh grant.
+    // attributable — this branch only runs on a replay, so the gap between them
+    // is what says how far behind the presented token is.
     logger.warn("oauth.refresh_replayed", { clientId, generation, seen });
     return oauthError(
       "invalid_grant",

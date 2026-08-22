@@ -5,8 +5,8 @@
  * `readOnlyHint: true` needs `espresso:read`, and the three tools that change
  * the machine need `espresso:write`. Nothing here enumerates tools — the
  * protected set is derived from the annotations themselves (see
- * `protectedToolsIn` in `oauth/scopeGate.ts`), so a new write tool inherits
- * the gate rather than being forgotten.
+ * `PROTECTED_TOOLS` in `oauth/scopeGate.ts`), so a new write tool inherits the
+ * gate rather than being forgotten.
  */
 
 export const SCOPE_READ = "espresso:read";

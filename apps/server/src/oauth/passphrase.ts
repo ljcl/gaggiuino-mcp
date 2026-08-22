@@ -77,9 +77,8 @@ interface ParsedHash {
  * **This is the single definition of "well formed", and it has to stay that
  * way:** startup validation (`isWellFormedHash`) and login (`verifyPassphrase`)
  * must accept exactly the same hashes, otherwise a mistyped value passes
- * startup and surfaces as a baffling wrong-passphrase error. Params must be
- * positive integers (`N: 0` parses and then throws inside `scryptSync`), and
- * the key must be exactly `KEY_BYTES`.
+ * startup and surfaces as a baffling wrong-passphrase error. The individual
+ * checks carry their own reasons below.
  */
 function parseHash(stored: string): ParsedHash | undefined {
   const parts = stored.split("$");

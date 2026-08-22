@@ -1,6 +1,7 @@
 import styles from "./Skeleton.module.css";
 
 interface SkeletonProps {
+  /** Placeholder shape; `"chart"` reserves a plot-sized block. */
   variant?: "chart";
   /**
    * Optional status line under the placeholder, for when a fetch has been

@@ -35,6 +35,11 @@ export interface ClientMetadata {
  * egress and it fetches fine from here, but an outbound HTTP dependency inside
  * the login path of a machine in someone's kitchen is a bad bet. This is
  * pre-registration keyed by the CIMD URL, which is what it should degrade to.
+ *
+ * These values live on somebody else's server and nothing here compares them to
+ * it, so drift is silent by construction — the fallback path is the only one
+ * that would notice, and it runs when the live document is already unreachable.
+ * Last checked 2026-08-05: both returned 200 and were self-referential.
  */
 const PINNED: Record<string, ClientMetadata> = {
   "https://claude.ai/oauth/claude-code-client-metadata": {

@@ -3,9 +3,11 @@ import { COMPARISON_OPACITY, TARGET_DASH } from "./constants";
 import { type Annotation } from "./types";
 
 /*
- * Comparison annotations are marked by a hollow dot and a smaller label, not
- * by transparency: annotation labels are text and must hold 4.5:1 against the
- * chart background.
+ * Comparison annotations are marked by a hollow dot and a smaller label. The
+ * *label* is never faded — it is text, and must hold 4.5:1 against the chart
+ * background, which a composited opacity does not. `COMPARISON_OPACITY` on the
+ * dot and its connector is a different thing: it separates a hollow marker
+ * from the filled primary beside it rather than standing in for an encoding.
  */
 
 interface AnnotationPair {

@@ -94,10 +94,10 @@ function contributed(
  *
  * So it is switched **off explicitly**. Omitting the prop does not do it:
  * recharts 3 defaults the layer on, which is also why `ShotGraph`'s explicit
- * flag is a no-op kept for clarity. The container is an `img`
- * because that is what this is — a graphic with no interactive descendants —
- * where `ShotGraph` needs `group` because its legend's toggle buttons live
- * inside the same container.
+ * flag is a no-op kept for clarity. The container is an `img` because that is
+ * what this is — a graphic with no interactive descendants — where `ShotGraph`
+ * needs `group` because its legend's toggle buttons live inside the same
+ * container.
  *
  * The tooltip is absent because the comparison sits on its own x axis: recharts
  * resolves a tooltip's active point per axis, so a shared readout would report

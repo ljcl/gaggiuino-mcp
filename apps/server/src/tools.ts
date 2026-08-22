@@ -38,9 +38,11 @@ import {
 import { PHASE_TYPES, TRANSITION_CURVES } from "./profileShape";
 
 /**
- * Annotations for every read-only tool: nothing here mutates local state.
- * `openWorldHint` is the honest difference between reaching the machine and
- * reading bundled YAML.
+ * A read-only tool that reaches the machine.
+ *
+ * Nothing carrying these annotations mutates the machine or any local state.
+ * `openWorldHint` is the only honest difference between this and
+ * `READS_LOCAL_DATA` below — the two together cover every read tool here.
  */
 const READS_MACHINE: ToolAnnotations = {
   destructiveHint: false,
@@ -49,6 +51,10 @@ const READS_MACHINE: ToolAnnotations = {
   readOnlyHint: true,
 };
 
+/**
+ * A read-only tool that reads bundled YAML and nothing else, so it reaches
+ * nothing outside this process — `get_dial_in_guidance` is the only one.
+ */
 const READS_LOCAL_DATA: ToolAnnotations = {
   destructiveHint: false,
   idempotentHint: true,
@@ -850,8 +856,10 @@ function writeToolDisabled(action: string): ErrorReply | undefined {
   if (loadSecurityConfig().oauth !== undefined) return undefined;
   return {
     isError: true,
-    // Worded as an explicit count so it cannot drift silently: update "the
-    // three" when a write tool is added or removed.
+    // "the three that change the machine" is a literal count in prose that
+    // nothing asserts — it said "the two" until `delete_profile` landed and was
+    // simply false in the model's context until somebody noticed. A fourth
+    // write tool must update it here by hand.
     text: `${action} is disabled because this server has no way to authenticate anyone: its /mcp endpoint is open. Every tool here other than the three that change the machine only reads. Ask the user to configure OAuth by setting MCP_PUBLIC_URL and MCP_OAUTH_SECRET (see the README's 'Securing the endpoint' section) and restart the server, or to make the change on the machine itself.`,
   };
 }

@@ -236,8 +236,8 @@ export const RESOURCES = [
  * resource discovery flow, and `resources/templates/list` is part of it — the
  * spec's own message flow puts it immediately after `resources/list`. An
  * omitted handler answers `-32601`, which hosts treat as failed discovery,
- * tools included; answering it also serves the `gaggiuino://profiles/{id}`
- * template.
+ * tools included; answering it is also the only thing that advertises the
+ * `gaggiuino://profiles/{id}` read path.
  */
 export const RESOURCE_TEMPLATES = [
   {

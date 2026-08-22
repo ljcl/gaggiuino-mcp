@@ -23,10 +23,11 @@ import { SERVER_VERSION } from "./version";
  * which firmware is this. It is **observed**, never probed — remembered when
  * something reads the machine's settings, and `null` until then. Fetching it
  * inside `buildHealth` is ruled out: the client's 20s overall timeout would
- * sit inside a probe whose Docker `HEALTHCHECK --timeout=10s` fires first, so three consecutive failures would restart a container whose
- * only problem is that the espresso machine is switched off — and at 30s
- * intervals that is 2,880 requests a day to an ESP32 that answers one at a
- * time, to read a field that changes when the user flashes firmware.
+ * sit inside a probe whose Docker `HEALTHCHECK --timeout=10s` fires first, so
+ * three consecutive failures would restart a container whose only problem is
+ * that the espresso machine is switched off — and at 30s intervals that is
+ * 2,880 requests a day to an ESP32 that answers one at a time, to read a field
+ * that changes when the user flashes firmware.
  *
  * **`buildHealth` is synchronous, and `/health` makes zero upstream requests.**
  */

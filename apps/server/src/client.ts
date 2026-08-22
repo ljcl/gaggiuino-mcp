@@ -41,12 +41,14 @@
  *   nothing here has shot data to upload.
  * - `DELETE /api/shots/*` (L24-28) — destructive, needs an SD card, and no
  *   read-only story asks for it.
- * - `DELETE /api/profile-select/*` — called by `deleteProfileFromMachine`.
- *   Listed here because it shares its path with the profile *selector* and
- *   differs only by HTTP verb, so a model one token away from `select` must
- *   never reach it by accident: an exact-name echo, a refusal to touch the
- *   selected profile, and a permission prompt the host cannot suppress are
- *   what make reaching it deliberate.
+ * - ~~`DELETE /api/profile-select/*`~~ — **the one exception: it is called**,
+ *   by `deleteProfileFromMachine`, and appears in the table above. It stays on
+ *   this list because the warning that earned it a place here is still true —
+ *   it shares its path with the profile *selector* and differs only by HTTP
+ *   verb, so a model one token away from `select` must never reach it by
+ *   accident. What makes reaching it deliberate is the tool in front of it: an
+ *   exact-name echo, a refusal to touch the selected profile, and a permission
+ *   prompt the host cannot suppress.
  * - Every `POST /api/settings/*` (L144, L203, L252, L296, L343, L396) —
  *   writing boiler setpoints from a chat window is a far heavier permission
  *   story than `select_profile`, and nobody has asked for it. That is the soft

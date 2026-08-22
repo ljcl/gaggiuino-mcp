@@ -39,10 +39,11 @@ const MIN_WINDOW_SEC = 0.5;
 /**
  * How far the target may drift across the window and still count as "held".
  *
- * A tapering profile lowers its own target continuously, and a stepped profile
- * commands multi-bar jumps in a single sample — orders of magnitude larger
- * than any taper's per-window drift — so this cannot be an equality test or
- * the taper reads as a defect on every shot.
+ * A tapering profile lowers its own target continuously, so this cannot be an
+ * equality test or the taper reads as a defect on every shot. It is
+ * deliberately tight all the same: a commanded *step* moves the target by
+ * multiple bar in a single sample, orders of magnitude larger than any taper's
+ * per-window drift, so a tolerance this small still separates the two.
  */
 const TARGET_HELD_TOLERANCE_BAR = 0.15;
 
