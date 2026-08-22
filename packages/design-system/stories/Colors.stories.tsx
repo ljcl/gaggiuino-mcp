@@ -98,7 +98,7 @@ function ColorGrid() {
 /**
  * Assert the browser resolves every token to the value the stylesheet declares
  * for `theme`. This is what catches a dark palette keyed on a selector nothing
- * applies — the bug that made every dark host render light-mode chart colors.
+ * applies.
  */
 function expectResolvedTheme(theme: "light" | "dark") {
   const computed = getComputedStyle(document.documentElement);

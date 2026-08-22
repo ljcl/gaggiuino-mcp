@@ -1,8 +1,7 @@
 name: Dependabot autofix
 
 # Dependabot bumps package.json but cannot fix the collateral damage a bump
-# causes elsewhere in the repo, so its PRs used to go red on failures only a
-# human could clear:
+# causes elsewhere in the repo. Without this job its PRs would fail on:
 #   - bun.lock drift: Dependabot's npm ecosystem does not reliably update
 #     Bun's text lockfile in a workspaces monorepo, so `bun install
 #     --frozen-lockfile` in the setup composite fails (dependabot-core#14223).
@@ -12,9 +11,8 @@ name: Dependabot autofix
 # resulting fixup commit back to the PR branch so the bump lands green.
 #
 # Runs on pull_request_target because Dependabot PRs get a read-only token on
-# the plain pull_request event and so cannot push. Unlike the earlier
-# lockfile-only version of this job, `bun run lint:fix` executes a dependency
-# binary (Biome), so the privileged context is locked down:
+# the plain pull_request event and so cannot push. `bun run lint:fix` executes
+# a dependency binary (Biome), so the privileged context is locked down:
 #   - the job only runs for dependabot[bot] PRs from THIS repo — the actor
 #     check alone is spoofable by enabling Dependabot on a fork, the
 #     head-repo check closes that hole;

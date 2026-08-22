@@ -10,9 +10,7 @@ import { type SecurityConfig } from "./mcpAuth";
  * `createFetchHandler`, driven over the transport rather than against the
  * in-memory server object. That distinction is the whole point — an
  * annotation, capability, or schema that does not serialize cannot influence
- * a host, and a table in memory proves nothing about the wire. (The previous
- * harness drove the v1 SDK's `Client` over an in-memory transport pair; the
- * v1 SDK left with the session era, and this replaces it with the wire.)
+ * a host, and a table in memory proves nothing about the wire.
  *
  * The endpoint serves two eras (dual era until clients finish migrating), so
  * the client speaks both:
@@ -26,9 +24,8 @@ import { type SecurityConfig } from "./mcpAuth";
  *   `Mcp-Method`/`Mcp-Name` headers, and capabilities come from
  *   `server/discover`.
  *
- * The convenience methods (`callTool`, `listTools`, …) mirror the v1 client's
- * surface, including throwing on a JSON-RPC error response, so the suites
- * that predate the era split read unchanged.
+ * The convenience methods mirror a standard SDK client surface, including
+ * throwing on a JSON-RPC error response.
  */
 
 export type ProtocolEra = "legacy" | "modern";
@@ -100,7 +97,7 @@ export interface ResourceContentEntry {
 }
 
 export interface McpTestClient {
-  /** Mirror of the v1 client: throws when the response is a JSON-RPC error. */
+  /** Throws when the response is a JSON-RPC error. */
   callTool(params: {
     arguments?: Record<string, unknown>;
     name: string;
@@ -210,7 +207,7 @@ export async function connectTestClient(
     return parsed;
   };
 
-  /** The v1 client's contract: a JSON-RPC error response becomes a throw. */
+  /** Contract: a JSON-RPC error response becomes a throw. */
   const result = async (method: string, params: unknown = {}) => {
     const parsed = await send(method, params);
     if (parsed.error) throw new Error(parsed.error.message);

@@ -278,9 +278,8 @@ async function handlePost(
       renderConsentPage({
         csrfToken: signConsentToken(pending, deps.config.secret),
         error: "That passphrase was not correct.",
-        // Recomputed, not hardcoded false. The retry page is where the owner
-        // actually types the passphrase most of the time, so dropping the
-        // impersonation warning here dropped it from the attempt that matters.
+        // Recomputed, not hardcoded false — the retry page is where the owner
+        // types the passphrase most often, so the warning matters most here.
         loopbackOnly: isLoopbackOnly([pending.redirectUri]),
         request: pending,
       }),

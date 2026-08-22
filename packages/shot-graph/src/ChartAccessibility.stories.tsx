@@ -16,7 +16,7 @@ import { COLORS, SERIES, TARGET_DASH } from "./constants";
  * overrides `--chart-*` is measured too, and so a token pointed at a selector
  * nothing applies fails here instead of shipping.
  *
- * Two claims are checked, both from #36:
+ * Two claims are checked:
  *
  *  1. Every stroke clears 3:1 against the chart's own background, the WCAG
  *     1.4.11 floor for graphical objects.

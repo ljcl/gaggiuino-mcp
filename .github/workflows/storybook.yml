@@ -16,7 +16,7 @@ on:
       - ".github/workflows/storybook.yml"
   # A Pages deployment can fail for reasons that have nothing to do with the
   # commit (a transient Pages API error, an environment not yet enabled).
-  # Without this the only way to retry was to push a dummy change.
+  # This dispatch allows retrying such a failure without pushing anything.
   workflow_dispatch:
 
 concurrency:

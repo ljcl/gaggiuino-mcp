@@ -420,8 +420,7 @@ describe("consent", () => {
     expect(html).toContain("not correct");
     // The retry page mints its own token rather than echoing the submitted one,
     // so the page the owner is looking at is indistinguishable from a first
-    // render. (It held before for a different reason: the token used to be
-    // single-use, and re-rendering the spent one would have ended the flow.)
+    // render.
     const second = requestTokenFrom(html);
     expect(second).not.toBe(first);
 
@@ -430,11 +429,9 @@ describe("consent", () => {
   });
 
   it("survives a flood of consent pages from an unauthenticated caller", async () => {
-    // #119. The consent token used to be a key into a 64-entry map that `GET
-    // /oauth/authorize` filled *before* checking any credential, so a stranger
-    // could park 65 requests, evict the page the owner had open, and turn their
-    // submit into "this page has expired". The token is signed and stateless
-    // now, so there is nothing left to evict.
+    // The consent token is signed and stateless, so a flood of unauthenticated
+    // GETs has nothing to evict — the owner's open page cannot expire out from
+    // under them.
     const page = await handler.fetch(
       new Request(authorizeUrl(authorizeParams(pkce().challenge))),
     );
@@ -453,7 +450,7 @@ describe("consent", () => {
   });
 
   it("accepts a replayed request token, and still spends the code once", async () => {
-    // The stated cost of statelessness: a consent token is no longer single-use,
+    // The stated cost of statelessness: a consent token is not single-use,
     // so a captured submission can be replayed inside its TTL. Acceptable
     // because the token carries no authority on its own — a submission an
     // attacker captured contains the passphrase, so single-use never protected
@@ -875,10 +872,7 @@ describe("refresh", () => {
     // The generation counter is keyed by client. Sharing one counter would let
     // a second client's refresh invalidate the first client's token.
     //
-    // Two genuine authorizations, which is the only way to state that. This
-    // used to hand *one* client's token to the token endpoint twice under two
-    // different `client_id` values and assert both were accepted — which is not
-    // independence, it is the bypass #163 was about, asserted as a feature.
+    // Two genuine authorizations, which is the only way to state that.
     const claude = await firstTokens();
     const codeClient = await firstTokens(
       LOOPBACK,
@@ -894,9 +888,9 @@ describe("refresh", () => {
   });
 
   it("refuses a refresh token presented under another client's id", async () => {
-    // The bypass itself (#163). Replay detection used to key on this form
-    // field, so a thief holding a stolen token could name any client, land on a
-    // fresh counter, and rotate undetected while the real client carried on.
+    // Replay detection keys on the client sealed into the token, not this
+    // caller-supplied field — naming another client cannot land a stolen token
+    // on a fresh counter.
     const first = await firstTokens();
     const response = await refresh(
       first.refresh_token ?? "",
@@ -918,11 +912,11 @@ describe("refresh", () => {
   });
 
   it("refuses a refresh token minted before the client was sealed into it", async () => {
-    // The deliberate cost of #163: tokens issued by an earlier build carry no
-    // `cid`, and falling back to the form field for them would leave the bypass
-    // open for their whole ninety-day life — and let an attacker choose that
-    // path by presenting an old token. `invalid_grant` is what Claude re-runs
-    // the authorization flow on, so this is one consent prompt, once.
+    // Tokens minted before the client was sealed into them carry no `cid`;
+    // falling back to the form field would leave the bypass open for their
+    // whole ninety-day life — and let an attacker choose that path by
+    // presenting an old token. `invalid_grant` is what Claude re-runs the
+    // authorization flow on, so this is one consent prompt, once.
     const seconds = Math.floor(Date.now() / 1000);
     const legacy = signToken(
       {
@@ -946,10 +940,9 @@ describe("refresh", () => {
   });
 
   it("keeps a re-authorized connector working across its first refresh", async () => {
-    // The failure this is named after: re-connecting a connector that had
-    // already rotated left a token that worked for exactly one access-token
-    // lifetime, then died on the first refresh with `oauth.refresh_replayed`.
-    // A fresh authorization has to outrank every generation issued before it.
+    // A fresh authorization must outrank every generation issued before it, or
+    // a re-connected connector authenticates once and dies on its first
+    // refresh as `oauth.refresh_replayed`.
     const first = await firstTokens();
     const rotated = await handler.fetch(
       tokenPost({

@@ -5,8 +5,7 @@
 #
 # Required contexts and what each one stops from merging:
 #   check     ci.yml        lint, test, typecheck, build, knip, boundaries
-#   docker    docker.yml    a PR that breaks the image build (it only surfaced
-#                           at release time before, after merge)
+#   docker    docker.yml    a PR that breaks the image build
 #   pr-title  pr-title.yml  a non-Conventional-Commit PR title, which squashes
 #                           onto main as an unparseable subject and silently
 #                           skips the release

@@ -39,17 +39,11 @@ interface Budget {
 const BUDGETS: Budget[] = [
   {
     path: "packages/shot-graph/dist/app.html",
-    // 988,997 B raw / 263,225 B gzip re-measured 2026-08-09, still recharts
-    // 3.10.1 — the bundle got ~59 kB *lighter* than the 2026-07-27 figure this
-    // comment used to carry, from dependency patches rather than from anything
-    // here. Left uncorrected it claimed 8.9% headroom against the old ceiling
-    // where there was really 14.0% — and a budget is reasoned about in exactly
-    // that number, so a stale one is worse than none.
-    //
-    // Re-centred on that measurement rather than left where it was. A ceiling
-    // that stays put while the bundle shrinks is not a stricter gate, it is a
-    // looser one: at the old numbers a 161 kB regression would have passed
-    // silently.
+    // Measured 2026-08-09 at 988,997 B raw / 263,225 B gzip on recharts
+    // 3.10.1 — the weight moves with dependency patches even when nothing here
+    // changes. Budgets track that measurement: a ceiling that stays put while
+    // the bundle shrinks is not a stricter gate, it is a looser one, because
+    // headroom is exactly the number a budget change gets reasoned about in.
     maxBytes: 1_090_000,
     maxGzipBytes: 290_000,
   },

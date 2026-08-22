@@ -108,9 +108,9 @@ export const mockSparseProfileDefinition = { name: "Bare" };
  * copied byte-for-byte from `docs/upstream/rest-api.md` L179-196, nested inside
  * the aggregate shape at L112-122.
  *
- * The two tokens and the MQTT password are the point of the fixture, not
- * incidental detail: this is what `get_machine_settings` used to print straight
- * into model context. Keep it faithful to the reference for the same reason
+ * The two tokens and the MQTT password are the point of the fixture: they are
+ * what the redaction in `get_machine_settings` exists to withhold. Keep the
+ * fixture faithful to the reference for the same reason
  * `mockMachineStatusFromHardware` is kept faithful to hardware — a fixture
  * invented by hand passes CI and still leaks against real firmware.
  */

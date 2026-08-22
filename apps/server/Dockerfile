@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# Requires BuildKit (RUN --mount=type=cache, multi-stage COPY --from).
+# Requires BuildKit for RUN --mount=type=cache.
 
 # Shell base: bun + a shell, used by every build-time stage.
 # Both oven/bun pins in this file must match root package.json's

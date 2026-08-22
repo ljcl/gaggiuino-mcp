@@ -15,7 +15,7 @@
  * ## The unit contract
  *
  * **Nothing in a profile is scaled by 10.** That is the trap, because the shot
- * *time-series* is (`SCALE_BY_10` in `analysis.ts`: pressure 91 means 9.1 bar,
+ * *time-series* is (`SCALE_BY_10` in `normalize.ts`: pressure 91 means 9.1 bar,
  * temperature 910 means 91.0°C). A profile is not. A model that has just read a
  * shot and copies `910` into `waterTemperature` writes a profile asking for
  * 910°C, and the machine accepts it.
@@ -35,8 +35,7 @@
  *
  *   L221's "both always send `0`" is about a **different field** —
  *   `ProfileManualDto.restriction`, the live `BREW_MANUAL` setpoint, which is
- *   its own message (L213-216) and not a phase. This docblock cited it as
- *   evidence about `PhaseDto.restriction` until 2026-08-09; it never was.
+ *   its own message (L213-216) and not a phase.
  * - `waterPumped` / `waterPumpedInPhase` — undocumented, millilitres by
  *   inference from the flow units. Hedge it anywhere it is described.
  *

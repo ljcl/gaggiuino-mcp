@@ -234,12 +234,10 @@ export const RESOURCES = [
  *
  * Declaring the `resources` capability commits the server to the whole
  * resource discovery flow, and `resources/templates/list` is part of it — the
- * spec's own message flow puts it immediately after `resources/list`. Without
- * a handler the request fell through to the SDK's default and came back
- * `-32601 Method not found`, so a host enumerating the server mid-refresh saw
- * a hard JSON-RPC error and abandoned the whole discovery pass, tools
- * included. Answering it also makes the `gaggiuino://profiles/{id}` branch of
- * `readResource` reachable, which was previously advertised nowhere.
+ * spec's own message flow puts it immediately after `resources/list`. An
+ * omitted handler answers `-32601`, which hosts treat as failed discovery,
+ * tools included; answering it also serves the `gaggiuino://profiles/{id}`
+ * template.
  */
 export const RESOURCE_TEMPLATES = [
   {

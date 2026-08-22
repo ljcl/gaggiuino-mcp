@@ -112,10 +112,10 @@ afterEach(async () => {
 
 describe("tool call logging", () => {
   /**
-   * Tool failures come back as `isError` results, which is right for the model
-   * but used to leave the operator with nothing: a tool could fail every call
-   * and the logs would not show it. These capture the real sink, so the default
-   * `console.error` path is in the loop rather than an injected stub.
+   * Tool failures come back as `isError` results — right for the model,
+   * invisible to the operator unless logged. These capture the real sink, so
+   * the default `console.error` path is in the loop rather than an injected
+   * stub.
    */
   function captureLogs() {
     const records: Array<Record<string, unknown>> = [];
@@ -284,11 +284,10 @@ describe("ListTools", () => {
   const IDEMPOTENCE_UNSTATED = new Set(["delete_profile"]);
 
   /**
-   * Tools that destroy something. One, and it took a hardware-verified endpoint
-   * and an unrecoverable failure mode to earn it — a create is additive and a
-   * selection replaces a selection, so neither of the other two writes qualifies.
-   * Named rather than derived for the same reason as the sets above: a new tool
-   * must claim this deliberately, and a tool that quietly gains it fails here.
+   * Tools that destroy something. A create is additive and a selection replaces
+   * a selection, so neither of the other two writes qualifies. Named rather than
+   * derived for the same reason as the sets above: a new tool must claim this
+   * deliberately, and a tool that quietly gains it fails here.
    */
   const DESTRUCTIVE_TOOLS = new Set(["delete_profile"]);
 
@@ -357,7 +356,7 @@ describe("ListTools", () => {
     );
     expect(openWorld.get("get_status")).toBe(true);
     expect(openWorld.get("get_shot_data")).toBe(true);
-    // list_profiles reads the machine's own inventory now, so closed-world
+    // list_profiles reads the machine's own inventory, so closed-world
     // would be a lie even though it can fall back to bundled documentation.
     expect(openWorld.get("list_profiles")).toBe(true);
     expect(openWorld.get("get_machine_settings")).toBe(true);
@@ -430,12 +429,9 @@ describe("the advertised contract", () => {
   /**
    * The tools allowed to set `_meta["anthropic/requiresUserInteraction"]`.
    *
-   * This was a blanket prohibition — no tool may set it — on the reasoning that
-   * the flag defeats "don't ask again" in every mode and *"nothing here warrants
-   * it, every tool reads"*. `delete_profile` does not read, and an
-   * unsuppressable prompt is the point rather than the cost. The rule became a
-   * set rather than being deleted, so the prohibition still holds everywhere
-   * else.
+   * The flag defeats "don't ask again" in every mode, so it is confined to
+   * `delete_profile`: it does not read, and an unsuppressable prompt is the
+   * point. Everywhere else the prohibition holds.
    */
   const ALWAYS_PROMPT_TOOLS = new Set(["delete_profile"]);
 
@@ -590,9 +586,9 @@ describe("Prompts", () => {
   });
 
   it("takes the dial-in prompt's description from the loaded template", async () => {
-    // The description used to be a string literal in the ListPrompts handler,
-    // so a prompts.local.yaml override the loader honoured everywhere else was
-    // invisible on the one surface a host shows the user.
+    // The description comes from the loaded template so a prompts.local.yaml
+    // override the loader honours everywhere else is not invisible on the one
+    // surface a host shows the user.
     const { prompts } = await client.listPrompts();
     const advertised = prompts.find(
       (prompt) => prompt.name === "espresso_shot_analyst",
@@ -715,9 +711,8 @@ describe("Resources", () => {
 
   it("advertises the profile template so the by-id read path is discoverable", async () => {
     // Declaring the resources capability commits the server to answering this.
-    // It used to fall through to -32601, and a host that enumerates the whole
-    // resource surface on a refresh treated that error as a failed refresh —
-    // taking the tool list down with it.
+    // A host that treats a JSON-RPC error mid-discovery as a failed refresh
+    // abandons the tool list along with it.
     const { resourceTemplates } = await client.listResourceTemplates();
     expect(resourceTemplates.map((template) => template.uriTemplate)).toEqual([
       "gaggiuino://profiles/{id}",

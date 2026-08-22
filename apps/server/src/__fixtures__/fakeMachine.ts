@@ -28,10 +28,10 @@
  *   points at ten-second spacing have no curve to draw.
  * - `/api/profiles/all` is the one route with **no recorded body anywhere** —
  *   the reference documents it in a single line with no example. Its *shape*
- *   comes from `MachineProfileSchema`, and its *ids* from the sparse,
- *   non-contiguous set observed on real hardware while verifying #105
- *   (1, 3, 4, 6, 8, 15, 17, 19, 21, 22, 23, 24, 25, 26). Said plainly here
- *   rather than left to look as recorded as the rest.
+ *   comes from `MachineProfileSchema`, and its *ids* are the sparse,
+ *   non-contiguous set observed on real hardware (1, 3, 4, 6, 8, 15, 17, 19,
+ *   21, 22, 23, 24, 25, 26). Said plainly here rather than left to look as
+ *   recorded as the rest.
  *
  * ## What it deliberately will not do
  *
@@ -124,7 +124,7 @@ const definitions: Record<string, unknown> = {
 };
 
 /**
- * `GET /api/maintenance`, exactly as `docs/upstream/rest-api.md` L471-478
+ * `GET /api/maintenance`, exactly as `docs/upstream/rest-api.md` L472-479
  * documents it. Epoch seconds, and `0` would mean never recorded.
  */
 const maintenance = {

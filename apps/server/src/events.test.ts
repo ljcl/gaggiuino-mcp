@@ -113,8 +113,8 @@ describe("detectPressureCollapses", () => {
 
   it("ignores a fall while the profile is driving flow, not pressure", () => {
     // targetPressure is 0 during a flow phase — "not commanding pressure",
-    // not "a steady target of zero". Londinium's fill-to-extraction handover
-    // drops 4.0 bar/s here on every shot.
+    // not "a steady target of zero". A real fill-to-extraction handover falls
+    // faster than the threshold.
     const pressure = [...flat(4, 6), 3.2, 2.4, 1.6, 1, 0.6, ...flat(0.5, 8)];
 
     expect(
@@ -124,7 +124,7 @@ describe("detectPressureCollapses", () => {
 
   it("ignores the pressure release as the shot ends", () => {
     // The pump stops when the stop condition is met and pressure dumps on the
-    // final sample — measured at 5.8 bar/s on Zer0 #347, twice the threshold.
+    // final sample at ~5.8 bar/s, twice the threshold.
     //
     // The times are stated rather than derived because the spacing is the whole
     // point: the final sample has to be the *first* one a half-second window
@@ -154,8 +154,7 @@ describe("detectPressureCollapses", () => {
   });
 
   it("does not trip on single-sample sensor noise", () => {
-    // The Zer0 plateau swings +/-0.4 bar between adjacent samples, which is
-    // 2.58 bar/s instantaneously — above the rate threshold on its own. The
+    // Adjacent-sample noise alone can exceed the rate threshold; the
     // half-second minimum window is what makes that survivable.
     const pressure = [
       9, 8.6, 9.2, 8.8, 9.2, 8.8, 9.1, 8.7, 9.2, 8.9, 9, 8.7, 9.1,

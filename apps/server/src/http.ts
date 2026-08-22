@@ -71,13 +71,11 @@ function withCors(response: Response, cors: Record<string, string>): Response {
 }
 
 /**
- * The successor to the session era's `session.opened` record: which client is
- * this, and is it re-handshaking on every turn? Under stateless legacy
- * serving an `initialize` per turn is the expected cadence rather than a
- * session thrown away, but the client name and negotiated version are still
- * the two facts an operator needs when a host misbehaves — modern-era
- * requests carry the same identity in their `_meta` envelope instead and
- * send no `initialize` at all.
+ * Which client is calling, and is it re-handshaking on every turn? Under
+ * stateless legacy serving an `initialize` per turn is the expected cadence,
+ * but the client name and negotiated version are still the two facts an
+ * operator needs when a host misbehaves — modern-era requests carry the same
+ * identity in their `_meta` envelope instead and send no `initialize` at all.
  */
 function logInitialize(body: unknown): void {
   if (typeof body !== "object" || body === null || Array.isArray(body)) return;

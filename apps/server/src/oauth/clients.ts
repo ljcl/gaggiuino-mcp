@@ -35,8 +35,6 @@ export interface ClientMetadata {
  * egress and it fetches fine from here, but an outbound HTTP dependency inside
  * the login path of a machine in someone's kitchen is a bad bet. This is
  * pre-registration keyed by the CIMD URL, which is what it should degrade to.
- *
- * Verified live 2026-08-05: both documents return 200 and are self-referential.
  */
 const PINNED: Record<string, ClientMetadata> = {
   "https://claude.ai/oauth/claude-code-client-metadata": {
@@ -115,7 +113,7 @@ export function isPubliclyRoutable(address: string, family: number): boolean {
  * assertion in `clients.test.ts` while leaving `/oauth/authorize` an SSRF
  * probe. Two tests there assert the *call count* on `fetch` for that reason.
  *
- * ## Accepted residue: DNS rebinding (recorded 2026-08-09)
+ * ## Accepted residue: DNS rebinding
  *
  * This resolves the hostname and then `fetch` resolves it again, independently.
  * A record with a short TTL can answer public here and private there, and

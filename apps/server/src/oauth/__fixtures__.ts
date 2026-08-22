@@ -27,13 +27,12 @@ export const TEST_OAUTH_ENV = {
 };
 
 /**
- * A self-issuing `OAuthConfig`, in one place.
+ * A self-issuing `OAuthConfig`, in one place, so a type change is a one-file
+ * edit.
  *
- * Four test files used to build this literal by hand, so adding `publicOrigin`
- * to the type was a four-file edit that said nothing. `issuer` and
- * `publicOrigin` are the same value here precisely because that is what the
- * built-in authorization server means — the delegated mode is the one that
- * separates them, and its tests set them apart deliberately.
+ * `issuer` and `publicOrigin` are the same value here precisely because that is
+ * what the built-in authorization server means — the delegated mode is the one
+ * that separates them, and its tests set them apart deliberately.
  */
 export const TEST_OAUTH_CONFIG: AuthServerConfig = {
   issuer: TEST_ISSUER,

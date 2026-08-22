@@ -83,9 +83,9 @@ export default definePreview({
         root.style.setProperty(key, value);
       }
       // The canvas always takes the resolved background, host theme or not.
-      // Scoping this to `theme` left the dark stories drawing dark-mode text
-      // on Storybook's white canvas — a 1.05:1 combination that exists in no
-      // real host, but which every story's axe check faithfully reported.
+      // Scoping it to a host theme would leave dark stories drawing dark-mode
+      // text on Storybook's white canvas, which axe reports as failing
+      // contrast.
       document.body.style.cssText =
         "background: var(--color-background-primary) !important;";
 

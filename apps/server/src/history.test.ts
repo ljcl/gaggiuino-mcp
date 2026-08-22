@@ -43,8 +43,8 @@ describe("walkShotsBack", () => {
   });
 
   it("steps over a deleted shot instead of stopping at it", async () => {
-    // The defect this replaces: `id - 1` treated the hole at #4 as the
-    // previous shot and fetched nothing.
+    // A deleted shot leaves a hole; `id - 1` would treat it as the previous
+    // shot.
     machineWith([1, 2, 3, 5], "5");
     expect(idsOf(await walkShotsBack({ limit: 3 }))).toEqual(["5", "3", "2"]);
   });

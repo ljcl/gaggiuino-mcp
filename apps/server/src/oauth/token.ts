@@ -24,11 +24,8 @@ export interface TokenDeps {
    * Highest refresh generation *issued* per client. See `AccessTokenClaims.gen`
    * and `claimGeneration`.
    *
-   * Required, because the one caller — `createOAuthRouter` — owns this map for
-   * the life of the handler and there is no such thing as a token endpoint
-   * without one. Optional, it read as a knob and behaved as a defect: a caller
-   * that omitted it got a throwaway map per request, which is replay detection
-   * that detects nothing.
+   * Required: replay detection needs one map owned for the handler's lifetime
+   * — a per-request map would detect nothing.
    */
   generations: Map<string, number>;
 }
@@ -57,8 +54,7 @@ function oauthError(
   // and those are opposite diagnoses. A connector that fails to reconnect after
   // consent leaves `oauth.authorized` with nothing after it either way: with
   // this line the code was presented and refused, without it the client never
-  // came back for the token at all. Only success was logged before, so the one
-  // question the log was needed for was the one it could not answer.
+  // came back for the token at all.
   //
   // The description is what the caller is told, so logging it leaks nothing.
   logger.warn("oauth.token_denied", { error, reason: description, ...context });
@@ -78,21 +74,14 @@ function oauthError(
  * The generation to mint a new refresh token at: one above anything this client
  * has already been given.
  *
- * **Both grants go through here, and that is the fix rather than a tidy-up.**
- * The authorization code grant used to issue a hardcoded generation 1 while
- * leaving the counter alone, so re-authorizing a connector that had already
- * rotated handed back a token *below* the high-water mark — superseded on
- * arrival. It worked for exactly one access-token lifetime and then died on its
- * first refresh as `oauth.refresh_replayed`, which reads as a stolen token and
- * is in fact this server refusing the credential it had just minted. The owner
- * re-consents, gets generation 1 again, and buys another hour; only a restart,
- * which empties the map, appears to fix it.
+ * **Both grants go through here — that is the invariant, not a tidy-up.** A
+ * grant that minted without advancing the counter would land below the
+ * high-water mark and be refused as a replay on its first refresh: this server
+ * rejecting the credential it had just issued.
  *
- * The counter is therefore monotonic per client: whatever advances it, a token
- * issued earlier never outranks one issued later. The consequence worth stating
- * is that a *second* authorization for the same `client_id` supersedes the
- * first — reconnecting invalidates the session it replaced, which is what
- * reconnecting should mean.
+ * The counter is monotonic per client, so a second authorization for the same
+ * `client_id` supersedes the first — reconnecting invalidates the session it
+ * replaced, which is what reconnecting should mean.
  *
  * `presented` carries the generation a refresh grant arrived with, so a restart
  * that emptied the map re-establishes the high-water mark from the token itself
@@ -115,11 +104,10 @@ function claimGeneration(
 /**
  * Everything a token pair is minted from.
  *
- * An object rather than the seven positional parameters this grew to: four of
- * them are strings, `audience`, `subject` and `clientId` sit next to each other,
- * and a transposition between them type-checks. That is the same class of
- * mistake as the hardcoded generation this endpoint shipped before — a value
- * that looks right at the call site and is wrong in the token.
+ * An object rather than positional parameters: `audience`, `subject` and
+ * `clientId` are adjacent same-typed strings a transposition would type-check,
+ * and a value that looks right at the call site but is wrong in the token is
+ * the failure class this endpoint must not admit.
  */
 interface IssueOptions {
   audience: string;
@@ -300,7 +288,7 @@ function handleRefresh(
   // to — depends on the value being one this server signed.
   const clientId = claims.cid;
   if (!clientId) {
-    // A refresh token minted before `cid` existed. Refused rather than falling
+    // A refresh token carrying no `cid`. Refused rather than falling
     // back to the form field, which would leave the bypass open for the token's
     // whole ninety-day life and let an attacker choose that path by presenting
     // an old token. `invalid_grant` is what Claude re-runs the authorization
@@ -334,8 +322,8 @@ function handleRefresh(
     //
     // Kept alongside the `oauth.token_denied` line `oauthError` writes, rather
     // than folded into it: `generation` and `seen` are what make a replay
-    // attributable, and the gap between them is what exposed the grant that was
-    // minting superseded tokens in the first place.
+    // attributable — the gap between them distinguishes a genuine replay from
+    // a fresh grant.
     logger.warn("oauth.refresh_replayed", { clientId, generation, seen });
     return oauthError(
       "invalid_grant",

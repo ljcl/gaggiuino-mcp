@@ -23,23 +23,15 @@ import { normalizeValue } from "./normalize";
  * ~0.15s. Applied here, 1.5 bar per sample is ~10 bar/s — roughly double what
  * the pump does when the shot *ends*, so it would essentially never fire.
  *
- * Calibrated 2026-08-08 against three real captures on two profiles, measuring
- * the worst fall over a window where the target was both present and steady:
+ * The thresholds come from the worst falls measured over steady-target windows
+ * on real captures — under 0.9 bar/s benign — so 2.5 bar/s is ~3x the worst
+ * noise observed and needs 1.25 bar of real pressure loss in half a second to
+ * trigger.
  *
- * | capture                            | worst fall, window >= 0.5s |
- * | ---------------------------------- | -------------------------- |
- * | `londiniumShot33` (tapering)       | 0.67 bar/s                 |
- * | `londiniumShot32` (tapering)       | 0.83 bar/s                 |
- * | Zer0 #347, 9-bar plateau           | 0.86 bar/s                 |
- *
- * So 2.5 bar/s is ~3x the worst noise any of them produced, and needs 1.25 bar
- * of real pressure loss in half a second to trigger.
- *
- * `MIN_WINDOW_SEC` is what makes it robust rather than the rate alone: a single
- * noisy sample pair on the Zer0 plateau reaches 2.58 bar/s on its own, which
- * would clear the rate threshold. Half a second spans at least three samples at
- * this recording rate, and noise that size does not survive being averaged over
- * three of them.
+ * `MIN_WINDOW_SEC` is what makes it robust: a single noisy pair on a flat
+ * plateau can reach ~2.6 bar/s alone, which would clear the rate threshold.
+ * Half a second spans at least three samples at this recording rate, and noise
+ * that size does not survive being averaged over three of them.
  */
 const COLLAPSE_BAR_PER_SEC = 2.5;
 const MIN_WINDOW_SEC = 0.5;
@@ -47,11 +39,10 @@ const MIN_WINDOW_SEC = 0.5;
 /**
  * How far the target may drift across the window and still count as "held".
  *
- * A tapering profile lowers its own target continuously — `londiniumShot33`
- * steps 8.8 bar down to 6.3 over the shot — so this cannot be an equality test
- * or the taper reads as a defect on every shot. It is deliberately tight: a
- * commanded *step* (Zer0 drops 6 bar to 2.5 in one sample) is orders of
- * magnitude larger than any taper's per-window drift.
+ * A tapering profile lowers its own target continuously, and a stepped profile
+ * commands multi-bar jumps in a single sample — orders of magnitude larger
+ * than any taper's per-window drift — so this cannot be an equality test or
+ * the taper reads as a defect on every shot.
  */
 const TARGET_HELD_TOLERANCE_BAR = 0.15;
 
@@ -62,7 +53,7 @@ const TARGET_HELD_TOLERANCE_BAR = 0.15;
  * Generous on purpose. Pressure overshoots its target routinely while the pump
  * settles, and a margin tight enough to call that "not tracking" would exclude
  * the plateau where a real collapse is most likely to happen. It only has to be
- * small compared with the gap left by a commanded step — Zer0's is 3.5 bar.
+ * small compared with the multi-bar gap a commanded step leaves.
  */
 const TRACKING_MARGIN_BAR = 1;
 
@@ -122,10 +113,10 @@ function toSamples(datapoints: ShotData["datapoints"]): Sample[] {
  * The first sample at least `MIN_WINDOW_SEC` after `from`, if there is one.
  *
  * Never returns the series' final sample, deliberately. A shot ends when its
- * stop condition is met, the pump stops, and pressure releases — measured at
- * 5.8 bar/s on Zer0 #347's last sample, twice the collapse threshold. That
- * release is the shot finishing, not the puck failing, and reporting it on
- * every single shot is how a diagnostic stops being read.
+ * stop condition is met, the pump stops, and pressure releases — on real shots
+ * at roughly twice the collapse threshold. That release is the shot finishing,
+ * not the puck failing, and reporting it on every single shot is how a
+ * diagnostic stops being read.
  */
 function windowEnd(samples: Sample[], from: Sample): Sample | undefined {
   for (const candidate of samples.slice(0, -1)) {
@@ -141,13 +132,13 @@ function windowEnd(samples: Sample[], from: Sample): Sample | undefined {
  * capture fails without them:
  *
  * - **The target must be commanded at both ends.** `targetPressure` is `0`
- *   while a profile drives flow rather than pressure, which is how Londinium
- *   spends its first five seconds. Treating `0` as "a steady target of zero"
- *   makes the fill-to-extraction handover — where pressure genuinely does drop
- *   fast — read as a collapse on every shot. Measured at 4.0 bar/s there.
- * - **The target must not have moved.** Zer0 steps its target from 6 bar to 2.5
- *   mid-shot and the pressure follows it down at 2.5 bar/s. The machine did
- *   what it was told; nothing collapsed.
+ *   while a profile drives flow — typically through a multi-second fill — and
+ *   treating `0` as "a steady target of zero" turns the fill-to-extraction
+ *   handover, where pressure genuinely drops fast, into a collapse on every
+ *   such shot.
+ * - **The target must not have moved.** When a profile commands a large
+ *   mid-shot step, pressure follows it down fast; the machine did what it was
+ *   told and nothing collapsed.
  *
  * Two more live in the loop body, because they need the measured pressure: the
  * fall must *begin* from a pressure that was tracking its target, and must
@@ -189,12 +180,11 @@ function findFallingWindows(samples: Sample[]): PressureCollapse[] {
     const elapsed = end.time - start.time;
 
     // Pressure must have ended up *below* what was commanded. Falling toward a
-    // target is the machine obeying it: when Zer0 steps its target from 6 bar
-    // to 2.5, the measured pressure takes ~2.5s to decay to meet it, and the
-    // target is perfectly steady for all of it. On shot #347 that decay runs at
-    // 2.2 bar/s — only 12% under the collapse threshold, which is far too
-    // little margin to rest on the rate alone. Falling *past* the target is the
-    // thing that has no benign explanation.
+    // target is the machine obeying it: after a large step, pressure takes
+    // seconds to decay onto the new target while the target holds steady, and
+    // that decay can run uncomfortably close to the collapse rate — too little
+    // margin to rest on the rate alone. Falling *past* the target is the thing
+    // that has no benign explanation.
     if (end.pressure >= end.target) continue;
 
     const dropBar = start.pressure - end.pressure;

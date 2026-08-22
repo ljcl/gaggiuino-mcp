@@ -109,9 +109,8 @@ export function isLoopbackOnly(redirectUris: string[]): boolean {
       const { hostname } = new URL(uri);
       // `[::1]` with the brackets, because that is what WHATWG `URL` reports
       // for an IPv6 host — `new URL("http://[::1]/cb").hostname` is `"[::1]"`,
-      // and the unbracketed form does not parse at all. A bare `"::1"` check
-      // is unreachable, which suppressed the warning for precisely the client
-      // it was written to catch.
+      // and the unbracketed form does not parse at all, so a bare `"::1"`
+      // check would never fire.
       return (
         hostname === "127.0.0.1" ||
         hostname === "localhost" ||

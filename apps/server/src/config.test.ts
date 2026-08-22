@@ -169,8 +169,8 @@ describe("PORT", () => {
     ["-1", "negative"],
     ["8000.5", "fractional"],
   ])("rejects %s (%s)", (value) => {
-    // The bare `Number(...)` this replaced turned every one of these into a
-    // bind on NaN and an error that never mentioned PORT.
+    // Without parsing, every one of these binds NaN and the error never
+    // mentions PORT.
     expect(() => loadServerConfig({ PORT: value })).toThrow(ConfigError);
     expect(() => loadServerConfig({ PORT: value })).toThrow(/PORT/);
   });
@@ -194,8 +194,8 @@ describe("GAGGIUINO_URL", () => {
   });
 
   it("rejects a bare hostname and says what is missing", () => {
-    // The likeliest typo, and previously it surfaced much later as a failed
-    // fetch blamed on the machine being offline.
+    // The likeliest typo; unchecked, it surfaces much later as a failed fetch
+    // blamed on the machine being offline.
     expect(() =>
       loadServerConfig({ GAGGIUINO_URL: "gaggiuino.local" }),
     ).toThrow(/http:\/\/ prefix/);

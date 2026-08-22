@@ -4,10 +4,8 @@ import { type Annotation } from "./types";
 
 /*
  * Comparison annotations are marked by a hollow dot and a smaller label, not
- * by transparency. Their labels used to render at `opacity: 0.5`, which
- * composited to roughly 2.4:1 against the chart background — well under the
- * 4.5:1 floor for text — so the one thing on the chart that spells out a
- * number was the least readable thing on it.
+ * by transparency: annotation labels are text and must hold 4.5:1 against the
+ * chart background.
  */
 
 interface AnnotationPair {

@@ -118,9 +118,7 @@ export const Loading: Story = {
 
 /**
  * The failure composition `main.tsx` actually mounts: the shell, holding an
- * `ErrorState` carrying the server's own diagnostic. Stories covered the happy
- * path and the loading state but never this one, so the arrangement a user is
- * most likely to be looking at when something has gone wrong went unrendered.
+ * `ErrorState` carrying the server's own diagnostic.
  */
 export const WithError: Story = {
   args: {

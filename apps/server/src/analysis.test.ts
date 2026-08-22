@@ -82,10 +82,9 @@ describe("extractOutcomeMetrics", () => {
   });
 
   it("ignores tare noise the scale opened the shot with", () => {
-    // Condensed from live shot #362 (2026-08-13): the scale read 0.8g at the
-    // first sample — residual water, not coffee — decayed to zero, and only
-    // rose for real much later. Taking any sample above 0.5g reported first
-    // drip at 0.3s on that shot.
+    // Residual tare at shot open must not date first drip: a pre-shot reading
+    // above the threshold decays to zero and only rises for real when coffee
+    // lands.
     const shot = {
       ...mockShotData,
       datapoints: {
@@ -148,9 +147,8 @@ describe("formatShotSummary", () => {
   });
 
   it("renders a phase's events under it", () => {
-    // `events` is always empty today — `extractPhaseSummary` is the thing that
-    // will start filling it. The renderer is already here and already
-    // advertised, so it is asserted here rather than left for whoever does.
+    // Events render under their phase; pinned here with a planted event so
+    // formatting is covered independently of detection.
     const summary = generateShotSummary(mockShotData);
     const [first] = summary.phases;
     if (first === undefined) throw new Error("expected at least one phase");
@@ -319,8 +317,7 @@ describe("phase segmentation agrees with the chart", () => {
 
   it("keeps only the strongest boundaries a two-phase profile has room for", () => {
     // Three pressure steps over 10 raw units, but the profile names two phases,
-    // so only the largest survives. Before the cap this returned four phases,
-    // the last two typed "UNKNOWN".
+    // so only the largest survives.
     const { phases } = generateShotSummary(mockShotData);
 
     expect(phases).toHaveLength(2);
@@ -328,8 +325,8 @@ describe("phase segmentation agrees with the chart", () => {
   });
 
   it("finds a transition after the pressure target stops being reported", () => {
-    // targetPumpFlow outlives targetPressure. Bounding the walk by
-    // targetPressure alone missed the flow handover at index 3 entirely.
+    // targetPumpFlow outlives targetPressure, so the boundary walk reads both
+    // series.
     const shot = {
       ...mockShotData,
       datapoints: {

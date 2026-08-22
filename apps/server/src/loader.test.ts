@@ -76,9 +76,8 @@ describe("loadPrompts", () => {
  * The override machinery is tested through the pure functions and a temp
  * directory, never through `src/data/`. A test that wrote a real
  * `*.local.yaml` next to the bundled YAML would clobber a contributor's own
- * equipment configuration, and leaving the branches to be covered only when
- * such a file happens to exist is what made the coverage number depend on the
- * machine it was measured on.
+ * equipment configuration, and branches covered only when such a file happens
+ * to exist make the coverage number depend on the machine measuring it.
  */
 describe("readLocalOverrides", () => {
   const dir = mkdtempSync(join(tmpdir(), "gaggiuino-loader-"));

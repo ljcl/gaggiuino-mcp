@@ -1,13 +1,9 @@
 /**
  * Startup configuration, validated before the port is bound.
  *
- * `PORT` used to go through a bare `Number(...)` with no NaN guard, so
- * `PORT=eight-thousand` bound port NaN and produced a confusing runtime error
- * rather than a message naming the variable. `GAGGIUINO_URL` was never parsed
- * at all — a typo surfaced later as a failed fetch inside a tool call, blamed
- * on the machine being offline.
- *
- * Everything here fails fast and says which variable is wrong.
+ * Everything fails fast and names the wrong variable: unvalidated, a bad PORT
+ * binds NaN and a malformed GAGGIUINO_URL surfaces much later as a failed
+ * fetch inside a tool call, blamed on the machine being offline.
  */
 
 export const DEFAULT_MACHINE_URL = "http://gaggiuino.local";

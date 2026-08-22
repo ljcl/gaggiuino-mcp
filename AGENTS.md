@@ -374,8 +374,8 @@ lie the split exists to fix.
 
 `delete_profile` is the only tool here that destroys anything, and the endpoint
 behind it — `DELETE /api/profile-select/{id}` — differs from the *selector* by
-HTTP verb alone (`client.ts`'s not-called list still carries its struck-through
-entry as the record of that hazard). What makes it shippable is that reaching
+HTTP verb alone (`client.ts`'s not-called list still carries the entry, as a
+deliberate-call record). What makes it shippable is that reaching
 it is deliberate at four independent points, and no two of them fail together:
 
 - **The scope gate**, inherited rather than written: `PROTECTED_TOOLS` derives
@@ -1808,7 +1808,7 @@ Things worth not re-breaking:
   what `every` is for and what a `some` would wave through. Both were verified to
   fail for the right reason by mutating the implementation before landing.
 
-  `resolvesPublicly`'s docblock carries a dated **accepted residue**: it resolves
+  `resolvesPublicly`'s docblock carries an **accepted residue**: it resolves
   the hostname and `fetch` resolves it again, so a short-TTL record can answer
   public for the check and private for the connection. Accepted because the fetch
   is https-only (which already excludes the plain-http LAN targets that motivate

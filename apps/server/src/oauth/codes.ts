@@ -9,17 +9,13 @@ import { randomBytes } from "node:crypto";
  * keeps somebody signed in — that is the refresh token, which is stateless and
  * survives restarts precisely so this does not have to.
  *
- * Bounded as well as expiring, for the same reason `mcpSession.ts` is: the TTL
- * reclaims entries whose flow was abandoned, and the cap bounds anything that
- * outruns it. The clock is injected so the expiry tests assert "sixty-one
- * seconds later" without waiting.
+ * Bounded as well as expiring: the TTL reclaims abandoned flows, and the cap
+ * bounds anything that outruns it. The clock is injected so the expiry tests
+ * assert "sixty-one seconds later" without waiting.
  *
- * The consent page's `request_token` used to be parked here too, in a second map
- * behind the same cap. It is a signed, stateless token now (`signConsentToken`
- * in `tokens.ts`) because that map was the one store an *unauthenticated* caller
- * could fill — `GET /oauth/authorize` parked an entry before any passphrase was
- * checked (#119). Filling this map requires the passphrase, so the same flood
- * does not reach it.
+ * Filling this map requires the passphrase, so an unauthenticated flood cannot
+ * reach it — unlike the consent page's `request_token`, which is stateless
+ * precisely because its store would sit on an unauthenticated path.
  */
 
 /** RFC 6749 §4.1.2 recommends a maximum of ten minutes; sixty seconds is ample

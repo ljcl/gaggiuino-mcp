@@ -50,8 +50,7 @@ jobs:
         # The existence poll below has to see what a package owner sees. GHCR
         # creates new packages private even under a public repository, and an
         # unauthenticated `docker manifest inspect` against a private package
-        # answers `unauthorized` forever — so the poll used to time out after
-        # 20 minutes blaming docker.yml for a run that had actually succeeded.
+        # answers `unauthorized` forever.
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io

@@ -38,9 +38,9 @@ import {
 import { PHASE_TYPES, TRANSITION_CURVES } from "./profileShape";
 
 /**
- * Every tool in this server reads: nothing here mutates the machine or any
- * local state. `openWorldHint` is the only honest difference between them —
- * some reach out over the network to the machine, some only read bundled YAML.
+ * Annotations for every read-only tool: nothing here mutates local state.
+ * `openWorldHint` is the honest difference between reaching the machine and
+ * reading bundled YAML.
  */
 const READS_MACHINE: ToolAnnotations = {
   destructiveHint: false,
@@ -101,10 +101,11 @@ const CREATES_ON_MACHINE: ToolAnnotations = {
 /**
  * The only tool here that destroys something, and the only one that can.
  *
- * `destructiveHint: true` is the first in this server, and it is literal rather
- * than cautious: `DELETE /api/profile-select/{id}` removes a saved profile and
- * there is no restore path. `upload_profile` cannot rebuild a definition nobody
- * read before deleting it, so the loss is permanent from this server's side.
+ * `destructiveHint: true` is the only one in this server, and it is literal
+ * rather than cautious: `DELETE /api/profile-select/{id}` removes a saved
+ * profile and there is no restore path. `upload_profile` cannot rebuild a
+ * definition nobody read before deleting it, so the loss is permanent from
+ * this server's side.
  *
  * **`idempotentHint` is deliberately absent rather than set either way.**
  * Deleting twice reaching the same end state is only true if ids are stable
@@ -187,11 +188,10 @@ const RecentShotsOutput = z.object({
 });
 
 /**
- * Every documentation-derived field is nullable, because a profile the user
- * built on the machine is real and selectable and has none of them. Before the
- * machine was the source of truth those fields could be required; a schema that
- * still required them would force the merge to drop exactly the profiles the
- * user cares most about.
+ * Every documentation-derived field is nullable because a profile the user
+ * built on the machine is real and selectable and has none of them — requiring
+ * them would force the merge to drop exactly the profiles the user cares most
+ * about.
  */
 const ProfileOutput = z.object({
   basketNotes: z
@@ -754,17 +754,15 @@ const PRINTABLE_TEXT_SETTINGS = new Set([
  *
  * `/api/settings` is an aggregate, and the `system` section inside it carries
  * `sprofilerToken`, `visualizerToken`, `mqttUsername`, and `mqttPassword`
- * (`docs/upstream/rest-api.md` L182-183, L193-194). This function used to be
- * `String(value)`, so every one of them went straight into model context.
+ * (`docs/upstream/rest-api.md` L182-183, L193-194).
  *
  * A denylist of those four names is the obvious fix and the wrong one: it
  * misses `newUploadToken`, `visualizerAuth`, `mqttPsk` — anything a later
- * firmware names differently — and it fails *silently*, which is how the
- * original defect survived. Defaulting on type inverts that. Numbers, booleans,
- * and this firmware's string-encoded numbers and booleans are never credentials
- * and print unconditionally; a free-form string is hidden unless it is on a
- * short allowlist, because in this particular payload four of the documented
- * free-form strings are secrets.
+ * firmware names differently — and it fails *silently*. Defaulting on type
+ * inverts that. Numbers, booleans, and this firmware's string-encoded numbers
+ * and booleans are never credentials and print unconditionally; a free-form
+ * string is hidden unless it is on a short allowlist, because in this
+ * particular payload four of the documented free-form strings are secrets.
  *
  * An empty string prints `(not set)` rather than `[hidden]`, so "no MQTT
  * password is configured" stays distinguishable from "one exists and is
@@ -852,10 +850,8 @@ function writeToolDisabled(action: string): ErrorReply | undefined {
   if (loadSecurityConfig().oauth !== undefined) return undefined;
   return {
     isError: true,
-    // "the three that change the machine" rather than a count that has already
-    // been wrong once: this sentence said "the two" until `delete_profile`
-    // landed, and nothing asserted it, so it was simply false in the model's
-    // context. A fourth write tool must update it again.
+    // Worded as an explicit count so it cannot drift silently: update "the
+    // three" when a write tool is added or removed.
     text: `${action} is disabled because this server has no way to authenticate anyone: its /mcp endpoint is open. Every tool here other than the three that change the machine only reads. Ask the user to configure OAuth by setting MCP_PUBLIC_URL and MCP_OAUTH_SECRET (see the README's 'Securing the endpoint' section) and restart the server, or to make the change on the machine itself.`,
   };
 }
@@ -1424,15 +1420,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     }),
     meta: {
       /**
-       * The one place in this server that sets it, and the reason AGENTS.md's
-       * blanket prohibition became a named set rather than staying a rule.
+       * The one place in this server that sets it.
        *
-       * That prohibition's own justification was *"Nothing here warrants it —
-       * every tool reads."* This one does not. The flag's properties — it falls
-       * through to the permission prompt in every mode, the host offers no
-       * "don't ask again", and an existing allow rule does not skip it — are
-       * costs for a read tool and precisely the behaviour wanted for a delete
-       * that cannot be undone.
+       * Its properties — it falls through to the permission prompt in every
+       * mode, the host offers no "don't ask again", and an existing allow rule
+       * does not skip it — are costs for a read tool and precisely the
+       * behaviour wanted for a delete that cannot be undone.
        */
       "anthropic/requiresUserInteraction": true,
     },

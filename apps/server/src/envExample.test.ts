@@ -13,10 +13,7 @@ import { loadSecurityConfig } from "./mcpAuth";
 
 /**
  * `.env.example` is the file the deployment path tells users to copy, so a
- * variable missing from it is a variable most users never learn exists. PR #75
- * added four and updated README, AGENTS.md, SECURITY.md, `server.json`,
- * `turbo.json`, and `docker-compose.yml` — but not this one, and nothing
- * failed. It took a backlog sweep to notice (#77) and four days to fix.
+ * variable missing from it is a variable most users never learn exists.
  *
  * These assertions exist so the next omission is a build failure instead.
  */
@@ -26,8 +23,8 @@ const TEMPLATE = fileURLToPath(
 
 /**
  * Every environment variable the server reads, discovered by scanning the
- * source rather than listed here — a hand-maintained list is the same thing
- * that drifted in the first place, just moved.
+ * source rather than listed here — a hand-maintained list is exactly what can
+ * drift.
  *
  * `env.NAME` catches both `process.env.NAME` and the injected
  * `Record<string, string | undefined>` that `loadServerConfig` and
@@ -36,11 +33,8 @@ const TEMPLATE = fileURLToPath(
 function variablesReadFromSource(): Map<string, string[]> {
   const root = fileURLToPath(new URL("./", import.meta.url));
   const readers = new Map<string, string[]>();
-  // Recursive, because the scan is the guard. A flat `readdirSync` covered
-  // `src/*.ts` only, so the day a variable was first read from a subdirectory
-  // — `src/oauth/` — this test would have gone on passing while the template
-  // silently stopped documenting it. That is the exact failure it exists to
-  // catch, one directory deeper.
+  // Recursive, because the scan is the guard: variables are read from
+  // subdirectories (`src/oauth/`) that a flat scan of `src/*.ts` would miss.
   const walk = (dir: string, prefix: string): void => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const label = `${prefix}${entry.name}`;
@@ -104,9 +98,9 @@ describe(".env.example", () => {
   });
 
   it("leaves the OAuth variables commented out rather than set", () => {
-    // Same reasoning as the token above, with a sharper edge: a placeholder
-    // MCP_PUBLIC_URL would be advertised as this server's `resource` and every
-    // token minted against it would be rejected on arrival.
+    // A placeholder MCP_PUBLIC_URL would be advertised as this server's
+    // `resource` and every token minted against it would be rejected on
+    // arrival.
     for (const name of ["MCP_PUBLIC_URL", "MCP_OAUTH_SECRET"]) {
       expect(template).toMatch(new RegExp(`^#${name}=`, "m"));
       expect(template).not.toMatch(new RegExp(`^${name}=`, "m"));

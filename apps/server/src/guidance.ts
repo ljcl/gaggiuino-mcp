@@ -9,10 +9,9 @@ export const DIAL_IN_PROMPT_NAME = "espresso_shot_analyst";
  *
  * Two surfaces serve this same text — the `get_dial_in_guidance` tool, for a
  * model that needs it mid-conversation, and the `espresso_shot_analyst` prompt,
- * for a user who invokes it deliberately. They used to interpolate the template
- * independently, in two files, with the same pair of `.replace()` calls: a
- * placeholder added to the YAML would be substituted on one surface and left
- * raw on the other. This is the only place that interpolation happens.
+ * for a user who invokes it deliberately. This is the only place the template
+ * is interpolated, so a placeholder added to the YAML is substituted
+ * identically on both.
  *
  * Returns `undefined` when the prompt is missing from `prompts.yaml`, so each
  * caller can fail the way its own protocol expects — the tool returns an

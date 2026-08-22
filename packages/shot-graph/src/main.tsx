@@ -38,10 +38,8 @@ import "./global.css";
 const RAW_JSON_TOOL = "get_shot_raw_json";
 
 /**
- * App-visibility tool that resolves "the shot before this one" server-side.
- *
- * The button used to ask for `id - 1`, which is only the previous shot when the
- * machine has never deleted one — and after shot #1 it asked for shot #0.
+ * App-visibility tool that resolves "the shot before this one" server-side:
+ * shot ids have gaps, so `id - 1` is not the previous shot.
  */
 const PREVIOUS_JSON_TOOL = "get_previous_shot_json";
 

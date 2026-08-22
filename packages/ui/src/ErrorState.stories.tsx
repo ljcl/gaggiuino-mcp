@@ -82,8 +82,7 @@ export const DarkTheme: Story = {
 };
 
 /**
- * Clicking retry re-runs the fetch and clears the error — the loop #35 asks
- * for, driven end to end.
+ * Clicking retry re-runs the fetch and clears the error.
  */
 export const RetrySucceeds: Story = {
   play: async ({ canvasElement }) => {

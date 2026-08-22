@@ -117,10 +117,9 @@ describe("verifyPassphrase", () => {
 });
 
 describe("isWellFormedHash agrees with verifyPassphrase", () => {
-  // The regression that made this worth pinning: the startup check used to be
-  // strictly weaker than the verifier. A hash it accepted could still fail
-  // every login, which is the exact failure the startup check exists to
-  // prevent — made harder to diagnose by the check having passed.
+  // The startup check must reject everything the verifier cannot use: a hash
+  // accepted at startup yet unusable at login is exactly the failure the check
+  // exists to prevent.
   const REAL = TEST_PASSPHRASE_HASH;
   const [, n, r, p, salt, key] = REAL.split("$") as [
     string,
@@ -134,7 +133,7 @@ describe("isWellFormedHash agrees with verifyPassphrase", () => {
   const MISTYPED = [
     ["a non-integer r", `scrypt$${n}$eight$${p}$${salt}$${key}`],
     ["a non-integer p", `scrypt$${n}$${r}$one$${salt}$${key}`],
-    // `Number("")` is 0, which used to satisfy `Number.isInteger`.
+    // `Number("")` is 0, which `Number.isInteger` accepts.
     ["an empty N", `scrypt$$${r}$${p}$${salt}$${key}`],
     ["a zero N", `scrypt$0$${r}$${p}$${salt}$${key}`],
     ["a negative N", `scrypt$-16384$${r}$${p}$${salt}$${key}`],

@@ -173,8 +173,7 @@ describe("client", () => {
 
     it("retries a 503 and succeeds when the machine recovers", async () => {
       // The webserver on a microcontroller answers 503 while it is busy
-      // writing a shot to flash. Treating that like a 404 — one attempt, then
-      // give up — failed the call for a machine that was about to be fine.
+      // writing a shot to flash.
       let attempts = 0;
       mockServer.use(
         http.get("http://gaggiuino.local/api/system/status", () => {

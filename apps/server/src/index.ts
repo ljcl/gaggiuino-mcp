@@ -51,8 +51,7 @@ logger.info("server.listening", {
 });
 
 /**
- * `docker stop` sends SIGTERM, so handling only SIGINT meant the container was
- * killed after the grace period with work still in flight. Stop accepting
+ * `docker stop` sends SIGTERM, so both signals are handled. Stop accepting
  * first, then abort what remains, so nothing lands on a handler that is
  * closing.
  */

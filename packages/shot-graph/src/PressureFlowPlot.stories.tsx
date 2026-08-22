@@ -105,10 +105,9 @@ export const SingleShot: Story = {
  * Not a style nitpick — a stroke naming a token that does not exist is an
  * *invalid* declaration, and `stroke` is an inherited property with an initial
  * value of black, so the element renders solid black in both themes rather than
- * disappearing or falling back. That shipped once here: `--color-border-subtle`
- * was never defined anywhere in the design system, and nothing noticed, because
- * the Chart accessibility gate only measures `--chart-*` series strokes and no
- * story looked at the furniture.
+ * disappearing or falling back. The Chart accessibility gate measures only
+ * `--chart-*` series strokes, so furniture tokens have no other guard than
+ * this.
  */
 export const TokensResolve: Story = {
   args: {
@@ -285,15 +284,12 @@ export const AccessibleDescription: Story = {
     await expect(description?.textContent).toContain("Parametric plot");
     await expect(description?.textContent).toContain("not a time");
 
-    // `accessibilityLayer` is deliberately off: its only behaviour is moving a
-    // tooltip, and this plot has none, so it would leave a focusable
-    // `role="application"` that answers no key the user presses.
     // `accessibilityLayer` is opted out of, not merely omitted: recharts 3
     // turns it on by default, and its only behaviour is moving a tooltip this
-    // plot does not have. Left on it stamps `role="application"` and
-    // `tabIndex=0` on the surface — a focusable element that tells a screen
-    // reader to stop intercepting keystrokes and then answers none of them,
-    // nested inside a `role="img"` that declares the subtree presentational.
+    // plot does not have. Left on it stamps a focusable `role="application"`
+    // on the surface that tells a screen reader to stop intercepting
+    // keystrokes and then answers none of them, nested inside a `role="img"`
+    // declaring the subtree presentational.
     await expect(
       canvasElement.querySelectorAll('[role="application"]'),
     ).toHaveLength(0);

@@ -1,14 +1,10 @@
 /**
  * One-line JSON structured logging to stderr.
  *
- * The server used to write free text — and tool failures were swallowed into
- * tool results with nothing logged at all, so "which tool failed, and why"
- * had no answer from outside the model's transcript. Every record now carries
- * an `event` name and typed fields, so `docker logs | jq 'select(.event ==
- * "tool.call" and .outcome != "ok")'` answers it.
- *
- * stderr rather than stdout because that is where this server has always
- * written, and it keeps stdout free if a stdio transport is ever added.
+ * Each record carries an `event` name and typed fields, so `docker logs | jq
+ * 'select(.event == "tool.call" and .outcome != "ok")'` answers "which tool
+ * failed, and why". stderr keeps stdout free if a stdio transport is ever
+ * added.
  */
 
 export type LogLevel = "debug" | "info" | "warn" | "error" | "silent";

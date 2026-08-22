@@ -1,7 +1,6 @@
 import styles from "./Skeleton.module.css";
 
 interface SkeletonProps {
-  /** Variant changes the shape */
   variant?: "chart";
   /**
    * Optional status line under the placeholder, for when a fetch has been

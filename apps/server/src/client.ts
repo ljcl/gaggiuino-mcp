@@ -41,15 +41,12 @@
  *   nothing here has shot data to upload.
  * - `DELETE /api/shots/*` (L24-28) — destructive, needs an SD card, and no
  *   read-only story asks for it.
- * - ~~`DELETE /api/profile-select/*`~~ — **called as of #105**, by
- *   `deleteProfileFromMachine`. It stayed on this list while it was unverified,
- *   and the warning that earned it a place here is still true and is now the
- *   method's own docblock: it shares a path with the profile *selector* and
+ * - `DELETE /api/profile-select/*` — called by `deleteProfileFromMachine`.
+ *   Listed here because it shares its path with the profile *selector* and
  *   differs only by HTTP verb, so a model one token away from `select` must
- *   never be able to reach it by accident. What changed is that the tool in
- *   front of it makes reaching it deliberate — an exact-name echo, a refusal to
- *   touch the selected profile, and a permission prompt the host cannot
- *   suppress.
+ *   never reach it by accident: an exact-name echo, a refusal to touch the
+ *   selected profile, and a permission prompt the host cannot suppress are
+ *   what make reaching it deliberate.
  * - Every `POST /api/settings/*` (L144, L203, L252, L296, L343, L396) —
  *   writing boiler setpoints from a chat window is a far heavier permission
  *   story than `select_profile`, and nobody has asked for it. That is the soft
@@ -66,7 +63,7 @@
  *   penalty is destructive rather than incomplete, which neither sentence says
  *   on its own. **That is an inference from the documentation, not an observed
  *   behaviour** — no hardware test here has confirmed it. A second
- *   implementation (mxkissnr/gaggiuino-local-profiler, read 2026-08-08) reads
+ *   implementation (mxkissnr/gaggiuino-local-profiler) reads
  *   it the same way, re-reading the whole `system` category and merging before
  *   it writes, but it cites this same sentence as its reason: a shared reading,
  *   not independent evidence. Treated as true anyway, because the cost of being
@@ -165,11 +162,10 @@ export const MACHINE_CONFIG_TTL_MS = 30_000;
 /**
  * Statuses worth trying again.
  *
- * Every HTTP status used to short-circuit the retry loop on the reasoning that
- * the machine had given a definitive answer. That is true of a 404 and a 400;
- * it is not true of a 503 from a webserver on a microcontroller that was busy
- * writing a shot to flash, which is the single most common transient failure
- * this upstream produces.
+ * 5xx is transient on this upstream — a webserver on a microcontroller answers
+ * 503 while busy writing a shot to flash, the most common transient failure
+ * here — and 408/429 ask to be retried. Every other status is a definitive
+ * answer, true of a 404 and a 400 alike.
  */
 function isRetriableStatus(status: number): boolean {
   return status >= 500 || status === 408 || status === 429;
@@ -197,8 +193,8 @@ const SwitchStateSchema = z.union([z.string(), z.boolean()]);
  *
  * This is captured behaviour, not spec: the reference gives that endpoint one
  * sentence and no example (rest-api.md L100-102), so it neither confirms nor
- * contradicts it. The evidence is `mockMachineStatusFromHardware`, taken
- * verbatim off a real machine on 2026-07-27.
+ * contradicts it. The evidence is the captured fixture
+ * `mockMachineStatusFromHardware` (`__fixtures__/api-responses.ts`).
  *
  * What the reference *does* corroborate is the habit. It prints the same field
  * with two types in two places — `forcePredictive`/`hwScalesEnabled` as
@@ -220,12 +216,11 @@ export const MachineStatusSchema = z.looseObject({
   /**
    * Id of the profile the machine currently has selected.
    *
-   * Undocumented — `rest-api.md` gives `/api/system/status` one line and no
-   * response example — but captured verbatim off real hardware on 2026-07-27
-   * (`mockMachineStatusFromHardware`: `profileId: "15"` beside
-   * `profileName: "Zer0"`). The loose object meant it was already arriving and
-   * merely undeclared; declaring it is what lets `delete_profile` refuse to
-   * delete the profile the machine is actually using.
+   * Undocumented upstream — `rest-api.md` gives `/api/system/status` one line
+   * and no response example — but present in the captured fixture
+   * `mockMachineStatusFromHardware`. Declaring it is what lets
+   * `delete_profile` refuse to delete the profile the machine is actually
+   * using.
    *
    * Deliberately **not** added to `MachineStatusOutput`. It is a safety input,
    * not something `get_status` was asked for, and the advertised output schema
@@ -403,11 +398,10 @@ const ShotDatapointsSchema = z.looseObject({
   shotWeight: NumberSeries.optional(),
   targetPressure: NumberSeries.optional(),
   targetPumpFlow: NumberSeries.optional(),
-  // Real machines send this — verified on firmware serving shot #347, which
-  // carries a full `targetTemperature` series alongside `temperature`. It was
-  // absent here while nothing read it, which left `SCALE_BY_10` listing a field
-  // the parsed type did not have. Optional like the rest: the fixtures captured
-  // for the chart's stories predate it and do not carry one.
+  // Real machines send this — current firmware carries a full
+  // `targetTemperature` series alongside `temperature`, matching SCALE_BY_10.
+  // Optional like the rest because the chart-story fixtures predate it and do
+  // not carry one.
   targetTemperature: NumberSeries.optional(),
   temperature: NumberSeries.optional(),
   timeInShot: NumberSeries.optional(),
@@ -550,8 +544,7 @@ const MAX_ERROR_DETAIL = 200;
  * the body may be an error page rather than a sentence, and a body that will not
  * read must never turn an HTTP error into a *different* error. Draining it is a
  * bonus rather than an accident — `statusReader` already records that the ESP32
- * serves one request at a time and a dangling body costs the next caller, and
- * the error path did not drain before.
+ * serves one request at a time and a dangling body costs the next caller.
  */
 async function readErrorDetail(
   response: Response,
@@ -706,8 +699,8 @@ export function createClient(config: ClientConfig) {
 
     // The deadline is what a host actually feels. Three attempts at a 10s
     // timeout plus 1.5s and 3s of backoff is ~34s, past the point where most
-    // hosts abandon a tool call — so the model saw a timeout with no message
-    // rather than "the machine may be powered off".
+    // hosts abandon a tool call — so the model gets a timeout with no message
+    // instead of "the machine may be powered off".
     const deadlineAt = now() + overallTimeoutMs;
     let lastError: Error | undefined;
     let lastHttpError: UpstreamHttpError | undefined;
@@ -726,9 +719,8 @@ export function createClient(config: ClientConfig) {
 
       try {
         const response = await fetch(`${normalizedBaseUrl}${path}`, {
-          // rest-api.md Notes item 5: all requests and responses are JSON. The
-          // client sets no headers otherwise, which was fine only because
-          // nothing had ever sent a body.
+          // rest-api.md Notes item 5: all requests and responses are JSON, so
+          // the header is set whenever a body is sent.
           ...(body === undefined
             ? {}
             : { body, headers: { "Content-Type": "application/json" } }),
@@ -873,10 +865,9 @@ export function createClient(config: ClientConfig) {
      *
      * The reference confirms the shape — `POST /api/profile-select/*`, id in the
      * path, no body (rest-api.md L36-39) — which is why this call needs nothing
-     * from `perform()` that a GET does not. It also confirms that the sibling
-     * `DELETE /api/profile-select/*` (L41-44) **deletes a profile**. That is
-     * recorded here rather than in a commit message because the two differ only
-     * by HTTP method.
+     * from `perform()` that a GET does not. The sibling
+     * `DELETE /api/profile-select/*` (L41-44) deletes a profile — the two
+     * differ only by HTTP verb, which is what makes the path hazardous.
      */
     async selectProfile(machineProfileId: string): Promise<void> {
       await perform(
@@ -889,9 +880,9 @@ export function createClient(config: ClientConfig) {
     /**
      * The one call here that is not safe to repeat.
      *
-     * `selectProfile`'s docblock pre-registered this case: *"a future write that
-     * is not idempotent must not inherit this loop without saying so."* The
-     * machine's own documentation settles it — rest-api.md L82, on
+     * `selectProfile`'s docblock states the rule: a write that is not
+     * idempotent must opt out of this loop explicitly. The machine's own
+     * documentation settles it — rest-api.md L82, on
      * `POST /api/profile`: *"A fresh id is always assigned, regardless of any id
      * in the body."* There is no dedupe to lean on.
      *
@@ -940,13 +931,13 @@ export function createClient(config: ClientConfig) {
      * never be confused at a call site, and it is the only method in this file
      * whose name says what it costs.
      *
-     * Verified against hardware on firmware `main-7889b7d`: it removes exactly
-     * the named profile and leaves the selection alone.
+     * Verified on hardware: removes exactly the named profile and leaves the
+     * selection alone.
      *
      * **`maxAttempts: 1`, and the reason is worse than `createProfile`'s.**
-     * `selectProfile`'s docblock pre-registered the obligation — "a future write
-     * that is not idempotent must not inherit this loop without saying so" — and
-     * a delete is that write twice over. The reference documents no response
+     * `selectProfile`'s docblock states the rule: a write that is not idempotent
+     * must opt out of this loop explicitly — and a delete is that write twice
+     * over. The reference documents no response
      * body, no status codes, and crucially **nothing about whether ids are
      * reused or renumbered after a delete**. If they are, a retried DELETE whose
      * first attempt already landed removes a *different, arbitrary* profile.

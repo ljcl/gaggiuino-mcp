@@ -341,10 +341,9 @@ describe("simulateCvd", () => {
 
   /**
    * Where each sRGB primary lands. Six triples pin the effect of all eighteen
-   * coefficients in their correct positions, which is the only cheap way to
-   * catch the failure #81 names by name: a transposed row still produces
-   * plausible-looking colours, so neither the swatch table nor a
-   * grey-invariance check notices it.
+   * coefficients in their correct positions — the one cheap way to catch a
+   * transposed row, which still produces plausible-looking colours neither
+   * the swatch table nor a grey-invariance check notices.
    */
   const PRIMARY_MAPPING: ReadonlyArray<
     readonly [(typeof CVD_TYPES)[number], Rgb, Rgb]
@@ -415,11 +414,10 @@ describe("cvdSeparation", () => {
     expect(cvdSeparation(a, b)).toBeLessThanOrEqual(Math.max(...perType));
   });
 
-  it("still calls the pre-#79 green/ochre pair confusable", () => {
-    // The historical pin. This is the pair the current palette replaced: it
-    // measures a few ΔE00 apart once simulated, far under the 17 the gate
-    // requires. If a refactor ever makes this look separable, the maths is
-    // wrong — and the gate would be passing a palette it should reject.
+  it("calls a green/ochre pair confusable under simulation", () => {
+    // A known-confusable pair: a few ΔE00 apart once simulated, far under the
+    // 17 the gate requires. If a refactor ever makes this look separable, the
+    // maths is wrong — the gate would be passing a palette it should reject.
     expect(cvdSeparation([44, 160, 44], [181, 131, 42])).toBeLessThan(10);
   });
 
