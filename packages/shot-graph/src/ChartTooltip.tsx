@@ -33,15 +33,13 @@ function format(value: unknown): string | undefined {
 /**
  * Recharts tooltip adapter.
  *
- * Entries are matched to the series registry by `dataKey`, not by sniffing the
- * display name. The old filters read `name` for "Goal", "Target", "Area" and
- * "(cmp)" — which meant renaming a series silently changed what the tooltip
- * showed, and dropped every comparison value at the one moment two shots at the
- * same timestamp are worth reading side by side. Area fills and goal lines now
- * declare `tooltipType="none"` at the source and never reach this payload.
+ * Renaming a series must not change what the tooltip shows, so entries are
+ * matched to the series registry by `dataKey`, never by display name. Area
+ * fills and goal lines declare `tooltipType="none"` at the source and never
+ * reach this payload.
  *
  * Zero is a reading, not a gap: preinfusion sits at zero flow and the shot
- * starts at zero weight, both of which the old `value !== 0` filter hid.
+ * starts at zero weight.
  */
 export function ChartTooltip({ active, payload, label }: CustomTooltipProps) {
   if (!active || !payload?.length) return null;

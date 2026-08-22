@@ -16,7 +16,7 @@ import { describeDeleteFailure, describeUploadFailure } from "./tools";
 
 /**
  * Configure OAuth for the duration of a test, which is what `writeToolDisabled`
- * now checks. All three variables are needed: `loadSecurityConfig` treats a
+ * checks. All three variables are needed: `loadSecurityConfig` treats a
  * partial configuration as a startup error rather than as a mode, so stubbing
  * two of them makes the tool throw instead of returning its refusal.
  */
@@ -108,8 +108,8 @@ describe("tool dispatch", () => {
     });
 
     it("folds the shot's headline numbers into the same answer", async () => {
-      // "How was my last shot" used to cost two round trips: an id, then the
-      // shot. The id is cached by the time get_shot_data asks for detail.
+      // Folds the shot's headline numbers into the id answer; the follow-up
+      // detail read is served from cache.
       const result = await handleToolCall("get_latest_shot_id", {});
       expect(result.structuredContent?.summary).toMatchObject({
         finalWeightG: 38.1,
@@ -246,8 +246,8 @@ describe("tool dispatch", () => {
 
   describe("get_previous_shot_json", () => {
     it("resolves the real previous shot across a gap", async () => {
-      // The compare button used to ask for `id - 1`, which is the previous
-      // shot only on a machine that has never deleted one.
+      // `id - 1` is the previous shot only on a machine that has never deleted
+      // one.
       mockServer.use(
         http.get("http://gaggiuino.local/api/shots/9", () =>
           HttpResponse.json({ error: "not found" }, { status: 404 }),
@@ -438,7 +438,7 @@ describe("tool dispatch", () => {
 
     it("lists a profile the user built on the machine, undocumented", async () => {
       // The case the whole merge exists for: real, selectable, and invisible
-      // to a server that only ever read its own YAML.
+      // to a documentation-only listing.
       machineProfiles([{ id: "42", name: "Sunday Filter Experiment" }]);
       const result = await handleToolCall("list_profiles", {});
       const custom = profilesOf(result).find(
@@ -598,8 +598,6 @@ describe("tool dispatch", () => {
       });
 
       it("answers what an undocumented profile actually does", async () => {
-        // The headline case. Before this the user's own profile came back as a
-        // row of nulls and a suggestion to go pull a shot with it.
         mockServer.use(
           http.get("http://gaggiuino.local/api/profiles/all", () =>
             HttpResponse.json([{ id: "42", name: "Sunday Filter Experiment" }]),
@@ -869,8 +867,8 @@ describe("tool dispatch", () => {
     });
 
     it("is allowed when OAuth is configured", async () => {
-      // OAuth is now the only thing that can enable a write, so this is the
-      // deployment the two write tools exist for rather than one case of two.
+      // OAuth is the only credential that can enable a write; this is the
+      // deployment the write tools exist for.
       configureOAuth();
       machineAccepts();
       const result = await handleToolCall("upload_profile", { profile: valid });
@@ -1238,8 +1236,8 @@ describe("tool dispatch", () => {
     }
 
     it("refuses when the server has no credential configured", async () => {
-      // The gate is the whole reason this tool waited on #19: an open /mcp
-      // over a tunnel would let anyone drive the machine.
+      // An open /mcp over a tunnel would let anyone drive the machine, so the
+      // credential gate comes first.
       vi.stubEnv("MCP_PUBLIC_URL", "");
       vi.stubEnv("MCP_OAUTH_SECRET", "");
       machineHolding([{ id: "15", name: "Zer0" }]);
@@ -1744,8 +1742,8 @@ describe("tool dispatch", () => {
     it("costs one upstream fetch per shot, not one per caller", async () => {
       // Rendering a graph is two reads of the same shot: this tool builds the
       // text summary, then the app it renders calls get_shot_raw_json for the
-      // same id. With a comparison overlay that was four round trips to an
-      // ESP32 for two shots that had already finished.
+      // same id. Without the cache a comparison overlay costs four round trips
+      // to an ESP32 for two shots that have already finished.
       let primary = 0;
       let comparison = 0;
       mockServer.use(

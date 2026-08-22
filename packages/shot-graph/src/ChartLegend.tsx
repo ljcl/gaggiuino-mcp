@@ -17,9 +17,9 @@ interface ChartLegendProps {
  *
  * Both rows draw each series' own `strokeDasharray` in the swatch, including
  * the comparison overlay's. That is the key to the encoding: comparison strokes
- * are told apart from their primary by pattern now rather than by a fade, and a
- * key that omitted the pattern would leave a viewer who cannot separate the two
- * by hue with nothing to read the chart by.
+ * are told apart from their primary by pattern, and a key that omitted the
+ * pattern would leave a viewer who cannot separate the two by hue with nothing
+ * to read the chart by.
  */
 export function ChartLegend({
   hidden,

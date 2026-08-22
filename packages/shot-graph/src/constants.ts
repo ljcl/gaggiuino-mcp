@@ -75,10 +75,9 @@ export function comparisonDash(dash: string | undefined): string {
  * Measured, not chosen: every `--chart-*` value in both themes still clears
  * 3:1 against `--color-background-primary` when composited at this alpha.
  *
- * Scope note: this used to fade the comparison *lines* too, which is what the
- * dash above replaces. Reference dots and their connectors still use it —
- * there the fade separates a hollow marker from the filled primary one sitting
- * beside it, rather than standing in for an encoding.
+ * Scope note: reference dots and their connectors still use it — there the
+ * fade separates a hollow marker from the filled primary one sitting beside
+ * it, rather than standing in for an encoding.
  */
 export const COMPARISON_OPACITY = 0.75;
 
@@ -169,12 +168,9 @@ export function comparisonKey(metric: MetricKey): string {
 /**
  * One plotted stroke, primary or comparison.
  *
- * This registry is what replaced identifying a comparison series by a `"(cmp)"`
- * substring in its display name. Three call sites matched that string
- * independently — the tooltip filtered on it, the chart styled on it, the
- * legend spelled it out — so a rename was a silent behaviour change in two
- * files that never mentioned each other. `isComparison` is now a field, the
- * suffix is only ever a label, and nothing parses it.
+ * The `"(cmp)"` suffix on a name is only ever a label: `isComparison` is the
+ * field every consumer keys on, and nothing anywhere parses the name, so a
+ * rename cannot change behaviour.
  */
 export interface SeriesConfig {
   /** The `ChartDataPoint` field this stroke plots, and its identity in a

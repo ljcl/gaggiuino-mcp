@@ -86,9 +86,9 @@ describe("isLoopbackOnly", () => {
   it("recognises the bracketed IPv6 loopback", () => {
     // WHATWG URL keeps the brackets on an IPv6 host, so
     // `new URL("http://[::1]/cb").hostname` is "[::1]" and nothing reachable
-    // through `new URL` ever yields a bare "::1". The comparison used to be
-    // against the bare form, which made this branch dead code and suppressed
-    // the warning for exactly the client it was written to catch.
+    // through `new URL` ever yields a bare "::1". The comparison is against
+    // the bracketed form — a bare-form comparison never matches and silently
+    // suppresses the warning.
     expect(isLoopbackOnly(["http://[::1]/cb"])).toBe(true);
     expect(isLoopbackOnly(["http://[::1]:9999/cb"])).toBe(true);
   });

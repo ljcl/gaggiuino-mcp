@@ -44,10 +44,9 @@ export interface Prompt {
  * Read the `*.local.yaml` sitting beside a bundled data file, or `undefined`
  * when the user has not written one. Absence is the normal case, not an error.
  *
- * Exported so a test can point it at a temp directory. It used to be private,
- * which meant the only way to execute either branch was to have a real (and
- * gitignored) override present in `src/data/` — so the coverage number moved
- * with what happened to be on the machine. See AGENTS.md "Test coverage".
+ * Exported so a test can point it at a temp directory, keeping coverage
+ * independent of whatever override files happen to be on disk. See AGENTS.md
+ * "Test coverage".
  */
 export function readLocalOverrides(baseFilePath: URL): unknown {
   const localPath = new URL(
@@ -145,7 +144,6 @@ export function loadProfiles(): Record<string, Profile> {
 
   const validated = ProfilesSchema.parse(raw);
 
-  // Transform snake_case to camelCase
   const profiles: Record<string, Profile> = Object.fromEntries(
     Object.entries(validated).map(([id, profile]) => [
       id,

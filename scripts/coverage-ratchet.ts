@@ -2,16 +2,14 @@
  * Raise `apps/server`'s coverage thresholds to match what the last
  * `test:coverage` run actually measured, floored to one decimal place.
  *
- * This replaces vitest's own `coverage.thresholds.autoUpdate`, which wrote the
- * measured percentage back at full precision. That made the thresholds
- * monotonically increasing *within an uncommitted working tree*: a run would
- * write `lines: 98.1`, the next edit would move a single line out of the
- * covered set, and the re-run failed against a number nobody had committed —
- * reporting it as "you reduced coverage" when the fix was to discard a
- * generated file. Flooring to a tenth gives the ratchet a step large enough
- * that ordinary edits move within it rather than through it.
+ * vitest's own `coverage.thresholds.autoUpdate` writes the measured percentage
+ * back *rounded to nearest*, so a threshold can land above what the run that
+ * wrote it just measured — a number no state of the tree can ever reach, and
+ * `autoUpdate` only ever raises. Flooring to a tenth makes
+ * `threshold <= measured` an invariant of every write, and gives the ratchet a
+ * step ordinary edits move within rather than through.
  *
- * Three properties are the point, and they are what #89 asks for:
+ * Three properties are the point:
  *
  * - **Idempotent.** Two runs on an unchanged tree write once at most — the
  *   floored value is already the committed one the second time.

@@ -75,12 +75,10 @@ interface ParsedHash {
  * Split a stored hash into its parts, or `undefined` if it is not usable.
  *
  * **This is the single definition of "well formed", and it has to stay that
- * way.** It used to be two: a loose startup check and a stricter one inside
- * `verifyPassphrase`. The loose one accepted a non-integer `r`, and an empty
- * `N` (because `Number("") === 0`), so a mistyped hash passed startup validation
- * and then made every correct passphrase fail with a bare "that passphrase was
- * not correct" — the exact failure the startup check exists to prevent, made
- * harder to diagnose by the check having passed.
+ * way:** startup validation (`isWellFormedHash`) and login (`verifyPassphrase`)
+ * must accept exactly the same hashes, otherwise a mistyped value passes
+ * startup and surfaces as a baffling wrong-passphrase error. The individual
+ * checks carry their own reasons below.
  */
 function parseHash(stored: string): ParsedHash | undefined {
   const parts = stored.split("$");

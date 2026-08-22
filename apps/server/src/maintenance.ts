@@ -65,8 +65,9 @@ const PLAUSIBLE_EPOCH_FLOOR_SEC = 1_577_836_800;
 const PLAUSIBLE_EPOCH_CEILING_SEC = 253_402_300_800;
 
 /**
- * Mirrors `NumericSchema` in `client.ts` rather than importing it. This firmware
- * sends numbers as decimal strings on some endpoints, and the boundary schema
+ * Mirrors `NumericSchema` in `client.ts` (unexported, so it cannot be
+ * imported). This firmware sends numbers as decimal strings on some endpoints,
+ * and the boundary schema
  * for `/api/maintenance` deliberately types nothing, so the tolerance has to
  * live at the point of interpretation.
  */

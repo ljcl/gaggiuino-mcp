@@ -60,11 +60,9 @@ export interface AccessTokenClaims {
    * The client this grant belongs to, absent on access tokens.
    *
    * It is what `gen` is counted against, and it is a *claim* rather than the
-   * `client_id` form field for one reason: the field is caller-supplied and
-   * never verified, so keying rotation on it let anyone holding a stolen
-   * refresh token opt out of replay detection by sending a different string —
-   * landing on a fresh counter and rotating undetected while the real client
-   * carried on in its own lane (#163).
+   * `client_id` form field because the field is caller-supplied and never
+   * verified — keying rotation on it would let whoever holds a stolen refresh
+   * token sidestep replay detection by naming another client.
    *
    * Optional on the interface because access tokens do not carry it, **not**
    * because a refresh token may omit it: `handleRefresh` refuses one that does.
@@ -283,13 +281,12 @@ const CONSENT_TTL_MS = 10 * 60_000;
  * Mint the `request_token` a consent page carries, over the request it was
  * rendered for.
  *
- * **Stateless, and therefore not single-use.** What this replaced was a key into
- * a bounded map, and that map was the defect: this request is served *before*
- * any passphrase is checked, so anyone who could reach `GET /oauth/authorize`
- * could park 65 entries, evict the consent page the owner had open, and turn
- * their submit into "this page has expired" (#119). Nothing is stored now, so
- * there is nothing to evict — the fix removes a store rather than adding a guard
- * in front of one.
+ * **Stateless, and therefore not single-use.** This request is served *before*
+ * any passphrase is checked, so anything it stored would be a store an
+ * unauthenticated caller controls the contents of — bounded-map eviction here
+ * is the attack, not the recovery path, since an evicted consent page dead-ends
+ * the owner mid-login. Storing nothing removes the store rather than guarding
+ * it.
  *
  * The cost is that a captured consent submission can be replayed inside the TTL,
  * which is worth stating rather than assuming away. It is acceptable because the
@@ -360,10 +357,7 @@ export function verifyConsentToken(
 
   // Rebuilt field by field rather than spread, so nothing the payload happens to
   // carry rides along into the object an authorization code is then bound to —
-  // not the expiry, not the `jti`, not a key some future version adds. The store
-  // this replaced got that wrong in the quiet direction: `recall` was declared to
-  // return a `PendingAuthorization` and actually handed back the map entry, with
-  // the store's own `expiresAt` still attached.
+  // not the expiry, not the `jti`, not a key some future version adds.
   return {
     clientId: claims.clientId,
     clientName: optionalString(claims.clientName),

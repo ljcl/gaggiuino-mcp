@@ -2,10 +2,11 @@
  * The two scopes this resource server understands.
  *
  * They map onto the split the tool annotations already declare: everything with
- * `readOnlyHint: true` needs `espresso:read`, and the two tools that change the
- * machine need `espresso:write`. Nothing here enumerates tools — the protected
- * set is derived from the annotations themselves (see `protectedTools` in
- * `http.ts`), so a new write tool inherits the gate rather than being forgotten.
+ * `readOnlyHint: true` needs `espresso:read`, and the three tools that change
+ * the machine need `espresso:write`. Nothing here enumerates tools — the
+ * protected set is derived from the annotations themselves (see
+ * `PROTECTED_TOOLS` in `oauth/scopeGate.ts`), so a new write tool inherits the
+ * gate rather than being forgotten.
  */
 
 export const SCOPE_READ = "espresso:read";

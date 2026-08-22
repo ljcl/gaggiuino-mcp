@@ -80,10 +80,9 @@ export const Comparison: Story = {
 };
 
 /**
- * The overlay has to be readable without hovering, which it was not while the
- * only thing separating a shot from its comparison was `opacity`. Each
- * comparison stroke now carries its metric's dash behind a long-dash prefix, so
- * the pairing survives greyscale, a projector, and a dichromat's palette.
+ * The overlay has to be readable without hovering: each comparison stroke
+ * carries its metric's dash behind a long-dash prefix, so the pairing survives
+ * greyscale, a projector, and a dichromat's palette.
  */
 export const ComparisonStyling: Story = {
   args: Comparison.args,
@@ -134,8 +133,7 @@ export const PhaseRegions: Story = {
 };
 
 /**
- * A single-phase profile: one region, no internal boundary. The old inference
- * drew a hairline at every target step regardless of what the profile said.
+ * A single-phase profile: one region, no internal boundary.
  */
 export const SinglePhase: Story = {
   args: {
@@ -467,16 +465,10 @@ export const ReportsVisibilityChanges: Story = {
 /**
  * The `hidden` prop, controlled by a parent across an unmount.
  *
- * This is the prop's whole reason for existing and it had no test. The app can
- * unmount this chart — switching to the pressure-against-flow view — and while
- * the hidden set lived only in here, that unmount reset it to the default while
- * `main.tsx`'s own copy, the one `updateModelContext` reports to the model, kept
- * the user's choices. The two diverged with nothing on screen or in a log to say
- * so: the model would describe temperature as plotted after the user had hidden
- * it, or the reverse.
- *
- * The remount below is what a view switch does. An uncontrolled chart fails the
- * final assertion.
+ * Switching views unmounts this chart; uncontrolled, the hidden set resets to
+ * the default while `main.tsx`'s copy — the one `updateModelContext` reports —
+ * keeps the user's choices, and the model's picture of the screen silently
+ * diverges. The remount below is what a view switch does.
  */
 export const ControlledVisibility: Story = {
   render: function ControlledVisibilityStory() {

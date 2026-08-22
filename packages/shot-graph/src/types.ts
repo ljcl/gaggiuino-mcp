@@ -54,9 +54,7 @@ export interface ChartDataPoint {
 /**
  * A span of the shot belonging to one profile phase.
  *
- * The label comes from `profile.phases[].type`, which the machine has always
- * sent and the chart used to throw away in favour of unlabeled hairlines
- * inferred from the target series.
+ * The label comes from `profile.phases[].type`.
  */
 export interface PhaseRegion {
   /** 0-based position in `profile.phases`. */

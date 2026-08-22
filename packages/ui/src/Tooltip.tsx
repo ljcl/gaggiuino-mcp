@@ -44,7 +44,7 @@ export function TooltipEntry({
         {comparison !== undefined && (
           // Tertiary at full strength, not the primary colour faded: stacked
           // opacity over secondary text composites to 3.4:1, under the 4.5:1
-          // floor, which is why it was removed from this package.
+          // floor.
           <span className={styles.comparison}> vs {comparison}</span>
         )}{" "}
         <span className={styles.unit}>

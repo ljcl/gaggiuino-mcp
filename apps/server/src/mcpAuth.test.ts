@@ -67,8 +67,7 @@ describe("loadSecurityConfig", () => {
   });
 
   it("ignores MCP_AUTH_TOKEN entirely", async () => {
-    // Nothing reads the removed shared secret any more — the 2.0.x startup
-    // tombstone is gone too (#114) — so a stale value in a long-lived `.env`
+    // Nothing reads MCP_AUTH_TOKEN, so a stale value in a long-lived `.env`
     // must be an ignored variable, never something that re-gates `/mcp`.
     expect(loadSecurityConfig({ MCP_AUTH_TOKEN: "correct-horse" })).toEqual({
       allowedHosts: [],
@@ -459,9 +458,9 @@ describe("authenticate — OAuth", () => {
   });
 
   it("refuses a credential that is not one of its own access tokens", async () => {
-    // The shape a deployment that never migrated would present: whatever it
-    // used to send as MCP_AUTH_TOKEN. There is no second credential path left
-    // for it to fall into, so it fails verification like any other bad token.
+    // A bearer credential that is not one of this server's tokens fails
+    // verification like any other bad token — there is no shared-secret path
+    // to fall into.
     const outcome = await authenticate(
       request({ authorization: "Bearer correct-horse-battery-staple" }),
       OAUTH,
@@ -636,9 +635,8 @@ describe("describeSecurity", () => {
   });
 
   it("says the removed shared secret is not an alternative", async () => {
-    // The warning used to end by offering MCP_AUTH_TOKEN to clients that can
-    // set their own headers. Someone following that now writes a variable that
-    // stops the server from booting at all.
+    // Older advice offered MCP_AUTH_TOKEN; anyone following it writes a
+    // variable that stops the server booting, so the warning names the removal.
     const message = String(
       report(OPEN, "security.unauthenticated")?.fields.message,
     );

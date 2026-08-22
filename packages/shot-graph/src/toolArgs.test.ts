@@ -11,9 +11,8 @@ describe("parseToolArgs", () => {
 
   it("coerces a numeric id, exactly as the server's schema does", () => {
     // The advertised input schema is `string | number` and the host relays the
-    // call arguments untransformed. A numeric id used to fail the parser's
-    // typeof check and strand the app on "Waiting for shot data…" with no
-    // error — the tool call itself having succeeded (Claude iOS, 2026-08-13).
+    // call arguments untransformed, so the parser must coerce exactly as the
+    // server does.
     expect(parseToolArgs({ shot_id: 363 })).toEqual({
       compare_shot_id: undefined,
       shot_id: "363",

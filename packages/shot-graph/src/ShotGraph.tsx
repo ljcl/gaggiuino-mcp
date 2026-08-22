@@ -58,7 +58,7 @@ interface ShotGraphProps {
    * Hidden series, when the parent owns them.
    *
    * Optional so every story that renders this component directly keeps working
-   * uncontrolled. It exists because the app can now unmount this chart
+   * uncontrolled. It exists because the app can unmount this chart
    * — switching to the pressure-vs-flow view — and an unmount would reset the
    * internal set to the default while the app's own copy, the one that tells the
    * model what is on screen, still held the user's choices. They would diverge
@@ -178,8 +178,8 @@ export function ShotGraph({
   /**
    * One `<Line>` per registry entry, so the dash vocabulary, the axis, and the
    * legend all read from the same record. Comparison strokes differ by dash
-   * rather than by a fade: `opacity` was the only thing separating a shot from
-   * its overlay, which meant telling them apart required hovering.
+   * rather than by a fade, so a shot and its overlay are separable without
+   * hovering.
    */
   const renderSeries = (series: SeriesConfig) =>
     show(series.key) && (
@@ -347,9 +347,7 @@ export function ShotGraph({
 
           {/*
             Profile phases: a boundary line where each one starts, and the
-            phase's own name above it. The name is the point — the chart used to
-            draw these as unlabeled hairlines inferred from the target series
-            while `profile.phases[].type` sat unread in the payload.
+            phase's own name above it.
           */}
           {phases?.map((phase) => (
             <ReferenceArea

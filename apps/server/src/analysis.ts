@@ -115,9 +115,9 @@ export type ShotSummary = z.output<typeof ShotSummarySchema>;
  *
  * Mean absolute deviation over the samples where a target was **commanded** —
  * a target of `0` means the profile is not driving that quantity here, not that
- * it asked for zero, and Londinium spends its first five seconds exactly there.
- * Averaging those in would report a shot as ~4 bar off target for doing what it
- * was told.
+ * it asked for zero, and some profiles spend their opening seconds exactly
+ * there while filling. Averaging those samples in reports a shot as several bar
+ * off target for doing what it was told.
  *
  * This is the question `tempStability` cannot answer. A spread says whether the
  * boiler wobbled; it says nothing about whether it wobbled around the right
@@ -125,9 +125,8 @@ export type ShotSummary = z.output<typeof ShotSummarySchema>;
  *
  * Deliberately a plain mean over every commanded sample, including the moments
  * just after the target steps, when the measured value is still catching up.
- * Excluding a half-second either side of each target change was measured
- * against both captured shots and moved the answer from 0.99 to 0.88 bar and
- * from 1.12 to 0.98 — not enough to justify the extra rule.
+ * Excluding a window either side of each target step was considered and
+ * rejected: it moves the answer too little to justify the extra rule.
  */
 function meanDeviationFromTarget(
   measured: number[],
@@ -162,13 +161,10 @@ export function extractOutcomeMetrics(shotData: ShotData): OutcomeMetrics {
 
   // Find time to first drip: the first sample where the scale rose above 0.5g
   // (5 in API units) — rose, not merely read. The scale can open a shot already
-  // above the threshold, from residual water on the drip tray or a tare still
-  // settling: live shot #362 (captured 2026-08-13) opened at 0.8g and decayed
-  // to zero while the cup stayed dry for another twenty seconds, and taking any
-  // sample above the threshold reported first drip at 0.3s on a 42-second shot
-  // — a gushing extraction the scale never saw. A sample only counts once the
-  // scale has been seen at or below the threshold, and a scale that never
-  // settles reports null rather than a time that describes the tare.
+  // above the threshold (residual water on the drip tray, a tare still
+  // settling), so a sample counts only once the scale has been seen at or below
+  // it; a scale that never settles reports null rather than a time describing
+  // the tare.
   let timeToFirstDripSec: number | null = null;
   let scaleSettled = false;
   for (let i = 0; i < shotWeights.length; i += 1) {
@@ -251,13 +247,8 @@ interface PhaseCandidate {
  * Deliberately the same detection **and** selection rule as the chart's
  * `derivePhaseRegions` (`packages/shot-graph/src/phases.ts`), down to the
  * `phases.length - 1` cap — `analysis.test.ts` asserts the two agree phase for
- * phase over the shots captured off a real machine.
- *
- * They were only ever the same in their *detection* half. This function used to
- * keep every transition it found and label the overflow `"UNKNOWN"`, which on a
- * real two-phase shot produced seven phases, five unnamed and three of zero
- * duration, while the chart drew two. The profile is the authority on how many
- * phases a shot has, so it is what bounds the count.
+ * phase over the shots captured off a real machine. The profile is the
+ * authority on how many phases a shot has, so it is what bounds the count.
  */
 function findPhaseCandidates(
   datapoints: ShotData["datapoints"],
@@ -299,8 +290,8 @@ function extractPhaseSummary(shotData: ShotData): PhaseSummary[] {
   const times = datapoints.timeInShot ?? [];
   const profilePhases = profile.phases ?? [];
 
-  // Without a phase list there is nothing to name, and an unnamed phase is the
-  // thing this replaced. Better to report none than to invent them.
+  // Without a phase list there is nothing to name — report none rather than
+  // invent them.
   if (profilePhases.length === 0 || times.length === 0) {
     return [];
   }
@@ -397,12 +388,6 @@ function formatWeightLine(metrics: OutcomeMetrics): string {
   return `  Final Weight: ${final.toFixed(1)}g`;
 }
 
-/**
- * The headline block, without the phase breakdown.
- *
- * Shared so `get_latest_shot_id` can fold a shot's outcome into its answer
- * without the phase-by-phase detail that makes `get_shot_data` a separate tool.
- */
 /** ", 0.4C off target" — or nothing at all when no target was commanded. */
 function formatDeviation(deviation: number | null, unit: string): string {
   return deviation === null
@@ -410,6 +395,12 @@ function formatDeviation(deviation: number | null, unit: string): string {
     : `, ${deviation.toFixed(1)}${unit} off target`;
 }
 
+/**
+ * The headline block, without the phase breakdown.
+ *
+ * Shared so `get_latest_shot_id` can fold a shot's outcome into its answer
+ * without the phase-by-phase detail that makes `get_shot_data` a separate tool.
+ */
 export function formatOutcomeMetrics(metrics: OutcomeMetrics): string {
   return [
     `Shot #${metrics.shotId} Summary`,

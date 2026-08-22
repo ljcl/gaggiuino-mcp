@@ -7,9 +7,9 @@
  * roughly ten attempts a second per core — this bounds it to something far
  * below that, and bounds the CPU an unauthenticated caller can spend.
  *
- * Bounded and clock-injected, following `mcpSession.ts`: the window reclaims
- * entries on its own, and `maxTracked` stops a caller who rotates source
- * addresses from turning this into the memory leak it is meant to prevent. When
+ * Bounded and clock-injected: the window reclaims entries on its own, and
+ * maxTracked stops a caller who rotates source addresses from turning this
+ * into the memory leak it is meant to prevent. When
  * the table is full the oldest entry goes, which is the right failure — an
  * attacker who can spray addresses is not defeated by this anyway, and evicting
  * would-be-blocked entries is better than refusing service to everyone.

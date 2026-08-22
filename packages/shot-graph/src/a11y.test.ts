@@ -156,9 +156,6 @@ describe("describeChart", () => {
     expect(desc).not.toContain("Profile phases");
   });
 
-  // The opening sentence used to promise "pressure, flow, weight flow and
-  // cumulative weight" no matter what was on screen, which went wrong the
-  // moment a fifth series arrived that starts switched off.
   it("names only the series actually plotted", () => {
     const { desc } = describeChart({
       data: DATA,

@@ -354,10 +354,9 @@ describe("consent tokens", () => {
   });
 
   it("hands back nothing but a PendingAuthorization", () => {
-    // The store this replaced returned its own map entry, `expiresAt` and all,
-    // through a signature that promised a `PendingAuthorization`. Rebuilding the
-    // object field by field is what stops the expiry — or a `jti`, or a key a
-    // later version adds — riding along into an issued code.
+    // Rebuilding the object field by field stops extra payload keys — an
+    // expiry, a `jti`, anything a later version adds — riding along into an
+    // issued code.
     const token = signConsentToken(pending(), SECRET, () => NOW_MS);
     const recovered = verifyConsentToken(token, SECRET, () => NOW_MS);
     expect(Object.keys(recovered ?? {}).sort()).toEqual(

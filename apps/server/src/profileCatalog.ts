@@ -5,15 +5,12 @@ import { listProfileEntries } from "./profiles";
 /**
  * What profiles exist, and what this server knows about them.
  *
- * These were two different questions being answered by one source. `data/
- * profiles.yaml` is curated *documentation* — what a profile is for, which
- * roasts it suits, the ratio to aim at — and `list_profiles` served it as if it
- * were the machine's inventory. A profile the user built themselves never
- * appeared; one they deleted still did. Dial-in advice would then name a
- * profile that is not on the machine, which is worse than no advice.
- *
- * So the machine is the authority on what exists and the YAML is the authority
- * on what it means, joined on the profile's name. Neither is complete alone:
+ * These are different questions: `data/profiles.yaml` is curated
+ * *documentation* — what a profile is for, which roasts it suits, the ratio to
+ * aim at — while the machine holds the inventory. Serving the documentation as
+ * the inventory would hide profiles the user built and recommend ones they
+ * deleted, so the machine is the authority on what exists and the YAML on what
+ * it means, joined on the profile's name. Neither is complete alone:
  *
  * - **On the machine, documented** — the normal case, everything filled in.
  * - **On the machine, undocumented** — a profile the user made. Real, and
@@ -138,10 +135,10 @@ export async function loadProfileCatalog(): Promise<ProfileCatalog> {
   try {
     machineProfiles = await getClient().getMachineProfiles();
   } catch (error) {
-    // Falling back is the right behaviour, but doing it silently would make
-    // the bundled docs look like the machine's inventory again — which is the
-    // exact confusion this module exists to end. The upstream diagnostic is
-    // already written to be actionable, so it is reused rather than restated.
+    // Falling back is the right behaviour, but doing it silently would
+    // present the bundled docs as the machine's inventory — the confusion
+    // this module exists to prevent. The upstream diagnostic is already
+    // written to be actionable, so it is reused rather than restated.
     const reason =
       describeUpstreamError(error, MACHINE_URL) ??
       "the request failed for a reason this server does not recognise";

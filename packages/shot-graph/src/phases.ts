@@ -3,13 +3,6 @@ import { type PhaseRegion, type ShotData } from "./types";
 /**
  * Split a shot into its profile's phases.
  *
- * The machine sends `profile.phases[].type` with every shot and the chart used
- * to discard it, inferring unlabeled boundaries from the target series and
- * de-duplicating them with a magic `MIN_GAP = 4` seconds. That gap was the only
- * thing bounding how many boundaries a noisy target trace could produce, and it
- * was tuned against nothing in particular: a profile with two phases four
- * seconds apart lost one, a ramp with a stepped target gained several.
- *
  * The profile is the authority on how many phases a shot has, so it is what
  * bounds the count here. Transitions are still detected from the target series
  * — the datapoints carry no phase index, so there is nothing else to detect
@@ -20,8 +13,7 @@ import { type PhaseRegion, type ShotData } from "./types";
  * uses, so the chart and `get_shot_data` describe the same phases rather than
  * two plausible different sets. `apps/server/src/analysis.test.ts` asserts that
  * over the captured shots in `__fixtures__/chart-data.ts`, which this package
- * exports as `@gaggiuino/shot-graph/fixtures` for exactly that reason — saying
- * it here twice is what let the two drift apart in the first place.
+ * exports as `@gaggiuino/shot-graph/fixtures`.
  */
 
 /** Raw units. A target-pressure step this large is a phase change, not noise. */
@@ -84,8 +76,8 @@ function labelFor(type: string | undefined, index: number): string {
 export function derivePhaseRegions(shot: ShotData): PhaseRegion[] {
   const times = shot.datapoints.timeInShot ?? [];
   const phases = shot.profile?.phases ?? [];
-  // Without a phase list there is nothing to label, and an unlabeled boundary
-  // is the thing this replaced. Better to draw none than to invent them.
+  // Without a phase list there is nothing to label. Better to draw none than
+  // to invent them.
   if (phases.length === 0 || times.length === 0) return [];
 
   const first = times[0];

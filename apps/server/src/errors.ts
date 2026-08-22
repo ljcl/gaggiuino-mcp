@@ -86,11 +86,8 @@ function shotIdFromPath(path: string): string | undefined {
 }
 
 /**
- * Pull the profile id back out of a `/api/profile-select/<id>` path.
- *
- * Without this a bad profile id came back as "the machine has no endpoint at
- * /api/profile-select/99", which reads as a firmware problem and sends the user
- * looking in entirely the wrong place.
+ * Pull the profile id back out of a `/api/profile-select/<id>` path so the 404
+ * text addresses the missing id instead of reading as a firmware problem.
  */
 function profileIdFromPath(path: string): string | undefined {
   const match = path.match(/^\/api\/profile-select\/([^/]+)$/);

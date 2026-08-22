@@ -200,9 +200,9 @@ jobs:
           merge-multiple: true
 
       # No setup-buildx-action here on purpose: `imagetools create`/`inspect`
-      # talk to the registry directly and need no BuildKit builder. Setting one
-      # up only pulled moby/buildkit from Docker Hub, whose anonymous-pull rate
-      # limit intermittently failed this job (the build legs keep their builder).
+      # talk to the registry directly and need no BuildKit builder, and setting
+      # one up adds a moby/buildkit pull from Docker Hub whose anonymous-pull
+      # rate limit can fail the job (the build legs keep their builder).
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0

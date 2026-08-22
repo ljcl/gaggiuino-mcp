@@ -157,8 +157,9 @@ function describeDelta(delta: number, unit: string): string {
  * Deliberately **not** a claim about the loop doubling back. That is the reading
  * a sighted viewer is most likely to draw from the shape, and it is not one this
  * function measures — a "the trace doubles back" sentence would need a threshold
- * on what counts, which is the kind of unearned judgement `events.ts` exists to
- * keep out of this codebase.
+ * on what counts, which is the kind of unearned judgement `apps/server`'s
+ * `events.ts` exists to keep out of this codebase: report what was measured,
+ * never what it means.
  */
 export function describePressureFlowPlot({
   comparison,

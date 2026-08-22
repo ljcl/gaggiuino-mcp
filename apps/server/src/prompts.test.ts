@@ -11,9 +11,8 @@ import {
 } from "./prompts";
 
 /**
- * The old throwing surface, rebuilt locally: the production wrapper died with
- * the split-era handlers (one dual-era `prompts/get` consumes the outcome
- * value directly), and these tests read better against a throw.
+ * Local throwing wrapper: production consumes `tryRenderPrompt`'s outcome value
+ * directly in the dual-era handler; these tests read better against a throw.
  */
 function renderPrompt(name: string, args?: Record<string, string>): string {
   const outcome = tryRenderPrompt(name, args);

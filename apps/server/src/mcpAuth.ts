@@ -24,11 +24,9 @@ import { type TokenFailure, verifyToken } from "./oauth/tokens";
  *   and no token protects against it, because the browser is not the attacker —
  *   it is the confused deputy.
  *
- * This runs as middleware in the fetch handler rather than through the
- * transport's `enableDnsRebindingProtection` / `allowedHosts` / `allowedOrigins`
- * options: those are all marked `@deprecated` as of SDK 1.30.0, pointing at
- * external middleware instead. Doing it here also means validation happens
- * before the body is read and before a session or transport is allocated, so a
+ * Runs as middleware in the fetch handler rather than as transport-level
+ * protection options: the v2 SDK removed those in favour of exactly this shape,
+ * and doing it here means validation happens before the body is read, so a
  * rejected request costs nothing.
  */
 
@@ -401,12 +399,10 @@ const FULL_GRANT: readonly string[] = ALL_SCOPES;
 /**
  * Authenticate a request. Never throws; an unusable credential is a refusal.
  *
- * There is one credential now. A shared secret used to be accepted alongside
- * this, and it went because nothing that matters could present it: a connector
- * is added at the account level so it works on claude.ai, Desktop and iOS, and
- * that dialog offers an OAuth client id and secret and no request-header
- * field. Keeping it meant two gate orderings to reason about in exchange for a
- * control the owner could not use.
+ * There is one credential: OAuth. A request-header secret cannot serve here
+ * because a connector is added at the account level and that dialog offers an
+ * OAuth client id and secret and no request-header field — a token that cannot
+ * leave the client would leave the write tools permanently refused.
  */
 export async function authenticate(
   req: Request,
@@ -480,11 +476,9 @@ export async function authenticate(
  * pass the result in rather than have it recomputed; omitting it does the work
  * here, which is what every test and every non-`/mcp` caller wants.
  *
- * When it is omitted, authentication is now reached only *after* Origin and Host
- * have passed, where it used to be evaluated eagerly as a default argument. That
- * is a real improvement with an external issuer: verifying a token there can
- * mean a JWKS fetch, and a cross-origin probe should never be able to make this
- * server call out to its IdP.
+ * When omitted, authentication runs only after Origin and Host pass: verifying
+ * a token against an external issuer can mean a JWKS fetch, and a cross-origin
+ * probe should never be able to make this server call out to its IdP.
  */
 export async function checkRequest(
   req: Request,

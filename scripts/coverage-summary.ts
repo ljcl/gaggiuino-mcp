@@ -2,7 +2,7 @@
  * Aggregate per-package vitest coverage into one markdown table.
  *
  * `.github/workflows/ci.yml`'s `check` job runs this as **Publish coverage
- * summary** (`:106-107`), appending to `$GITHUB_STEP_SUMMARY` after
+ * summary**, appending to `$GITHUB_STEP_SUMMARY` after
  * `turbo run test:coverage`, on every PR against `main` and every push to
  * `main`. `check` is one of the three required status contexts
  * (`scripts/setup-branch-protection.sh`), so this output is on the path to
@@ -21,8 +21,7 @@
  * annotated with its delta vs `main`, so a reviewer sees test-depth regressions
  * without diffing raw numbers; an unchanged metric stays a bare percentage. CI
  * restores the baseline from a cache before this runs (**Restore coverage
- * baseline**, `ci.yml:98-104`) and re-saves it after pushes to `main`
- * (`:113-130`).
+ * baseline**) and re-saves it after pushes to `main`.
  *
  * On a PR that restore is *designed* to miss its primary key. The key is
  * `coverage-baseline-` plus `github.sha`, and the only writer of it is the

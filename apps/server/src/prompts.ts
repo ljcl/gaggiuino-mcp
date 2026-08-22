@@ -12,9 +12,8 @@ export interface PromptDefinition {
   /**
    * Resolved per request rather than stored as a string, because the dial-in
    * prompt's description comes from `prompts.yaml` and may be replaced by a
-   * user's `prompts.local.yaml`. ListPrompts used to advertise a hardcoded
-   * literal, so an override the loader honoured everywhere else was invisible
-   * on the one surface a host actually shows the user.
+   * user's `prompts.local.yaml` — building it per request keeps an override
+   * authoritative on the one surface a host shows the user.
    */
   describe: () => string;
   name: string;
@@ -104,14 +103,12 @@ function promptArguments(schema: ArgsSchema): PromptArgument[] {
 }
 
 /**
- * The adjustment policy the dial-in plans shipped without.
+ * The termination policy for the dial-in loop.
  *
- * `dial_in_new_bag` and `diagnose_last_shot` both told the model to change one
- * variable and re-pull, and neither said how far to move it, which way after a
- * reversal, or when to stop — so the loop they describe has no termination
- * condition. A model will suggest "a bit finer" indefinitely, oscillate around
- * the target because nothing tells it to shrink the step after an overshoot,
- * and never say "this is dialled in".
+ * Change-one-variable-and-re-pull is incomplete without how far to move, which
+ * way after a reversal, and when to stop — without it a model suggests "a bit
+ * finer" indefinitely, oscillates around the target because nothing shrinks
+ * the step after an overshoot, and never says "this is dialled in".
  *
  * **The round history is the conversation, so this is text rather than state.**
  * The obvious implementation of a convergence loop is a session object holding

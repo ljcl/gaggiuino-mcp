@@ -38,9 +38,7 @@ export const Default: Story = {
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    // Every series names its unit. The `unit` prop existed on the shared
-    // Tooltip and its stories demonstrated it; this adapter never passed one,
-    // so four series on two axes all read as bare numbers.
+    // Every series names its unit.
     await expect(await canvas.findByText(/bar/)).toBeInTheDocument();
     await expect(await canvas.findByText(/ml\/s/)).toBeInTheDocument();
     await expect(await canvas.findByText(/g\/s/)).toBeInTheDocument();
@@ -50,8 +48,7 @@ export const Default: Story = {
 
 /**
  * Zero is a reading. Preinfusion holds flow at zero and every shot starts at
- * zero weight; the old `value !== 0` filter silently dropped both, so the
- * tooltip went blank exactly where the profile was doing something.
+ * zero weight.
  */
 export const ZeroReadings: Story = {
   args: {
@@ -72,8 +69,7 @@ export const ZeroReadings: Story = {
 
 /**
  * The comparison case. While an overlay is on screen the tooltip is the one
- * place two shots can be read at the same instant — and it was the one place
- * that filtered the overlay out entirely.
+ * place two shots can be read at the same instant.
  */
 export const WithComparison: Story = {
   args: {

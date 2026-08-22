@@ -30,10 +30,9 @@ interface PressureFlowPlotProps {
  * The distinction this draws is the whole of the filtering rule below, so it is
  * `||` and not `&&` on purpose. `toChartData` merges two shots into one array
  * keyed by time, minting a bare `{ time }` row whenever only the *other* shot
- * has a sample there — 73 of the 172 rows on the repo's own comparison
- * fixtures. Those rows are an artefact of the merge and say nothing about this
- * shot. A row where one of the two readings is genuinely missing is a different
- * thing entirely, and it is kept.
+ * has a sample there. Those rows are an artefact of the merge and say nothing
+ * about this shot. A row where one of the two readings is genuinely missing is
+ * a different thing entirely, and it is kept.
  */
 function contributed(
   point: ChartDataPoint,
@@ -65,9 +64,9 @@ function contributed(
  * colour, same dash — because flow is an *axis* here, not a series. So there is
  * no new stroke for the Chart accessibility story to measure and no new
  * `--chart-*` token: the contract is satisfied by construction rather than by
- * remembering to register something. The `SingleShot` story asserts that every
- * rendered (stroke, dash) pair is a `SERIES` entry, rather than trusting this
- * comment — an unmeasured colour fails there instead of shipping.
+ * remembering to register something. The `SingleShot` story asserts every
+ * rendered (stroke, dash) pair is a `SERIES` entry, so an unregistered colour
+ * fails there instead of shipping.
  *
  * **It is a `Line`, not a `Scatter`.** Recharts' `computeLinePoints` maps the
  * data array in order with no sort, and on a non-category axis the x coordinate
@@ -95,10 +94,10 @@ function contributed(
  *
  * So it is switched **off explicitly**. Omitting the prop does not do it:
  * recharts 3 defaults the layer on, which is also why `ShotGraph`'s explicit
- * `accessibilityLayer` has never changed anything. The container is an `img`
- * because that is what this is — a graphic with no interactive descendants —
- * where `ShotGraph` needs `group` because its legend's toggle buttons live
- * inside the same container.
+ * flag is a no-op kept for clarity. The container is an `img` because that is
+ * what this is — a graphic with no interactive descendants — where `ShotGraph`
+ * needs `group` because its legend's toggle buttons live inside the same
+ * container.
  *
  * The tooltip is absent because the comparison sits on its own x axis: recharts
  * resolves a tooltip's active point per axis, so a shared readout would report

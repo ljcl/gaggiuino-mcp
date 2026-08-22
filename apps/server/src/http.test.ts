@@ -15,8 +15,7 @@ import { SERVER_VERSION } from "./version";
  * These drive the real fetch handler with real `Request` objects instead of
  * binding a port, so the routing, the security gate, and the transport
  * handshake are all in the loop. The one thing not covered here is `index.ts`
- * itself, which after the extraction is only environment reads and
- * `Bun.serve`.
+ * itself: only environment reads and `Bun.serve`.
  */
 
 const ISSUER = "https://box.tail1234.ts.net";
@@ -404,9 +403,8 @@ describe("tools/list over the real transport", () => {
 
 describe("initialize logging", () => {
   it("records which client is handshaking, and at which revision", async () => {
-    // The successor to the session era's session.opened record: which client
-    // is this, and what did it negotiate? Under stateless legacy serving an
-    // initialize per turn is the expected cadence, not a session thrown away.
+    // Which client is handshaking, and at which revision. Under stateless
+    // legacy serving an initialize per turn is the expected cadence.
     const records: Array<Record<string, unknown>> = [];
     const spy = vi.spyOn(console, "error").mockImplementation((line) => {
       records.push(JSON.parse(String(line)));

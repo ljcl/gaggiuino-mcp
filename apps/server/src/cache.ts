@@ -2,10 +2,10 @@
  * A bounded TTL cache with LRU eviction.
  *
  * It exists for one upstream: an ESP32 on Wi-Fi that answers a single request
- * at a time. Rendering one shot graph used to fetch the same shot twice — once
- * for the tool's text summary and again when the rendered app asked for the raw
- * JSON — and a comparison overlay made that four round trips for two shots that
- * had already finished and could never change again.
+ * at a time, and completed shots that are immutable — rendering one graph
+ * legitimately needs the same finished shot several times (tool summary, then
+ * the app's raw JSON, then comparison overlays), which is what folding repeats
+ * buys.
  *
  * Two bounds rather than one, because they fail differently. The TTL is what
  * makes a cached answer honest: past it, the value is re-read even if nothing

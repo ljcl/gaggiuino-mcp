@@ -10,26 +10,24 @@ import { SERVER_VERSION } from "./version";
 /**
  * The `/health` payload.
  *
- * `/health` used to return the literal string "ok", which could not distinguish
- * "the process is alive" from "the process can reach the machine" — the two
- * questions an operator actually has.
- *
- * It still answers 200 whenever the process is alive, *including* when the
- * machine is unreachable, and that is deliberate: the espresso machine is
- * switched off most of the day, and the container's HEALTHCHECK reads the
- * status code. Tying the two together would restart a perfectly healthy
- * container every time the user finished their coffee. Upstream state is a
- * field, not a status code.
+ * It separates the two questions an operator actually has — process liveness
+ * via the status code, machine reachability via the `machine.state` field. It
+ * answers 200 whenever the process is alive, *including* when the machine is
+ * unreachable, and that is deliberate: the espresso machine is switched off
+ * most of the day, and the container's HEALTHCHECK reads the status code.
+ * Tying the two together would restart a perfectly healthy container every
+ * time the user finished their coffee. Upstream state is a field, not a
+ * status code.
  *
  * `machine.versions` answers the first question an API-shape bug report raises:
  * which firmware is this. It is **observed**, never probed — remembered when
  * something reads the machine's settings, and `null` until then. Fetching it
- * inside `buildHealth` was rejected on measurement: the client's 20s overall
- * timeout would sit inside a probe whose Docker `HEALTHCHECK --timeout=10s`
- * fires first, so three consecutive failures would restart a container whose
- * only problem is that the espresso machine is switched off — and at 30s
- * intervals that is 2,880 requests a day to an ESP32 that answers one at a
- * time, to read a field that changes when the user flashes firmware.
+ * inside `buildHealth` is ruled out: the client's 20s overall timeout would
+ * sit inside a probe whose Docker `HEALTHCHECK --timeout=10s` fires first, so
+ * three consecutive failures would restart a container whose only problem is
+ * that the espresso machine is switched off — and at 30s intervals that is
+ * 2,880 requests a day to an ESP32 that answers one at a time, to read a field
+ * that changes when the user flashes firmware.
  *
  * **`buildHealth` is synchronous, and `/health` makes zero upstream requests.**
  */

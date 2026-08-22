@@ -3,13 +3,9 @@ import { describe, expect, it } from "vitest";
 import { SERVER_NAME, SERVER_VERSION } from "./version";
 
 /**
- * The handshake used to advertise a hardcoded "1.0.0" that no release ever
- * touched, so the advertised version drifted further from the released one with
- * every tag. These tests are the guard on the mechanism that replaced it: they
- * fail if the literal falls behind the release manifest, and — separately — if
- * the release-please annotation that keeps it current is ever dropped by a
- * refactor. Losing the annotation silently would reintroduce the original bug
- * one release later, which is exactly how it went unnoticed the first time.
+ * These tests guard SERVER_VERSION staying equal to the released version: they
+ * fail if the literal falls behind package.json/server.json, and separately if
+ * the release-please annotation that keeps it current is dropped by a refactor.
  */
 
 async function readJson(relativePath: string): Promise<{ version?: string }> {
