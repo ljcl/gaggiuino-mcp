@@ -1,5 +1,16 @@
 # Changelog
 
+## [4.0.0](https://github.com/ljcl/gaggiuino-mcp/compare/v3.2.0...v4.0.0) (2026-08-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* **server:** upgrade to the 2026-07-28 MCP revision with dual-era serving ([#173](https://github.com/ljcl/gaggiuino-mcp/issues/173))
+
+### Features
+
+* **server:** upgrade to the 2026-07-28 MCP revision with dual-era serving ([#173](https://github.com/ljcl/gaggiuino-mcp/issues/173)) ([a682760](https://github.com/ljcl/gaggiuino-mcp/commit/a682760c97179a10823cfbee98d63714eb26eac5))
+
 ## [3.2.0](https://github.com/ljcl/gaggiuino-mcp/compare/v3.1.0...v3.2.0) (2026-08-15)
 
 
