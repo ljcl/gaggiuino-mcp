@@ -15,12 +15,12 @@
   },
   "devDependencies": {
     "@gaggiuino/tsconfig": "workspace:*",
-    "@storybook/addon-docs": "10.5.8",
-    "@storybook/react": "10.5.8",
+    "@storybook/addon-docs": "10.5.10",
+    "@storybook/react": "10.5.10",
     "@types/react": "19.2.18",
     "react": "19.2.8",
-    "storybook": "10.5.8",
+    "storybook": "10.5.10",
     "typescript": "7.0.2",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   }
 }
