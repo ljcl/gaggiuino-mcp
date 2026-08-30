@@ -29,7 +29,7 @@
     "@gaggiuino/vite-config": "workspace:*",
     "@storybook/react": "10.5.10",
     "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.4",
+    "@types/react-dom": "19.2.5",
     "storybook": "10.5.10",
     "typescript": "7.0.2",
     "vite": "8.2.2",
