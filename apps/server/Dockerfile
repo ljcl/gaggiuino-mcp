@@ -6,7 +6,7 @@
 # `packageManager` — CI installs Bun from that field, so a skew runs the tests on
 # a different runtime than the one that ships. Dependabot's docker ecosystem only
 # bumps these lines, so ci.yml's "Bun version skew" step guards the pairing.
-FROM oven/bun:1.3.14 AS base
+FROM oven/bun:1.4.2 AS base
 WORKDIR /app
 
 # turbo isolated here so it never reaches the runner; the version is derived
@@ -42,7 +42,7 @@ RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lock
 RUN chown -R 65534:65534 /app
 
 # 4) Distroless runner: COPY only. nonroot (65534), no shell, ENTRYPOINT is bun.
-FROM oven/bun:1.3.14-distroless AS runner
+FROM oven/bun:1.4.2-distroless AS runner
 WORKDIR /app
 
 # MCP registry ownership proof: publish-mcp.yml publishes server.json listing
