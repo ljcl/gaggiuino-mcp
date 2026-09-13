@@ -21,7 +21,7 @@
   },
   "devDependencies": {
     "@gaggiuino/tsconfig": "workspace:*",
-    "@types/bun": "1.4.0",
+    "@types/bun": "1.4.2",
     "@vitest/coverage-v8": "4.1.11",
     "msw": "2.15.0",
     "typescript": "7.0.2",
