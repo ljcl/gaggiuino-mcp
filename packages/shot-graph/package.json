@@ -18,8 +18,8 @@
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "1.7.5",
     "@modelcontextprotocol/sdk": "1.30.0",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
     "recharts": "3.10.1",
     "@gaggiuino/design-system": "workspace:*",
     "@gaggiuino/ui": "workspace:*"
@@ -28,8 +28,8 @@
     "@gaggiuino/tsconfig": "workspace:*",
     "@gaggiuino/vite-config": "workspace:*",
     "@storybook/react": "10.6.0",
-    "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.7",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "storybook": "10.6.0",
     "typescript": "7.0.2",
     "vite": "8.3.0",

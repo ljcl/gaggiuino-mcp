@@ -14,12 +14,12 @@
     "@gaggiuino/design-system": "workspace:*",
     "@modelcontextprotocol/ext-apps": "1.7.5",
     "@modelcontextprotocol/sdk": "1.30.0",
-    "react": "19.2.8"
+    "react": "19.3.0"
   },
   "devDependencies": {
     "@gaggiuino/tsconfig": "workspace:*",
     "@storybook/react": "10.6.0",
-    "@types/react": "19.2.18",
+    "@types/react": "19.3.0",
     "storybook": "10.6.0",
     "typescript": "7.0.2",
     "vitest": "4.1.11"
