@@ -32,13 +32,13 @@
     "shots": "bun scripts/story-shots.ts"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.13",
+    "@biomejs/biome": "2.5.14",
     "@storybook/addon-vitest": "10.6.0",
     "@vitest/browser-playwright": "4.1.11",
     "@vitest/coverage-v8": "4.1.11",
-    "knip": "6.35.1",
+    "knip": "6.36.0",
     "playwright": "1.63.0",
-    "turbo": "2.10.12",
+    "turbo": "2.10.13",
     "vitest": "4.1.11"
   }
 }
