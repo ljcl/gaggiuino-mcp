@@ -2,7 +2,7 @@
   "name": "gaggiuino-mcp",
   "version": "4.0.0",
   "private": true,
-  "packageManager": "bun@1.3.14",
+  "packageManager": "bun@1.4.2",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -34,11 +34,11 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
     "@storybook/addon-vitest": "10.6.0",
-    "@vitest/browser-playwright": "4.1.11",
-    "@vitest/coverage-v8": "4.1.11",
+    "@vitest/browser-playwright": "5.0.2",
+    "@vitest/coverage-v8": "5.0.2",
     "knip": "6.36.0",
     "playwright": "1.63.0",
     "turbo": "2.10.13",
-    "vitest": "4.1.11"
+    "vitest": "5.0.2"
   }
 }
