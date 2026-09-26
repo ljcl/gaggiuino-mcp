@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFetchHandler, type FetchHandler } from "./http";
 import { setLogLevel } from "./logging";
 import { type SecurityConfig } from "./mcpAuth";
-import { MODERN_PROTOCOL_VERSION } from "./mcpTestClient";
+import { PROTOCOL_VERSION } from "./mcpTestClient";
 import { TEST_OAUTH_CONFIG } from "./oauth/__fixtures__";
 import { signToken } from "./oauth/tokens";
 import { advertisedPrompts } from "./prompts";
@@ -11,16 +11,17 @@ import { SERVER_CAPABILITIES, TOOLS } from "./server";
 import { SERVER_NAME, SERVER_VERSION } from "./version";
 
 /**
- * The modern (2026-07-28) half of the dual-era server, driven through the real
- * fetch handler like `http.test.ts` drives the legacy half — the routing, the
- * security gate, and the era split are all in the loop.
+ * The 2026-07-28 wire, driven through the real fetch handler like
+ * `http.test.ts` — the routing, the security gate, and the SDK's request
+ * validation are all in the loop. `http.test.ts` holds the refusal of
+ * 2025-era requests; this file holds what a conformant request gets.
  *
- * The one fact this file exists to hold: **the two eras advertise one
- * surface**. A host migrating eras must see byte-identical tools, or the
- * permission grants it stored against the legacy list silently drop.
+ * The advertised tool list is asserted deep-equal to `TOOLS`, the same table
+ * `tool-contract.json` pins: a host stores its permission grants against that
+ * list, so any drift on the wire silently drops them.
  */
 
-const MODERN_VERSION = MODERN_PROTOCOL_VERSION;
+const MODERN_VERSION = PROTOCOL_VERSION;
 const META_VERSION = "io.modelcontextprotocol/protocolVersion";
 const META_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities";
 const META_SERVER_INFO = "io.modelcontextprotocol/serverInfo";
@@ -138,48 +139,28 @@ afterEach(async () => {
 describe("era detection", () => {
   it("serves a modern request statelessly: no initialize, no session", async () => {
     const response = await call("tools/list");
-    // Nothing session-shaped leaks into the modern era: no id is minted for
-    // a request that carries its own context.
+    // Nothing session-shaped leaks out: no id is minted for a request that
+    // carries its own context.
     expect(response.headers.get("mcp-session-id")).toBeNull();
     const result = await readResult(response);
     expect(Array.isArray(result.tools)).toBe(true);
   });
 
   it("ignores a stale Mcp-Session-Id on a modern request", async () => {
-    // The modern transport says to ignore session headers, not to 404 on
-    // them. Routed to the legacy path this would answer "session not found"
-    // and tell a stateless client to re-handshake — a loop with no exit.
+    // The transport says to ignore session headers, not to 404 on them. A
+    // client that stored a session id from a pre-3.x deployment must not be
+    // told "session not found" and sent to re-handshake — a loop with no exit.
     const response = await post(modernBody("tools/list"), {
       ...modernHeaders("tools/list"),
-      "mcp-session-id": "left-over-from-the-legacy-era",
+      "mcp-session-id": "left-over-from-the-session-era",
     });
     expect(response.status).toBe(200);
   });
 
-  it("still serves the legacy era alongside", async () => {
-    // Dual-era means concurrently on the same endpoint: a legacy handshake
-    // works before and after modern traffic — served statelessly, so no
-    // session id is minted (the 2025 spec always made the header
-    // server-optional).
-    await readResult(await call("server/discover"));
-    const init = await post({
-      id: 1,
-      jsonrpc: "2.0",
-      method: "initialize",
-      params: {
-        capabilities: {},
-        clientInfo: { name: "legacy-test", version: "1.0" },
-        protocolVersion: "2025-06-18",
-      },
-    });
-    expect(init.status).toBe(200);
-    expect(init.headers.get("mcp-session-id")).toBeNull();
-  });
-
-  it("routes a modern header with a legacy-shaped body to a modern error", async () => {
-    // A half-migrated client gets a modern error it can act on — the 400
-    // names the missing envelope keys — rather than being silently served
-    // legacy semantics it did not ask for.
+  it("names the missing envelope keys when only the header is modern", async () => {
+    // A half-migrated client gets an error it can act on — the 400 names the
+    // missing envelope keys — rather than the bare unsupported-version answer
+    // a 2025-era request gets.
     const response = await post(
       { id: 1, jsonrpc: "2.0", method: "tools/list" },
       modernHeaders("tools/list"),
@@ -190,35 +171,20 @@ describe("era detection", () => {
     expect(error.message).toContain("envelope");
   });
 
-  it("classifies a bare server/discover (no envelope) as legacy traffic", async () => {
+  it("refuses a bare server/discover (no envelope) as a 2025-era request", async () => {
     // The era is keyed on the per-request envelope, not the method name: a
-    // discover with no `_meta` is not a conformant modern request, so it is
-    // served under legacy semantics — where the method does not exist. The
-    // HTTP-era fallback probe never relies on this: a real dual-era client
-    // sends the envelope and inspects the 400 body, per the transport spec.
+    // discover with no `_meta` is not a conformant request, so it gets the
+    // same -32022 an `initialize` does. A real client sends the envelope and
+    // reads `supported` off that 400 body, per the transport spec.
     const response = await post({
       id: 1,
       jsonrpc: "2.0",
       method: "server/discover",
     });
-    expect(response.status).toBe(200);
-    const payload = await response.text();
-    expect(payload).toContain('"code":-32601');
-  });
-
-  it("leaves JSON-RPC batches to the legacy era", async () => {
-    // The modern body is a single request; batches belong to the 2025-03-26
-    // family that allowed them, and the legacy leg serves this one — the
-    // point is that the modern path did not claim it, so no modern envelope
-    // fields appear in the answer.
-    const response = await post(
-      [{ id: 1, jsonrpc: "2.0", method: "tools/list" }],
-      {},
-    );
-    expect(response.status).toBe(200);
-    const payload = await response.text();
-    expect(payload).toContain('"tools"');
-    expect(payload).not.toContain("resultType");
+    expect(response.status).toBe(400);
+    const error = await readError(response);
+    expect(error.code).toBe(-32022);
+    expect(error.data?.supported).toEqual([MODERN_VERSION]);
   });
 });
 
@@ -247,9 +213,7 @@ describe("request validation", () => {
 
   it("rejects an unsupported version with the list to retry from", async () => {
     // -32022 is the fall-forward signal: the client picks from `supported`
-    // and re-sends. Legacy versions are deliberately absent from that list —
-    // they cannot be served with per-request metadata, so advertising them
-    // here would invite a retry that cannot work.
+    // and re-sends.
     const response = await post(
       modernBody("tools/list", {}, { version: "2025-11-25" }),
       modernHeaders("tools/list", { version: "2025-11-25" }),
@@ -257,10 +221,8 @@ describe("request validation", () => {
     expect(response.status).toBe(400);
     const error = await readError(response);
     expect(error.code).toBe(-32022);
-    // Legacy versions are deliberately absent from `supported`: they cannot
-    // be served with per-request metadata, so advertising them would invite
-    // a retry that cannot work. Legacy clients negotiate via initialize and
-    // never see this list.
+    // The 2025 revisions are absent from `supported`: this server does not
+    // serve them at all.
     expect(error.data).toEqual({
       requested: "2025-11-25",
       supported: [MODERN_VERSION],
@@ -410,8 +372,6 @@ describe("server/discover", () => {
     const result = await readResult(await call("server/discover"));
     expect(result.resultType).toBe("complete");
     expect(result.supportedVersions).toEqual([MODERN_VERSION]);
-    // The same constant the legacy initialize result reads, so the two
-    // eras' answers cannot drift.
     expect(result.capabilities).toEqual(SERVER_CAPABILITIES);
     expect(result.ttlMs).toBeGreaterThan(0);
     expect(result.cacheScope).toBe("private");
@@ -422,18 +382,17 @@ describe("server/discover", () => {
 });
 
 describe("the advertised surface", () => {
-  it("serves the exact tool list the legacy era serves", async () => {
-    // The grant-parity assertion this file exists for: `TOOLS` is what the
-    // legacy handler returns, so deep equality here means a host migrating
-    // eras re-keys nothing.
+  it("serves the exact tool table, unchanged by the wire", async () => {
+    // `TOOLS` is the table `tool-contract.json` pins, so deep equality here
+    // means the codec re-keys no host permission grant on the way out.
     const result = await readResult(await call("tools/list"));
     expect(result.tools).toEqual(TOOLS);
     expect(result.resultType).toBe("complete");
   });
 
   it("carries annotations and _meta across this wire path too", async () => {
-    // `http.test.ts` proves the legacy transport does not drop them; this
-    // path serialises independently, so it is asserted independently.
+    // `http.test.ts` asserts the same over its own requests; the flags are
+    // what a host keys its prompts on, so they are asserted twice.
     const result = await readResult(await call("tools/list"));
     const tools = result.tools as Tool[];
     const remove = tools.find((tool) => tool.name === "delete_profile");
@@ -444,7 +403,7 @@ describe("the advertised surface", () => {
     expect(write?.annotations?.readOnlyHint).toBe(false);
   });
 
-  it("serves the same prompt list as the legacy era", async () => {
+  it("serves the advertised prompt list", async () => {
     const result = await readResult(await call("prompts/list"));
     expect(result.prompts).toEqual(advertisedPrompts());
   });
@@ -499,8 +458,8 @@ describe("tools/call", () => {
   });
 
   it("returns an unknown tool as an isError result, not a JSON-RPC error", async () => {
-    // Expected failures are results the model can read — the same contract
-    // as the legacy era, running through the same `callTool`.
+    // Expected failures are results the model can read, through the one
+    // `callTool` dispatch layer.
     const response = await call(
       "tools/call",
       { arguments: {}, name: "no_such_tool" },
@@ -654,7 +613,7 @@ describe("subscriptions/listen", () => {
   });
 });
 
-describe("the security gate, modern era", () => {
+describe("the security gate", () => {
   const GATED: SecurityConfig = {
     allowedHosts: [],
     allowedOrigins: [],
@@ -688,17 +647,15 @@ describe("the security gate, modern era", () => {
     handler = createFetchHandler({ security: GATED });
   });
 
-  it("401s an unauthenticated modern request like any other", async () => {
-    // Auth stays an HTTP status in every era; nothing about statelessness
-    // moves the gate.
+  it("401s an unauthenticated request", async () => {
+    // Auth stays an HTTP status; nothing about statelessness moves the gate.
     const response = await call("tools/list");
     expect(response.status).toBe(401);
     expect(response.headers.get("WWW-Authenticate")).toContain("Bearer");
   });
 
-  it("403s a modern write call on a read-only token before dispatch", async () => {
-    // The scope gate runs on the parsed body ahead of the era split, so the
-    // modern era inherited it rather than reimplementing it.
+  it("403s a write call on a read-only token before dispatch", async () => {
+    // The scope gate runs on the parsed body before the SDK sees it.
     const response = await post(
       modernBody("tools/call", {
         arguments: { confirm_name: "x", profile_id: "x" },
@@ -715,7 +672,7 @@ describe("the security gate, modern era", () => {
     );
   });
 
-  it("serves a modern read on a read-only token", async () => {
+  it("serves a read on a read-only token", async () => {
     const response = await post(modernBody("tools/list"), {
       ...modernHeaders("tools/list"),
       ...bearer("espresso:read"),
@@ -725,7 +682,7 @@ describe("the security gate, modern era", () => {
 });
 
 describe("rejection logging", () => {
-  it("reports a modern validation refusal through the handler's onerror", async () => {
+  it("reports a validation refusal through the handler's onerror", async () => {
     // The same argument `security.rejected` makes: a silent 4xx leaves a
     // half-migrated client indistinguishable from an unreachable server. The
     // SDK shapes the response; the onerror wiring is what puts the refusal
@@ -749,7 +706,7 @@ describe("rejection logging", () => {
   });
 });
 
-describe("CORS for modern browser clients", () => {
+describe("CORS for browser clients", () => {
   it("allows the mirrored metadata headers through the preflight", async () => {
     // A browser client must be able to send Mcp-Method and Mcp-Name, or the
     // preflight fails a request the origin allowlist was meant to permit.

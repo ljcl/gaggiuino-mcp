@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import {
   type CallToolResult,
+  CLIENT_INFO_META_KEY,
   INVALID_PARAMS,
   type ListResourcesResult,
   type ListToolsResult,
@@ -128,12 +129,11 @@ export async function handleToolCall(
 }
 
 /**
- * The capabilities both eras advertise: the legacy `initialize` result and the
- * modern `server/discover` result read this one constant, so the two answers
- * cannot drift. Deliberately no `listChanged` (and no `resources.subscribe`):
- * every list this server serves is a module-level constant, and `listChanged`
- * is a promise to tell the host to re-fetch — a re-fetch being exactly what
- * re-keys the cached tools a permission grant is stored against.
+ * The capabilities `server/discover` advertises. Deliberately no
+ * `listChanged` (and no `resources.subscribe`): every list this server serves
+ * is a module-level constant, and `listChanged` is a promise to tell the host
+ * to re-fetch — a re-fetch being exactly what re-keys the cached tools a
+ * permission grant is stored against.
  */
 export const SERVER_CAPABILITIES = {
   prompts: {},
@@ -142,7 +142,7 @@ export const SERVER_CAPABILITIES = {
 } as const;
 
 /**
- * The one JSON-RPC shape a `tools/call` answer takes, whichever era asked.
+ * The one JSON-RPC shape a `tools/call` answer takes.
  * A `type` rather than an `interface` because the SDK's handler signature
  * demands an implicit index signature, which only object type aliases carry.
  */
@@ -152,21 +152,49 @@ export type CallToolResultShape = {
   structuredContent?: Record<string, unknown>;
 };
 
+/** The host that sent a call, as its request envelope names it. */
+export interface CallingClient {
+  name?: string;
+  version?: string;
+}
+
+/**
+ * Read `io.modelcontextprotocol/clientInfo` off a request's envelope. Every
+ * 2026-07-28 request should carry it, and it is the only place a call names
+ * its host: there is no `initialize` to remember it from. Loose on purpose —
+ * a client that omits it, or sends a malformed one, still gets its call
+ * served, just logged without a name.
+ */
+export function callingClient(envelope: unknown): CallingClient {
+  if (typeof envelope !== "object" || envelope === null) return {};
+  const info = (envelope as Record<string, unknown>)[CLIENT_INFO_META_KEY];
+  if (typeof info !== "object" || info === null) return {};
+  const { name, version } = info as { name?: unknown; version?: unknown };
+  return {
+    name: typeof name === "string" ? name : undefined,
+    version: typeof version === "string" ? version : undefined,
+  };
+}
+
 /**
  * Run one tool call and log it, whatever the outcome.
  *
- * The one dual-era dispatch layer, so the logging contract ("every call is
- * one record") holds whichever era asked. Expected failures come back as
- * `isError` results, which is right for the model but would leave the
- * operator blind if nothing reached the logs.
+ * The one dispatch layer, so the logging contract ("every call is one
+ * record") holds for every call. Expected failures come back as `isError`
+ * results, which is right for the model but would leave the operator blind
+ * if nothing reached the logs. The record names the calling host, which is
+ * what an operator needs first when one host misbehaves and another does not.
  */
 export async function callTool(
   name: string,
   args: Record<string, unknown>,
+  client: CallingClient = {},
 ): Promise<CallToolResultShape> {
   const startedAt = performance.now();
   const finish = (outcome: string, fields?: Record<string, unknown>) => {
     logger.info("tool.call", {
+      client: client.name,
+      clientVersion: client.version,
       durationMs: Math.round(performance.now() - startedAt),
       outcome,
       tool: name,
@@ -260,15 +288,15 @@ export type ResourceContents = {
 };
 
 /**
- * Read one resource by URI, for the one dual-era `resources/read` handler.
+ * Read one resource by URI, for the `resources/read` handler.
  *
  * A URI this server does not hold comes back as `{ missing }` — text written
  * for the caller — rather than a throw, so the handler stays the only place an
  * expected failure becomes an exception, and the exception it throws is the
- * SDK's typed `ResourceNotFoundError`: the SDK serialises it per era
- * (`-32602` on 2026-07-28, which retired the old `-32002` code in favour of
- * Invalid Params) without this module ever reading text off a caught
- * exception into a response body.
+ * SDK's typed `ResourceNotFoundError`: the SDK serialises it as `-32602`
+ * (2026-07-28 retired the old `-32002` code in favour of Invalid Params)
+ * without this module ever reading text off a caught exception into a
+ * response body.
  */
 export async function readResource(
   uri: string,
@@ -325,12 +353,11 @@ export async function readResource(
 const STATIC_SURFACE_TTL_MS = 3_600_000;
 
 /**
- * One server factory backs both eras: `createMcpHandler` in `http.ts` serves
- * a fresh instance per request, and the v2 SDK's wire codec does the
- * era-shaping — `resultType`, the `ttlMs`/`cacheScope` stamps from
- * `cacheHints`, per-result `serverInfo`, and `server/discover` itself — so
- * these handlers describe the surface once and never branch on the protocol
- * version.
+ * `createMcpHandler` in `http.ts` serves a fresh instance of this server per
+ * request, and the v2 SDK's wire codec does the 2026-07-28 shaping —
+ * `resultType`, the `ttlMs`/`cacheScope` stamps from `cacheHints`, per-result
+ * `serverInfo`, and `server/discover` itself — so these handlers describe the
+ * surface once.
  */
 export function createServer(): Server {
   const server = new Server(
@@ -355,13 +382,16 @@ export function createServer(): Server {
   server.setRequestHandler("tools/list", async () => ({
     tools: TOOLS as unknown as ListToolsResult["tools"],
   }));
-  server.setRequestHandler("tools/call", async (request) => {
+  server.setRequestHandler("tools/call", async (request, ctx) => {
     const { name, arguments: args } = request.params;
     const result = await callTool(
       name,
       (args as Record<string, unknown>) ?? {},
+      // The SDK lifts the reserved keys out of `params._meta` before a
+      // handler runs; this is where it puts them.
+      callingClient(ctx.mcpReq.envelope),
     );
-    // The era-aware projection lives in the SDK codec; low-level tools/call
+    // The result projection lives in the SDK codec; low-level tools/call
     // handlers route through it themselves. Identity for this server's
     // always-text, object-structured results.
     return server.projectCallToolResult(

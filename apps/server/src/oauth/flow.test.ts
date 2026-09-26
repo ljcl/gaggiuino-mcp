@@ -999,25 +999,31 @@ describe("the token the flow produced", () => {
         body: JSON.stringify({
           id: 1,
           jsonrpc: "2.0",
-          method: "initialize",
+          method: "tools/list",
           params: {
-            capabilities: {},
-            clientInfo: { name: "test", version: "1.0" },
-            protocolVersion: "2025-06-18",
+            _meta: {
+              "io.modelcontextprotocol/clientCapabilities": {},
+              "io.modelcontextprotocol/clientInfo": {
+                name: "test",
+                version: "1.0",
+              },
+              "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            },
           },
         }),
         headers: {
           accept: "application/json, text/event-stream",
           authorization: `Bearer ${accessToken}`,
           "content-type": "application/json",
+          "mcp-method": "tools/list",
+          "mcp-protocol-version": "2026-07-28",
         },
         method: "POST",
       }),
     );
 
+    // The 200 is the proof the token cleared the gate.
     expect(response.status).toBe(200);
-    // Stateless serving mints no session id; the 200 on the handshake is the
-    // proof the token cleared the gate.
     expect(response.headers.get("mcp-session-id")).toBeNull();
   });
 });

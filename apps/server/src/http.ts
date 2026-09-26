@@ -1,4 +1,7 @@
-import { createMcpHandler } from "@modelcontextprotocol/server";
+import {
+  createMcpHandler,
+  isLegacyRequest,
+} from "@modelcontextprotocol/server";
 import { buildHealth } from "./health";
 import { logger } from "./logging";
 import {
@@ -21,16 +24,19 @@ import { createServer } from "./server";
  * this handler, wire the signals — which is why it stays out of the coverage
  * set while everything it delegates to is covered.
  *
- * `/mcp` is dual-era, served by the v2 SDK's `createMcpHandler`: the
- * 2026-07-28 revision is served per request (stateless, `_meta` envelope,
- * `server/discover`, `Mcp-Method`/`Mcp-Name` header validation, `resultType`
- * and the cacheable-result stamps), and 2025-era clients are served through
- * the SDK's stateless legacy fallback — a fresh server instance per request
- * instead of one pinned to a session. Protocol sessions are gone with the
- * revision that removed them: no `Mcp-Session-Id` is minted (the 2025 spec
- * always made the header server-optional), and the session operations —
- * GET's standalone stream and DELETE — answer 405, which that spec allows.
- * One `createServer` factory backs both eras, so they cannot drift apart.
+ * `/mcp` serves the 2026-07-28 revision and nothing else, through the v2
+ * SDK's `createMcpHandler`: every request is served on its own (stateless,
+ * `_meta` envelope, `server/discover`, `Mcp-Method`/`Mcp-Name` header
+ * validation, `resultType` and the cacheable-result stamps). With
+ * `legacy: "reject"`, a 2025-era request — one with no envelope claim, such as
+ * an `initialize` handshake — gets HTTP 400 and `-32022`, whose
+ * `data.supported` names 2026-07-28. A 2025-era notification gets 202 and is
+ * dropped, a JSON-RPC batch gets 400, and GET and DELETE get 405.
+ *
+ * Rejecting the old era also closes a downgrade path. Only a request with an
+ * envelope goes through the SDK's header-against-body check (`-32020`), so a
+ * legacy fallback would serve a claim-less request with any `Mcp-Name` it
+ * liked, past a proxy rule that keys on that header.
  */
 
 export interface FetchHandlerOptions {
@@ -71,13 +77,13 @@ function withCors(response: Response, cors: Record<string, string>): Response {
 }
 
 /**
- * Which client is calling, and is it re-handshaking on every turn? Under
- * stateless legacy serving an `initialize` per turn is the expected cadence,
- * but the client name and negotiated version are still the two facts an
- * operator needs when a host misbehaves — modern-era requests carry the same
- * identity in their `_meta` envelope instead and send no `initialize` at all.
+ * Name the 2025-era client this server just refused. The SDK's `onerror`
+ * already records the refusal (`mcp.error`), but not who sent it, and an
+ * `initialize` body is the only legacy message that carries the client's
+ * identity. When a host stops working after an upgrade, this record is what
+ * tells an operator that the host still speaks the old revision.
  */
-function logInitialize(body: unknown): void {
+function logLegacyInitialize(req: Request, body: unknown): void {
   if (typeof body !== "object" || body === null || Array.isArray(body)) return;
   const { method, params } = body as { method?: unknown; params?: unknown };
   if (method !== "initialize") return;
@@ -85,12 +91,13 @@ function logInitialize(body: unknown): void {
     clientInfo?: { name?: unknown; version?: unknown };
     protocolVersion?: unknown;
   };
-  logger.info("mcp.initialize", {
+  logger.warn("mcp.legacy_refused", {
     client: typeof clientInfo?.name === "string" ? clientInfo.name : undefined,
     clientVersion:
       typeof clientInfo?.version === "string" ? clientInfo.version : undefined,
     protocolVersion:
       typeof protocolVersion === "string" ? protocolVersion : undefined,
+    userAgent: req.headers.get("user-agent") ?? undefined,
   });
 }
 
@@ -103,12 +110,12 @@ export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
     : undefined;
 
   const mcp = createMcpHandler(() => createServer(), {
-    legacy: "stateless",
+    legacy: "reject",
     // Reporting only — the SDK has already shaped the response by the time
     // this fires, so a throw here could not change what the client sees. A
-    // silent rejection would leave a half-migrated client indistinguishable
-    // from an unreachable server, the same argument `security.rejected`
-    // makes.
+    // silent rejection would leave a half-migrated client, or a 2025-era one,
+    // indistinguishable from an unreachable server, the same argument
+    // `security.rejected` makes.
     onerror: (error) =>
       logger.warn("mcp.error", { reason: error.message, stack: error.stack }),
   });
@@ -155,8 +162,8 @@ export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
   async function handleMcp(req: Request, grant: AuthGrant): Promise<Response> {
     if (req.method !== "POST") {
       // GET (the 2025 standalone stream) and DELETE (session teardown) have
-      // nothing to address on a stateless server; the SDK answers every
-      // non-POST method 405, which the 2025 spec allows.
+      // nothing to address in the 2026-07-28 revision; the SDK answers every
+      // non-POST method 405.
       return mcp.fetch(req);
     }
 
@@ -172,12 +179,14 @@ export function createFetchHandler(options: FetchHandlerOptions): FetchHandler {
 
     // Before the message reaches the SDK: past its dispatch the answer is
     // already destined to be a 200, and a 200 does not produce an auth
-    // prompt. Runs on the parsed body, so it covers both eras without either
-    // knowing about the gate.
+    // prompt. Runs on the parsed body, so a refused write gets its 403 even
+    // when the body would also fail the SDK's own validation.
     const insufficient = checkScopes(body, grant);
     if (insufficient) return insufficient;
 
-    logInitialize(body);
+    // The SDK's own routing predicate, so this log cannot name a request the
+    // handler served as modern.
+    if (await isLegacyRequest(req, body)) logLegacyInitialize(req, body);
     return mcp.fetch(req, { parsedBody: body });
   }
 
