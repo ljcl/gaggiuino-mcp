@@ -24,67 +24,47 @@
           "type": "number"
         },
         "profileName": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Brew profile currently selected on the machine"
+          "description": "Brew profile currently selected on the machine",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "steamActive": {
           "description": "True while the steam switch is engaged",
           "type": "boolean"
         },
         "targetTemperatureC": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Temperature the PID is holding for, in degrees Celsius"
+          "description": "Temperature the PID is holding for, in degrees Celsius",
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "temperatureC": {
           "description": "Current boiler temperature, in Celsius",
           "type": "number"
         },
         "upTimeSec": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Seconds since the machine was last powered on"
+          "description": "Seconds since the machine was last powered on",
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "waterLevelPercent": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Water tank level as a percentage, 0-100"
+          "description": "Water tank level as a percentage, 0-100",
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "weightG": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Current reading from the scale, in grams"
+          "description": "Current reading from the scale, in grams",
+          "type": [
+            "number",
+            "null"
+          ]
         }
       },
       "required": [
@@ -119,15 +99,11 @@
       "additionalProperties": false,
       "properties": {
         "shotId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Id of the most recently recorded shot, or null when the machine has no shot history"
+          "description": "Id of the most recently recorded shot, or null when the machine has no shot history",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "summary": {
           "anyOf": [
@@ -143,15 +119,11 @@
                   "type": "number"
                 },
                 "pressureDeviationBar": {
-                  "anyOf": [
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "description": "How far group pressure ran from what the profile asked for, averaged over the samples where a pressure target was commanded, in bar; null when the profile drove flow throughout and never commanded one"
+                  "description": "How far group pressure ran from what the profile asked for, averaged over the samples where a pressure target was commanded, in bar; null when the profile drove flow throughout and never commanded one",
+                  "type": [
+                    "number",
+                    "null"
+                  ]
                 },
                 "profileName": {
                   "description": "Name of the brew profile used",
@@ -162,41 +134,29 @@
                   "type": "string"
                 },
                 "targetWeightG": {
-                  "anyOf": [
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "description": "Weight the profile was set to stop at, in grams; null when the profile has no weight stop condition"
+                  "description": "Weight the profile was set to stop at, in grams; null when the profile has no weight stop condition",
+                  "type": [
+                    "number",
+                    "null"
+                  ]
                 },
                 "tempDeviationC": {
-                  "anyOf": [
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "description": "How far boiler temperature ran from what the profile asked for, averaged over the samples where a temperature target was commanded, in degrees Celsius; null when the shot record carries no target temperature"
+                  "description": "How far boiler temperature ran from what the profile asked for, averaged over the samples where a temperature target was commanded, in degrees Celsius; null when the shot record carries no target temperature",
+                  "type": [
+                    "number",
+                    "null"
+                  ]
                 },
                 "tempStability": {
                   "description": "Human-readable temperature verdict: \"stable\", or \"drifted +N.NC\" when the spread exceeded 1°C. Answers whether the boiler wobbled, which is a different question from whether it was correct — see tempDeviationC",
                   "type": "string"
                 },
                 "timeToFirstDripSec": {
-                  "anyOf": [
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "description": "Seconds from shot start until the scale first read above 0.5 g; null when no drip was detected"
+                  "description": "Seconds from shot start until the scale first read above 0.5 g; null when no drip was detected",
+                  "type": [
+                    "number",
+                    "null"
+                  ]
                 },
                 "totalDurationSec": {
                   "description": "Total shot duration, in seconds",
@@ -287,15 +247,11 @@
                 "type": "number"
               },
               "pressureDeviationBar": {
-                "anyOf": [
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "description": "How far group pressure ran from what the profile asked for, averaged over the samples where a pressure target was commanded, in bar; null when the profile drove flow throughout and never commanded one"
+                "description": "How far group pressure ran from what the profile asked for, averaged over the samples where a pressure target was commanded, in bar; null when the profile drove flow throughout and never commanded one",
+                "type": [
+                  "number",
+                  "null"
+                ]
               },
               "profileName": {
                 "description": "Name of the brew profile used",
@@ -306,41 +262,29 @@
                 "type": "string"
               },
               "targetWeightG": {
-                "anyOf": [
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "description": "Weight the profile was set to stop at, in grams; null when the profile has no weight stop condition"
+                "description": "Weight the profile was set to stop at, in grams; null when the profile has no weight stop condition",
+                "type": [
+                  "number",
+                  "null"
+                ]
               },
               "tempDeviationC": {
-                "anyOf": [
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "description": "How far boiler temperature ran from what the profile asked for, averaged over the samples where a temperature target was commanded, in degrees Celsius; null when the shot record carries no target temperature"
+                "description": "How far boiler temperature ran from what the profile asked for, averaged over the samples where a temperature target was commanded, in degrees Celsius; null when the shot record carries no target temperature",
+                "type": [
+                  "number",
+                  "null"
+                ]
               },
               "tempStability": {
                 "description": "Human-readable temperature verdict: \"stable\", or \"drifted +N.NC\" when the spread exceeded 1°C. Answers whether the boiler wobbled, which is a different question from whether it was correct — see tempDeviationC",
                 "type": "string"
               },
               "timeToFirstDripSec": {
-                "anyOf": [
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "description": "Seconds from shot start until the scale first read above 0.5 g; null when no drip was detected"
+                "description": "Seconds from shot start until the scale first read above 0.5 g; null when no drip was detected",
+                "type": [
+                  "number",
+                  "null"
+                ]
               },
               "totalDurationSec": {
                 "description": "Total shot duration, in seconds",
@@ -421,15 +365,11 @@
               "type": "number"
             },
             "pressureDeviationBar": {
-              "anyOf": [
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "How far group pressure ran from what the profile asked for, averaged over the samples where a pressure target was commanded, in bar; null when the profile drove flow throughout and never commanded one"
+              "description": "How far group pressure ran from what the profile asked for, averaged over the samples where a pressure target was commanded, in bar; null when the profile drove flow throughout and never commanded one",
+              "type": [
+                "number",
+                "null"
+              ]
             },
             "profileName": {
               "description": "Name of the brew profile used",
@@ -440,41 +380,29 @@
               "type": "string"
             },
             "targetWeightG": {
-              "anyOf": [
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Weight the profile was set to stop at, in grams; null when the profile has no weight stop condition"
+              "description": "Weight the profile was set to stop at, in grams; null when the profile has no weight stop condition",
+              "type": [
+                "number",
+                "null"
+              ]
             },
             "tempDeviationC": {
-              "anyOf": [
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "How far boiler temperature ran from what the profile asked for, averaged over the samples where a temperature target was commanded, in degrees Celsius; null when the shot record carries no target temperature"
+              "description": "How far boiler temperature ran from what the profile asked for, averaged over the samples where a temperature target was commanded, in degrees Celsius; null when the shot record carries no target temperature",
+              "type": [
+                "number",
+                "null"
+              ]
             },
             "tempStability": {
               "description": "Human-readable temperature verdict: \"stable\", or \"drifted +N.NC\" when the spread exceeded 1°C. Answers whether the boiler wobbled, which is a different question from whether it was correct — see tempDeviationC",
               "type": "string"
             },
             "timeToFirstDripSec": {
-              "anyOf": [
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Seconds from shot start until the scale first read above 0.5 g; null when no drip was detected"
+              "description": "Seconds from shot start until the scale first read above 0.5 g; null when no drip was detected",
+              "type": [
+                "number",
+                "null"
+              ]
             },
             "totalDurationSec": {
               "description": "Total shot duration, in seconds",
@@ -686,26 +614,18 @@
             "additionalProperties": false,
             "properties": {
               "basketNotes": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "description": "Basket and dose notes for this profile, when documented"
+                "description": "Basket and dose notes for this profile, when documented",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "description": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "description": "What the profile does and when to reach for it; null for a profile this server has no documentation for"
+                "description": "What the profile does and when to reach for it; null for a profile this server has no documentation for",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "documented": {
                 "description": "Whether this server holds curated documentation for it",
@@ -716,41 +636,29 @@
                 "type": "string"
               },
               "machineProfileId": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "description": "Id the machine knows this profile by, and the one select_profile takes; null when the profile is not on the machine or the machine did not supply one"
+                "description": "Id the machine knows this profile by, and the one select_profile takes; null when the profile is not on the machine or the machine did not supply one",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "name": {
                 "description": "Display name as shown on the machine",
                 "type": "string"
               },
               "onMachine": {
-                "anyOf": [
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "description": "True when the machine reported this profile, false when it did not, null when the machine could not be reached to ask"
+                "description": "True when the machine reported this profile, false when it did not, null when the machine could not be reached to ask",
+                "type": [
+                  "boolean",
+                  "null"
+                ]
               },
               "recommendedDose": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "description": "Suggested dry dose, when documented"
+                "description": "Suggested dry dose, when documented",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "roastLevels": {
                 "description": "Roast levels this profile suits, e.g. [\"light\", \"medium\"]; empty when undocumented",
@@ -760,37 +668,25 @@
                 "type": "array"
               },
               "targetRatio": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "description": "Intended brew ratio, e.g. \"1:2\" (dose to yield)"
+                "description": "Intended brew ratio, e.g. \"1:2\" (dose to yield)",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "targetTime": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "description": "Intended total shot time, e.g. \"28-32s\""
+                "description": "Intended total shot time, e.g. \"28-32s\"",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "type": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "description": "Control strategy the profile uses, e.g. \"flow\" or \"pressure\""
+                "description": "Control strategy the profile uses, e.g. \"flow\" or \"pressure\"",
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -855,15 +751,11 @@
       "additionalProperties": false,
       "properties": {
         "basketNotes": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Basket and dose notes for this profile, when documented"
+          "description": "Basket and dose notes for this profile, when documented",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "definition": {
           "anyOf": [
@@ -900,15 +792,11 @@
                   "description": "What ends the shot regardless of which phase is running: time, weight, waterPumped, switchToManualPressureCtrl, switchToManuaFlowCtrl. `time` is MILLISECONDS, `weight` grams. Null when the profile carries none. Upstream misspells the flow-control flag as switchToManuaFlowCtrl; it is passed through unchanged so a profile can be uploaded back."
                 },
                 "name": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "description": "Profile name as stored on the machine"
+                  "description": "Profile name as stored on the machine",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "phases": {
                   "description": "Phases in the order the machine runs them. Each has a `type` (\"FLOW\", \"PRESSURE\", \"MANUAL\"), a `target` ramp whose `end` is bar for a PRESSURE phase and ml/s for a FLOW phase, `time` in MILLISECONDS, and a `curve` from \"EASE_IN_OUT\", \"EASE_IN\", \"EASE_OUT\", \"LINEAR\", \"INSTANT\". `stopConditions` are drawn from time, pressureAbove, pressureBelow, flowAbove, flowBelow, weight, waterPumpedInPhase, and their `time` is milliseconds too. This is the machine's own wire format, so it can be edited and passed straight back to upload_profile.",
@@ -986,15 +874,11 @@
                   "description": "The dose and yield the profile was written around, in grams; null when it carries none"
                 },
                 "waterTemperature": {
-                  "anyOf": [
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "description": "Brew temperature the profile asks for, in real degrees Celsius — NOT the scaled-by-10 form the shot time-series uses. 93 means 93°C."
+                  "description": "Brew temperature the profile asks for, in real degrees Celsius — NOT the scaled-by-10 form the shot time-series uses. 93 means 93°C.",
+                  "type": [
+                    "number",
+                    "null"
+                  ]
                 }
               },
               "required": [
@@ -1017,15 +901,11 @@
           "type": "string"
         },
         "description": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "What the profile does and when to reach for it; null for a profile this server has no documentation for"
+          "description": "What the profile does and when to reach for it; null for a profile this server has no documentation for",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "documented": {
           "description": "Whether this server holds curated documentation for it",
@@ -1036,41 +916,29 @@
           "type": "string"
         },
         "machineProfileId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Id the machine knows this profile by, and the one select_profile takes; null when the profile is not on the machine or the machine did not supply one"
+          "description": "Id the machine knows this profile by, and the one select_profile takes; null when the profile is not on the machine or the machine did not supply one",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "name": {
           "description": "Display name as shown on the machine",
           "type": "string"
         },
         "onMachine": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "True when the machine reported this profile, false when it did not, null when the machine could not be reached to ask"
+          "description": "True when the machine reported this profile, false when it did not, null when the machine could not be reached to ask",
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "recommendedDose": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Suggested dry dose, when documented"
+          "description": "Suggested dry dose, when documented",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "roastLevels": {
           "description": "Roast levels this profile suits, e.g. [\"light\", \"medium\"]; empty when undocumented",
@@ -1080,37 +948,25 @@
           "type": "array"
         },
         "targetRatio": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Intended brew ratio, e.g. \"1:2\" (dose to yield)"
+          "description": "Intended brew ratio, e.g. \"1:2\" (dose to yield)",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "targetTime": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Intended total shot time, e.g. \"28-32s\""
+          "description": "Intended total shot time, e.g. \"28-32s\"",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "type": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Control strategy the profile uses, e.g. \"flow\" or \"pressure\""
+          "description": "Control strategy the profile uses, e.g. \"flow\" or \"pressure\"",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -1170,41 +1026,29 @@
             "additionalProperties": false,
             "properties": {
               "lastAt": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "description": "When the machine last recorded this service, as an ISO-8601 UTC instant. Null when it has never recorded one — the machine reports 0 for that, which is not 1 January 1970 — or when the epoch it reported is too early to be a real date, which means its clock was not set at the time."
+                "description": "When the machine last recorded this service, as an ISO-8601 UTC instant. Null when it has never recorded one — the machine reports 0 for that, which is not 1 January 1970 — or when the epoch it reported is too early to be a real date, which means its clock was not set at the time.",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "lastEpochSec": {
-                "anyOf": [
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "description": "The same instant in the machine's own epoch seconds, or null when it has never recorded this service."
+                "description": "The same instant in the machine's own epoch seconds, or null when it has never recorded this service.",
+                "type": [
+                  "number",
+                  "null"
+                ]
               },
               "service": {
                 "description": "Which service this is, in the machine's own naming: \"descale\" or \"backflush\" on current firmware.",
                 "type": "string"
               },
               "shotsSince": {
-                "anyOf": [
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "description": "Shots recorded since that service. Only shots that ran long enough for the machine to record them — 5 seconds — are counted, so flushes and aborted pulls are not in this number. Null when this firmware reports no counter for the service."
+                "description": "Shots recorded since that service. Only shots that ran long enough for the machine to record them — 5 seconds — are counted, so flushes and aborted pulls are not in this number. Null when this firmware reports no counter for the service.",
+                "type": [
+                  "number",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -1491,15 +1335,11 @@
       "additionalProperties": false,
       "properties": {
         "machineProfileId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Id the machine assigned the new profile — the value select_profile takes. Null when the machine saved the profile but its answer carried no id; call list_profiles to find it in that case."
+          "description": "Id the machine assigned the new profile — the value select_profile takes. Null when the machine saved the profile but its answer carried no id; call list_profiles to find it in that case.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "name": {
           "description": "Name the profile was saved under.",

@@ -39,13 +39,17 @@ interface Budget {
 const BUDGETS: Budget[] = [
   {
     path: "packages/shot-graph/dist/app.html",
-    // Measured 2026-08-09 at 988,997 B raw / 263,225 B gzip on recharts
+    // Measured 2026-09-26 at 1,127,550 B raw / ~302,700 B gzip on recharts
     // 3.10.1 — the weight moves with dependency patches even when nothing here
     // changes. Budgets track that measurement: a ceiling that stays put while
     // the bundle shrinks is not a stricter gate, it is a looser one, because
     // headroom is exactly the number a budget change gets reasoned about in.
-    maxBytes: 1_090_000,
-    maxGzipBytes: 290_000,
+    // The last raise (from 1,090,000 / 290,000) was zod 4.4.3 -> 4.6.5, ~108 kB
+    // raw: zod 4.6 added a JIT compiler to its core, and the app carries zod
+    // through @modelcontextprotocol/ext-apps (`zod/v4`), so nothing here can
+    // trim it. React 19.2.8 -> 19.3.0 added ~29 kB in the same change.
+    maxBytes: 1_240_000,
+    maxGzipBytes: 333_000,
   },
 ];
 
