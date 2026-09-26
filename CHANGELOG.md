@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.0.1](https://github.com/ljcl/gaggiuino-mcp/compare/v4.0.0...v4.0.1) (2026-09-26)
+
+
+### Bug Fixes
+
+* **deps:** bump @vitejs/plugin-react from 6.0.5 to 6.1.0 in the production-minor-patch group ([#203](https://github.com/ljcl/gaggiuino-mcp/issues/203)) ([a6325d5](https://github.com/ljcl/gaggiuino-mcp/commit/a6325d5b95535ab3abb602c67a5b2ccd8a5e1dea))
+* **deps:** bump Bun to 1.4.2, zod to 4.6, React to 19.3, and vitest to 5 ([#222](https://github.com/ljcl/gaggiuino-mcp/issues/222)) ([a02c6c0](https://github.com/ljcl/gaggiuino-mcp/commit/a02c6c022c466a904f79306373b3701f3ed41b43))
+
 ## [4.0.0](https://github.com/ljcl/gaggiuino-mcp/compare/v3.2.0...v4.0.0) (2026-08-22)
 
 

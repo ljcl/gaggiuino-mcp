@@ -1,6 +1,6 @@
 {
   "name": "gaggiuino-mcp",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "private": true,
   "packageManager": "bun@1.4.2",
   "workspaces": [
