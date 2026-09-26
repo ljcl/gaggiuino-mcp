@@ -5,7 +5,7 @@ Remote MCP server for integrating a Gaggiuino espresso machine with AI tools.
 ## Architecture
 
 - **Runtime**: Bun (TypeScript)
-- **Transport**: Streamable HTTP on port 8000 (`/mcp` endpoint), dual-era — the stateless 2026-07-28 revision and legacy `initialize` sessions on one endpoint
+- **Transport**: Streamable HTTP on port 8000 (`/mcp` endpoint), the stateless 2026-07-28 revision only — a 2025-era `initialize` gets HTTP 400 and `-32022`
 - **Deployment**: Docker container (any Docker host), exposed via HTTPS tunnel or reverse proxy
 - **Monorepo**: Bun workspaces with Turborepo (`apps/*` + `packages/*`)
 
@@ -559,7 +559,7 @@ values and never re-checks presence. Four things follow from that shape.
   the model can read; `prompts/get` has only the JSON-RPC error, which is also
   what a host needs in order to put the missing field back in front of the user.
   `tryRenderPrompt` returns the refusal as a value (`{ invalid }`), and the
-  one dual-era `prompts/get` handler turns it into the SDK's typed Invalid
+  one `prompts/get` handler turns it into the SDK's typed Invalid
   Params error — never reading text off a caught exception, so a render
   function that throws is a genuine bug and propagates. The offending fields
   render through `formatFieldIssues` in `errors.ts` — the same helper the
@@ -1519,19 +1519,19 @@ its executable.
 # Health check
 curl http://localhost:8000/health
 
-# Legacy era: initialize a session
-curl -X POST http://localhost:8000/mcp \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "1.0"}}}'
-
-# Modern era (2026-07-28): stateless, no initialize — one POST per request
+# 2026-07-28: stateless, no initialize — one POST per request
 curl -X POST http://localhost:8000/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -H "MCP-Protocol-Version: 2026-07-28" \
   -H "Mcp-Method: server/discover" \
   -d '{"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {"_meta": {"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {}, "io.modelcontextprotocol/clientInfo": {"name": "test", "version": "1.0"}}}}'
+
+# A 2025-era initialize is refused: HTTP 400, -32022, data.supported ["2026-07-28"]
+curl -X POST http://localhost:8000/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "1.0"}}}'
 ```
 
 ## Environment Variables
@@ -1561,12 +1561,12 @@ covered:
 
 - `http.ts` — `createFetchHandler({ security })` returns a `fetch` plus a
   `shutdown`. Tests drive it with real `Request` objects and never bind a
-  port. The `/mcp` half is the v2 SDK's `createMcpHandler`; see Dual-era
-  protocol support below.
+  port. The `/mcp` half is the v2 SDK's `createMcpHandler`; see One protocol
+  revision below.
 - `mcpAuth.ts` — `loadSecurityConfig` / `checkRequest` / `describeSecurity`,
   plus `handlePreflight` / `corsHeaders`. `checkRequest` returns the `Response`
   to send, or `undefined` to proceed.
-- `mcpTestClient.ts` — the era-parameterized wire client the suites share
+- `mcpTestClient.ts` — the 2026-07-28 wire client the suites share
   (excluded from the coverage set with `test-setup.ts`; it is scaffolding).
 
 Five things about the gate are load-bearing:
@@ -1621,63 +1621,67 @@ path no connector takes, and the failure that bites most often — `MCP_PUBLIC_U
 disagreeing with the URL the user typed — is invisible there. `jq` is optional;
 the status-code checks still run without it.
 
-### Dual-era protocol support
+### One protocol revision
 
 The 2026-07-28 MCP revision removed the `initialize` handshake and
-protocol-level sessions: every request carries its protocol version and client
-capabilities in `_meta` (mirrored into `MCP-Protocol-Version` / `Mcp-Method` /
-`Mcp-Name` headers), and the server answers each one statelessly. Its
-versioning spec defines the **dual-era server** this repo now is, and the v2
-SDK (`@modelcontextprotocol/server`, with the schemas in
-`@modelcontextprotocol/core`) implements both eras natively: `http.ts` builds
-one `createMcpHandler(() => createServer(), { legacy: "stateless" })` and the
-SDK does the era split, the header–body validation, `server/discover`,
-`resultType`, the `ttlMs`/`cacheScope` stamps (from the `cacheHints` server
-option), and per-result `serverInfo`. `strava-mcp` (the sister repo) took the
-same shape in its #346, and its `createMcpHandler` behaviour notes apply here.
+protocol-level sessions: every request carries its protocol version, client
+info and client capabilities in `_meta` (mirrored into `MCP-Protocol-Version` /
+`Mcp-Method` / `Mcp-Name` headers), and the server answers each one
+statelessly. This server serves that revision and nothing else. The v2 SDK
+(`@modelcontextprotocol/server`, with the schemas in
+`@modelcontextprotocol/core`) does the work: `http.ts` builds one
+`createMcpHandler(() => createServer(), { legacy: "reject" })` and the SDK does
+the header–body validation, `server/discover`, `resultType`, the
+`ttlMs`/`cacheScope` stamps (from the `cacheHints` server option), per-result
+`serverInfo`, and the refusal of the old revision.
+
+It was dual-era through 4.x, serving 2025-era clients through the SDK's
+stateless legacy fallback. The fallback went once Claude (claude.ai web and
+mobile, Desktop, Claude Code) spoke 2026-07-28 — the same move
+`ljcl/intervals-mcp#36` made. `git log` has the dual-era shape if it is ever needed again.
 
 Things worth not re-breaking:
 
-- **The era split is keyed on the request's `_meta` envelope, never the
-  connection.** A request carrying the reserved
-  `io.modelcontextprotocol/protocolVersion` key is served under 2026-07-28
-  semantics; anything else — `initialize`, bare method calls, JSON-RPC
-  batches — is legacy traffic. A modern `MCP-Protocol-Version` header on a
-  body with no envelope gets a modern-shaped 400 naming the missing keys, so
-  a half-migrated client is corrected rather than silently served legacy
-  semantics. The method name alone is *not* an era marker: a bare
-  `server/discover` with no envelope is legacy traffic and earns the legacy
-  `-32601` (`modern.test.ts` pins all of this).
-- **Both eras are served statelessly, by one `createServer` factory.**
-  Protocol sessions left with the revision that removed them: no
-  `Mcp-Session-Id` is minted (the 2025 spec always made the header
-  server-optional — an initialize simply gets no session to carry), a stale
-  session id from a pre-3.x deployment is ignored rather than 404ed, and the
-  2025 session operations — GET's standalone stream and DELETE — answer 405,
-  which that spec allows. The GET stream carried only server-initiated
-  messages this server never sends (no `listChanged`, no subscriptions), so
-  nothing a legacy client can observe was lost with it. The session
-  registry, its eviction policy, and the 404 re-handshake contract died with
-  the sessions; `git log` has the reasoning if a sessionful transport ever
-  returns.
-- **The split runs after the security gate and the scope gate**, so both eras
-  inherit them: `http.ts` parses each POST body once (the parse-error answer,
-  the scope gate, and the SDK's `parsedBody` all read the same parse), and a
-  modern write call on a read-only token 403s before dispatch. Auth stays an
-  HTTP status in every era.
-- **Both eras serve one advertised surface.** `TOOLS`, `advertisedPrompts()`,
-  `RESOURCES`, `RESOURCE_TEMPLATES` and `SERVER_CAPABILITIES` are the shared
-  constants the one set of handlers reads, and `modern.test.ts` asserts the
-  modern `tools/list` deep-equals the legacy list — a host migrating eras
-  must see byte-identical tools or its stored permission grants silently
-  drop. `callTool` in `server.ts` is the shared dispatch-and-log layer, so
-  "every call is one record" holds in both eras.
-- **The advertised `supported` versions list only `2026-07-28`.** Padding it
-  with the legacy versions the handshake negotiates would invite a modern
-  client to retry `2025-11-25` with per-request metadata — semantics that
-  version does not have. Legacy clients never see this list; they negotiate
-  through `initialize` as before.
-- **Resource not found is `-32602` in both eras**, the code the revision
+- **A 2025-era request is refused, with an answer the client can act on.** The
+  SDK classifies on the request's `_meta` envelope, never the connection or
+  the method name: a request with no `io.modelcontextprotocol/protocolVersion`
+  claim — `initialize`, a bare `tools/call`, even a bare `server/discover` —
+  gets HTTP 400 and `-32022`, with `data.supported: ["2026-07-28"]`. A
+  2025-era notification gets 202 and is dropped, a JSON-RPC batch gets 400
+  `-32600`, and GET and DELETE get 405. A modern `MCP-Protocol-Version` header
+  on a body with no envelope gets a 400 naming the missing keys instead, so a
+  half-migrated client is told what it left out. `http.test.ts` pins the
+  refusals; `modern.test.ts` pins the rest.
+- **The refusal is what makes the `Mcp-*` headers trustworthy.** Only a
+  request with an envelope goes through the SDK's header-against-body check
+  (`-32020`). A legacy fallback served a claim-less `tools/call` whatever its
+  `Mcp-Name` said, so a proxy rule keyed on that header — "block
+  `delete_profile` at the edge" — could be walked past by naming a harmless
+  tool in the header and the real one in the body. `http.test.ts` sends
+  exactly that request and asserts it never reaches the machine. Put a
+  fallback back and that test is the one that fails.
+- **Every request is served statelessly, by one `createServer` factory.** No
+  `Mcp-Session-Id` is minted, a stale session id from a pre-3.x deployment is
+  ignored rather than 404ed, and there is no GET stream — it carried only
+  server-initiated messages this server never sends (no `listChanged`, no
+  subscriptions).
+- **The refusal runs after the security gate and the scope gate.** `http.ts`
+  parses each POST body once (the parse-error answer, the scope gate, and the
+  SDK's `parsedBody` all read the same parse), a write call on a read-only
+  token 403s before dispatch, and an unauthenticated 2025-era request gets the
+  401, not the `-32022` — a prober learns nothing about the revision before
+  it has a token. Auth stays an HTTP status.
+- **The advertised surface is the tables, byte for byte.** `TOOLS`,
+  `advertisedPrompts()`, `RESOURCES`, `RESOURCE_TEMPLATES` and
+  `SERVER_CAPABILITIES` are the constants the one set of handlers reads, and
+  `modern.test.ts` asserts the wire `tools/list` deep-equals `TOOLS`. The
+  revision change moved no grant: `tool-contract.json` is unchanged by it.
+  `callTool` in `server.ts` is the one dispatch-and-log layer, so "every call
+  is one record" holds for every call.
+- **The advertised `supported` versions list only `2026-07-28`.** It is the
+  one revision this server serves, and it is what a refused 2025-era client
+  reads to fall forward.
+- **Resource not found is `-32602`**, the code the revision
   renumbered it onto (never the retired `-32002`). `readResource` returns the
   missing text as a value (`{ missing }`) and the handler throws the SDK's
   typed `ResourceNotFoundError` from it, whose `data` echoes the uri — how a
@@ -1703,11 +1707,11 @@ Things worth not re-breaking:
   has the server omit every unsupported type from the acknowledgement; the
   SDK holds the stream open for the subscription's lifetime, and a client
   that saw the empty set has learned nothing will ever arrive on it.
-- **Every modern validation refusal reaches the log** through the handler's
+- **Every validation refusal reaches the log** through the handler's
   `onerror` (`mcp.error`), for the same reason the gate logs
-  `security.rejected`: a silent 4xx leaves a half-migrated client
+  `security.rejected`: a silent 4xx leaves a half-migrated or 2025-era client
   indistinguishable from an unreachable server. Tool failures stay `isError`
-  *results* at 200, as in the legacy era.
+  *results* at 200.
 
 ### OAuth, and why an auth refusal is not a tool result
 
@@ -2008,7 +2012,7 @@ exist produces Anthropic's documented "Couldn't reach the MCP server."
 ### Logging, health, and startup validation
 
 `logging.ts` writes one JSON object per line to stderr, each with an `event`
-name (`tool.call`, `mcp.initialize`, `security.unauthenticated`,
+name (`tool.call`, `mcp.legacy_refused`, `security.unauthenticated`,
 `config.invalid`, …). The level resolves **lazily on first use**, not at module
 load — that is what lets `test-setup.ts` call `setLogLevel("silent")` and have
 it apply regardless of import order. `createLogger` takes an injectable sink and
@@ -2016,18 +2020,25 @@ clock so `logging.test.ts` asserts whole records without capturing stderr; the
 tool-call assertions in `server.test.ts` deliberately spy on the real
 `console.error` instead, so the default sink stays in the loop.
 
-Every tool call is one record with `tool`, `durationMs`, and `outcome`. On an
-expected failure it also carries `reason` — the same actionable text the model
-got, because a bare `"error"` throws away the only useful part. A genuine bug
-logs `tool.error` at error level with the stack.
+Every tool call is one record with `tool`, `durationMs`, `outcome`, and the
+calling host as `client` / `clientVersion`. On an expected failure it also
+carries `reason` — the same actionable text the model got, because a bare
+`"error"` throws away the only useful part. A genuine bug logs `tool.error` at
+error level with the stack.
 
-`mcp.initialize` carries `client`, `clientVersion`, and `protocolVersion`,
-read from the `initialize` request body in `http.ts` — the successor to the
-session era's `session.opened`. Under stateless legacy serving a handshake per
-turn is the expected cadence rather than a session thrown away, but the client
-name and negotiated version are still the two facts an operator needs when a
-host misbehaves; modern-era requests carry the same identity in their `_meta`
-envelope and send no `initialize` at all.
+The host comes from the request envelope's `io.modelcontextprotocol/clientInfo`,
+which the SDK lifts off `params._meta` before a handler runs — read it from
+`ctx.mcpReq.envelope`, because `request.params._meta` no longer has it. With no
+`initialize` there is nowhere else to learn it, and "which host?" is the first
+question when one host misbehaves and another does not. `callingClient` is loose:
+a missing or malformed claim logs no name and still serves the call.
+
+`mcp.legacy_refused` (warn) names a 2025-era client this server turned away —
+`client`, `clientVersion` and `protocolVersion` from the `initialize` body, plus
+`userAgent`. The SDK's `mcp.error` records the refusal itself but not who sent
+it, and when a host stops working after an upgrade, this is the line that says
+it still speaks the old revision. It is classified with the SDK's own
+`isLegacyRequest`, so it can never name a request the handler served.
 
 `index.ts` handles **SIGTERM as well as SIGINT** — `docker stop` sends
 SIGTERM, so handling only SIGINT leaves the container killed after the grace

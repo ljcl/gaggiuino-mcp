@@ -23,7 +23,10 @@ BASE_URL="${BASE_URL:-http://localhost:8000}"
 BASE_URL="${BASE_URL%/}"
 MCP_URL="$BASE_URL/mcp"
 
-INIT_BODY='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test-auth.sh","version":"1.0"}}}'
+# A 2026-07-28 request: the server refuses a 2025-era `initialize` with 400, so
+# an open server would read as closed if the probe still sent one.
+PROTOCOL_VERSION="2026-07-28"
+PROBE_BODY='{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"'"$PROTOCOL_VERSION"'","io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"test-auth.sh","version":"1.0"}}}}'
 
 pass=0
 fail=0
@@ -58,7 +61,9 @@ mcp_post() {
   curl -s -o /dev/null -w '%{http_code}' --max-time 10 -X POST "$MCP_URL" \
     -H "Content-Type: application/json" \
     -H "Accept: application/json, text/event-stream" \
-    -d "$INIT_BODY" "$@"
+    -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
+    -H "Mcp-Method: server/discover" \
+    -d "$PROBE_BODY" "$@"
 }
 
 # Read a JSON field, or "" when jq is missing or the field is absent.
@@ -185,7 +190,9 @@ echo "4. The 401 that starts the flow:"
 headers=$(curl -s -D - -o /dev/null --max-time 10 -X POST "$MCP_URL" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
-  -d "$INIT_BODY" 2>/dev/null)
+  -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
+  -H "Mcp-Method: server/discover" \
+  -d "$PROBE_BODY" 2>/dev/null)
 code=$(printf '%s' "$headers" | awk 'NR==1{print $2}')
 challenge=$(printf '%s' "$headers" | tr -d '\r' | grep -i '^www-authenticate:' | cut -d' ' -f2-)
 

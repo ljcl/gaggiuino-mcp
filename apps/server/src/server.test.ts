@@ -11,7 +11,7 @@ import { resetClient } from "./client";
 import { loadPrompts } from "./loader";
 import { setLogLevel } from "./logging";
 import { connectTestClient, type McpTestClient } from "./mcpTestClient";
-import { TOOLS } from "./server";
+import { callingClient, TOOLS } from "./server";
 import { mockServer } from "./test-setup";
 import {
   normalizeToolContract,
@@ -22,11 +22,10 @@ import { TOOLS_BY_NAME } from "./tools";
 import { SERVER_NAME, SERVER_VERSION } from "./version";
 
 /**
- * These tests drive the server over the wire — real `Request`s through the
- * fetch handler in the legacy era — rather than calling handlers directly, so
- * the era codec and everything it serializes participate. The modern era's
- * own assertions live in `modern.test.ts`; the surface-parity tests there are
- * what tie the two eras to one advertised surface.
+ * These tests drive the server over the wire — real 2026-07-28 `Request`s
+ * through the fetch handler — rather than calling handlers directly, so the
+ * SDK's codec and everything it serializes participate. The wire's own rules
+ * (envelope, headers, cache stamps) live in `modern.test.ts`.
  */
 let client: McpTestClient;
 let close: () => Promise<void>;
@@ -144,6 +143,35 @@ describe("tool call logging", () => {
     expect(typeof entry?.durationMs).toBe("number");
   });
 
+  it("names the host that sent the call, from its request envelope", async () => {
+    // There is no `initialize` to remember a client from, so the envelope's
+    // clientInfo on each call is the only place the host is named.
+    const { records, restore } = captureLogs();
+    try {
+      await call("get_status");
+    } finally {
+      restore();
+    }
+    expect(
+      records.find((record) => record.event === "tool.call"),
+    ).toMatchObject({ client: "test-client", clientVersion: "1.0" });
+  });
+
+  it("reads a client from the envelope, and nothing from a malformed one", () => {
+    const key = "io.modelcontextprotocol/clientInfo";
+    expect(
+      callingClient({ [key]: { name: "claude-ai", version: "2" } }),
+    ).toEqual({ name: "claude-ai", version: "2" });
+    // The client's own claim, so a bad one is dropped rather than trusted.
+    expect(callingClient({ [key]: { name: 7, version: null } })).toEqual({
+      name: undefined,
+      version: undefined,
+    });
+    expect(callingClient({ [key]: "claude-ai" })).toEqual({});
+    expect(callingClient({})).toEqual({});
+    expect(callingClient(undefined)).toEqual({});
+  });
+
   it("logs a failed call with the reason the model was given", async () => {
     mockServer.use(
       http.get("http://gaggiuino.local/api/system/status", () =>
@@ -232,10 +260,10 @@ describe("tool call logging", () => {
   });
 });
 
-describe("initialize", () => {
+describe("server/discover", () => {
   it("advertises the released version, not a hardcoded one", async () => {
     // Read back off the client, so this asserts what actually crossed the
-    // handshake rather than what the constant says.
+    // wire rather than what the constant says.
     expect(client.getServerVersion()).toEqual({
       name: SERVER_NAME,
       version: SERVER_VERSION,

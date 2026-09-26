@@ -3,8 +3,7 @@ import { createFetchHandler, type FetchHandler } from "./http";
 import { type SecurityConfig } from "./mcpAuth";
 
 /**
- * One MCP client per protocol era for the tests that assert what a host
- * actually receives.
+ * The MCP client for the tests that assert what a host actually receives.
  *
  * Several suites need the same thing: a real exchange through
  * `createFetchHandler`, driven over the transport rather than against the
@@ -12,33 +11,22 @@ import { type SecurityConfig } from "./mcpAuth";
  * annotation, capability, or schema that does not serialize cannot influence
  * a host, and a table in memory proves nothing about the wire.
  *
- * The endpoint serves two eras (dual era until clients finish migrating), so
- * the client speaks both:
- *
- * - `"legacy"` (the 2025 family): the `initialize` handshake, then plain
- *   JSON-RPC POSTs. The endpoint serves this era statelessly, so there is no
- *   `Mcp-Session-Id` — each request stands alone, which the 2025 spec always
- *   allowed.
- * - `"modern"` (2026-07-28): no handshake at all; every request carries the
- *   `io.modelcontextprotocol/*` envelope keys in `params._meta` plus the
- *   `Mcp-Method`/`Mcp-Name` headers, and capabilities come from
- *   `server/discover`.
+ * The endpoint serves only the 2026-07-28 revision: no handshake at all;
+ * every request carries the `io.modelcontextprotocol/*` envelope keys in
+ * `params._meta` plus the `Mcp-Method` (and, where the body names one,
+ * `Mcp-Name`) header, and capabilities come from `server/discover`.
  *
  * The convenience methods mirror a standard SDK client surface, including
  * throwing on a JSON-RPC error response.
  */
 
-export type ProtocolEra = "legacy" | "modern";
-
-/** The 2026-07-28 revision every modern-era request names in its envelope. */
-export const MODERN_PROTOCOL_VERSION = "2026-07-28";
-
-/** The 2025-era revision the legacy handshake negotiates. */
-export const LEGACY_PROTOCOL_VERSION = "2025-06-18";
+/** The 2026-07-28 revision every request names in its envelope. */
+export const PROTOCOL_VERSION = "2026-07-28";
 
 const META_VERSION = "io.modelcontextprotocol/protocolVersion";
 const META_CLIENT_INFO = "io.modelcontextprotocol/clientInfo";
 const META_CLIENT_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities";
+const META_SERVER_INFO = "io.modelcontextprotocol/serverInfo";
 
 /** A JSON-RPC response as it came off the wire. */
 export interface JsonRpcResponse {
@@ -51,10 +39,10 @@ export interface JsonRpcResponse {
 const OPEN: SecurityConfig = { allowedHosts: [], allowedOrigins: [] };
 
 /**
- * Every JSON payload in a response body. A modern exchange answers with a
- * bare JSON document unless the handler emitted notifications first; a legacy
- * exchange may answer on an SSE stream. So the parser accepts both shapes and
- * returns each `data:` line (or the one document) in order.
+ * Every JSON payload in a response body. An exchange answers with a bare JSON
+ * document unless the handler emitted notifications first (progress upgrades
+ * it to SSE), so the parser accepts both shapes and returns each `data:` line
+ * (or the one document) in order.
  */
 export function parseBodyPayloads(raw: string): JsonRpcResponse[] {
   const trimmed = raw.trim();
@@ -103,10 +91,14 @@ export interface McpTestClient {
     name: string;
   }): Promise<Record<string, unknown>>;
   close(): Promise<void>;
-  era: ProtocolEra;
-  /** Capabilities from the era's handshake (`initialize` / `server/discover`). */
+  /**
+   * The `server/discover` result (`capabilities`, `supportedVersions`, and
+   * `serverInfo` in `_meta`), fetched once on connect.
+   */
+  discover: Record<string, unknown>;
+  /** Capabilities from `server/discover`. */
   getServerCapabilities(): Record<string, unknown> | undefined;
-  /** `serverInfo` from the era's handshake. */
+  /** `serverInfo` from `server/discover`'s `_meta`. */
   getServerVersion(): Record<string, unknown> | undefined;
   getPrompt(params: {
     arguments?: Record<string, string>;
@@ -114,12 +106,6 @@ export interface McpTestClient {
   }): Promise<{
     messages: Array<{ content: { text: string; type: string }; role: string }>;
   }>;
-  /**
-   * The era's handshake result: the `initialize` result on legacy (with
-   * `capabilities`, `serverInfo`, `protocolVersion`), the `server/discover`
-   * result on modern (with `capabilities`, `supportedVersions`).
-   */
-  handshake: Record<string, unknown>;
   listPrompts(): Promise<{ prompts: PromptEntry[] }>;
   listResources(): Promise<{
     resources: Array<{ description?: string; uri: string }>;
@@ -148,54 +134,46 @@ function post(body: unknown, headers: Record<string, string> = {}): Request {
 }
 
 /** The reserved envelope keys a 2026-07-28 request carries in `params._meta`. */
-function modernEnvelope(clientName: string): Record<string, unknown> {
+function envelope(clientName: string): Record<string, unknown> {
   return {
     [META_CLIENT_CAPABILITIES]: {},
     [META_CLIENT_INFO]: { name: clientName, version: "1.0" },
-    [META_VERSION]: MODERN_PROTOCOL_VERSION,
+    [META_VERSION]: PROTOCOL_VERSION,
   };
 }
 
-/** Complete the era's bootstrap and return a client bound to the handler. */
+/** Connect a client bound to the handler and run `server/discover`. */
 export async function connectTestClient(
   clientName = "test-client",
-  era: ProtocolEra = "legacy",
   handler: FetchHandler = createFetchHandler({ security: OPEN }),
 ): Promise<McpTestClient> {
-  let nextId = 2;
+  let nextId = 1;
 
   const sendRaw = async (method: string, params: unknown = {}) => {
-    const id = nextId++;
-    let body: Record<string, unknown>;
-    let headers: Record<string, string> = {};
-    if (era === "modern") {
-      const merged = params as Record<string, unknown>;
-      body = {
-        id,
-        jsonrpc: "2.0",
-        method,
-        params: {
-          ...merged,
-          // Caller-supplied keys win, so a test can override an envelope
-          // claim (e.g. name an unsupported revision on purpose).
-          _meta: {
-            ...modernEnvelope(clientName),
-            ...(merged._meta as Record<string, unknown> | undefined),
-          },
+    const merged = params as Record<string, unknown>;
+    const body = {
+      id: nextId++,
+      jsonrpc: "2.0",
+      method,
+      params: {
+        ...merged,
+        // Caller-supplied keys win, so a test can override an envelope claim
+        // (e.g. name an unsupported revision on purpose).
+        _meta: {
+          ...envelope(clientName),
+          ...(merged._meta as Record<string, unknown> | undefined),
         },
-      };
-      headers = {
-        "mcp-method": method,
-        "mcp-protocol-version": MODERN_PROTOCOL_VERSION,
-      };
-      // SEP-2243: when the body names a tool, prompt, or resource uri, the
-      // Mcp-Name header must carry the same value — the modern path rejects
-      // a mismatch or an absence with -32020.
-      const name = merged.name ?? merged.uri;
-      if (typeof name === "string") headers["mcp-name"] = name;
-    } else {
-      body = { id, jsonrpc: "2.0", method, params };
-    }
+      },
+    };
+    const headers: Record<string, string> = {
+      "mcp-method": method,
+      "mcp-protocol-version": PROTOCOL_VERSION,
+    };
+    // SEP-2243: when the body names a tool, prompt, or resource uri, the
+    // Mcp-Name header must carry the same value — the endpoint rejects a
+    // mismatch or an absence with -32020.
+    const name = merged.name ?? merged.uri;
+    if (typeof name === "string") headers["mcp-name"] = name;
     const response = await handler.fetch(post(body, headers));
     return await response.text();
   };
@@ -214,29 +192,9 @@ export async function connectTestClient(
     return parsed.result ?? {};
   };
 
-  let handshake: Record<string, unknown>;
-  if (era === "modern") {
-    // Modern needs no handshake; `server/discover` is the optional probe that
-    // replaces initialize's advertisement.
-    handshake = (await send("server/discover")).result ?? {};
-  } else {
-    const init = await handler.fetch(
-      post({
-        id: 1,
-        jsonrpc: "2.0",
-        method: "initialize",
-        params: {
-          capabilities: {},
-          clientInfo: { name: clientName, version: "1.0" },
-          protocolVersion: LEGACY_PROTOCOL_VERSION,
-        },
-      }),
-    );
-    handshake = parseResponse(await init.text())?.result ?? {};
-    await handler.fetch(
-      post({ jsonrpc: "2.0", method: "notifications/initialized" }),
-    );
-  }
+  // No handshake in this revision; `server/discover` is the optional probe
+  // that replaced initialize's advertisement.
+  const discover = (await send("server/discover")).result ?? {};
 
   // The `result` helper returns the untyped wire object; each sugar method
   // narrows it to the slice its suites assert on. The casts are the seam
@@ -245,7 +203,7 @@ export async function connectTestClient(
     callTool: ({ name, arguments: args }) =>
       result("tools/call", { arguments: args, name }),
     close: () => handler.shutdown(),
-    era,
+    discover,
     getPrompt: ({ name, arguments: args }) =>
       result("prompts/get", { arguments: args, name }) as Promise<{
         messages: Array<{
@@ -254,10 +212,11 @@ export async function connectTestClient(
         }>;
       }>,
     getServerCapabilities: () =>
-      handshake.capabilities as Record<string, unknown> | undefined,
+      discover.capabilities as Record<string, unknown> | undefined,
     getServerVersion: () =>
-      handshake.serverInfo as Record<string, unknown> | undefined,
-    handshake,
+      (discover._meta as Record<string, unknown> | undefined)?.[
+        META_SERVER_INFO
+      ] as Record<string, unknown> | undefined,
     listPrompts: () =>
       result("prompts/list") as Promise<{ prompts: PromptEntry[] }>,
     listResources: () =>

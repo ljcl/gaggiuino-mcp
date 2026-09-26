@@ -462,13 +462,18 @@ AI Tool (Claude Desktop, etc.)
 +-----------------------------+
 ```
 
-The `/mcp` endpoint is **dual-era**, via the official v2 MCP SDK: it serves
-the stateless 2026-07-28 revision (per-request metadata, `server/discover`, no
-sessions) and the legacy `initialize`-handshake revisions (2025-03-26 through
-2025-11-25) concurrently, so clients keep working while hosts migrate to the
-new specification. Both eras are served statelessly — no session ids are
-minted (the 2025 spec always made them optional), and the legacy GET/DELETE
-session operations answer 405.
+The `/mcp` endpoint serves **only the stateless 2026-07-28 MCP revision**, via
+the official v2 MCP SDK: every request carries its protocol version and client
+info in `_meta`, there is no `initialize` handshake and no session, and
+`server/discover` is the optional capability probe. A client that still speaks
+a 2025 revision (2025-03-26 through 2025-11-25) gets HTTP 400 with JSON-RPC
+error `-32022`, whose `data.supported` names `2026-07-28`. GET and DELETE
+answer 405.
+
+Because every request is checked against its `Mcp-Method` and `Mcp-Name`
+headers (a mismatch is HTTP 400, `-32020`), a reverse proxy or tunnel can log,
+meter or block by tool name without parsing the JSON body — for example, block
+`delete_profile` at the edge.
 
 ## Development
 

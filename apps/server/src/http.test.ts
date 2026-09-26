@@ -5,6 +5,7 @@ import { getClient, resetClient } from "./client";
 import { createFetchHandler, type FetchHandler } from "./http";
 import { setLogLevel } from "./logging";
 import { type SecurityConfig } from "./mcpAuth";
+import { PROTOCOL_VERSION } from "./mcpTestClient";
 import { TEST_OAUTH_CONFIG, TEST_PASSPHRASE_HASH } from "./oauth/__fixtures__";
 import { ALL_SCOPES_HEADER } from "./oauth/scopes";
 import { signToken } from "./oauth/tokens";
@@ -13,8 +14,8 @@ import { SERVER_VERSION } from "./version";
 
 /**
  * These drive the real fetch handler with real `Request` objects instead of
- * binding a port, so the routing, the security gate, and the transport
- * handshake are all in the loop. The one thing not covered here is `index.ts`
+ * binding a port, so the routing, the security gate, and the transport are
+ * all in the loop. The one thing not covered here is `index.ts`
  * itself: only environment reads and `Bun.serve`.
  */
 
@@ -50,17 +51,53 @@ const OPEN: SecurityConfig = { allowedHosts: [], allowedOrigins: [] };
 
 let handler: FetchHandler;
 
-function initializeBody(): string {
+/** A 2025-era `initialize`, which this server now refuses. */
+function legacyInitializeBody(): string {
   return JSON.stringify({
     id: 1,
     jsonrpc: "2.0",
     method: "initialize",
     params: {
       capabilities: {},
-      clientInfo: { name: "test", version: "1.0" },
+      clientInfo: { name: "legacy-host", version: "0.9" },
       protocolVersion: "2025-06-18",
     },
   });
+}
+
+/**
+ * One well-formed 2026-07-28 request: the `_meta` envelope in the body, and
+ * the `Mcp-Method` / `Mcp-Name` headers that mirror it.
+ */
+function rpc(
+  method: string,
+  params: Record<string, unknown> = {},
+  headers: Record<string, string> = {},
+): Request {
+  const mirrored: Record<string, string> = {
+    "mcp-method": method,
+    "mcp-protocol-version": PROTOCOL_VERSION,
+  };
+  if (typeof params.name === "string") mirrored["mcp-name"] = params.name;
+  return post(
+    JSON.stringify({
+      id: 1,
+      jsonrpc: "2.0",
+      method,
+      params: {
+        ...params,
+        _meta: {
+          "io.modelcontextprotocol/clientCapabilities": {},
+          "io.modelcontextprotocol/clientInfo": {
+            name: "http-test",
+            version: "1.0",
+          },
+          "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+        },
+      },
+    }),
+    { ...mirrored, ...headers },
+  );
 }
 
 function post(body: string, headers: Record<string, string> = {}): Request {
@@ -144,64 +181,45 @@ describe("/health", () => {
 });
 
 describe("/mcp security gate", () => {
-  it("rejects an unauthenticated initialize with 401 and a challenge", async () => {
-    const response = await handler.fetch(post(initializeBody()));
+  it("rejects an unauthenticated request with 401 and a challenge", async () => {
+    const response = await handler.fetch(rpc("tools/list"));
     expect(response.status).toBe(401);
     expect(response.headers.get("WWW-Authenticate")).toContain("Bearer");
   });
 
   it("rejects a browser origin with 403 before touching the handler", async () => {
     const response = await handler.fetch(
-      post(initializeBody(), authorized({ origin: "https://evil.test" })),
+      rpc("tools/list", {}, authorized({ origin: "https://evil.test" })),
     );
     expect(response.status).toBe(403);
   });
 
-  it("answers the handshake with a valid token, minting no session", async () => {
-    // The 2026-07-28 revision removed protocol sessions; the stateless legacy
-    // fallback never mints one, which the 2025 spec allows — the session
-    // header was always server-optional.
-    const response = await handler.fetch(post(initializeBody(), authorized()));
+  it("serves a request with a valid token, minting no session", async () => {
+    // The 2026-07-28 revision removed protocol sessions and the
+    // `Mcp-Session-Id` header with them.
+    const response = await handler.fetch(rpc("tools/list", {}, authorized()));
     expect(response.status).toBe(200);
     expect(response.headers.get("mcp-session-id")).toBeNull();
   });
 
   it("serves an unauthenticated deployment when no token is configured", async () => {
     handler = createFetchHandler({ security: OPEN });
-    const response = await handler.fetch(post(initializeBody()));
+    const response = await handler.fetch(rpc("tools/list"));
     expect(response.status).toBe(200);
+  });
+
+  it("checks the token before it refuses a 2025-era request", async () => {
+    // The era refusal belongs to the SDK, behind the gate: an unauthenticated
+    // prober learns nothing about which revision this server speaks.
+    const response = await handler.fetch(post(legacyInitializeBody()));
+    expect(response.status).toBe(401);
   });
 });
 
 describe("/mcp routing", () => {
-  it("serves a legacy request with no prior handshake — each stands alone", async () => {
-    // Stateless legacy serving: a fresh server instance answers every POST,
-    // so a host that never sent initialize (or whose turn opens mid-flight)
-    // is served rather than told "no valid session ID".
-    const response = await handler.fetch(
-      post(
-        JSON.stringify({ id: 1, jsonrpc: "2.0", method: "tools/list" }),
-        authorized(),
-      ),
-    );
-    expect(response.status).toBe(200);
-  });
-
-  it("ignores a stale Mcp-Session-Id from the session era", async () => {
-    // A client that stored a session id from a pre-3.x deployment must not be
-    // stranded: the header is ignored, not 404ed — the id addresses nothing.
-    const response = await handler.fetch(
-      post(
-        JSON.stringify({ id: 1, jsonrpc: "2.0", method: "tools/list" }),
-        authorized({ "mcp-session-id": "from-the-session-era" }),
-      ),
-    );
-    expect(response.status).toBe(200);
-  });
-
   it("answers the 2025 session operations (GET and DELETE) with 405", async () => {
-    // Stateless serving has no standalone stream to open and no session to
-    // delete; the 2025 spec allows a server to answer both with 405.
+    // The 2026-07-28 revision has no standalone stream to open and no session
+    // to delete.
     for (const method of ["GET", "DELETE"]) {
       const response = await handler.fetch(
         new Request("http://localhost:8000/mcp", {
@@ -230,6 +248,89 @@ describe("/mcp routing", () => {
     expect(response.status).toBe(400);
     const body = (await response.json()) as { error: { code: number } };
     expect(body.error.code).toBe(-32700);
+  });
+});
+
+describe("2025-era clients", () => {
+  /** The JSON-RPC error of a refused request. */
+  async function readError(
+    response: Response,
+  ): Promise<{ code: number; data?: unknown; message: string }> {
+    const body = (await response.json()) as {
+      error: { code: number; data?: unknown; message: string };
+    };
+    return body.error;
+  }
+
+  it("refuses an initialize with -32022, naming the revision to use", async () => {
+    // The documented answer for a client that has not moved on: HTTP 400 and
+    // UnsupportedProtocolVersion, whose `supported` list is what the client
+    // needs to fall forward.
+    const response = await handler.fetch(
+      post(legacyInitializeBody(), authorized()),
+    );
+    expect(response.status).toBe(400);
+    const error = await readError(response);
+    expect(error.code).toBe(-32022);
+    expect(error.data).toEqual({
+      requested: "2025-06-18",
+      supported: [PROTOCOL_VERSION],
+    });
+  });
+
+  it("refuses a tools/call with no envelope, whatever its headers say", async () => {
+    // The downgrade path this closes: with a legacy fallback, a request with
+    // no envelope skipped the Mcp-Name check, so a proxy rule keyed on that
+    // header could be walked past by naming a harmless tool in the header and
+    // a different one in the body. The call must never reach the machine.
+    let upstream = 0;
+    mockServer.use(
+      http.get("http://gaggiuino.local/*", () => {
+        upstream += 1;
+        return HttpResponse.json({});
+      }),
+    );
+    resetClient();
+    const response = await handler.fetch(
+      post(
+        JSON.stringify({
+          id: 1,
+          jsonrpc: "2.0",
+          method: "tools/call",
+          params: { arguments: {}, name: "get_status" },
+        }),
+        authorized({
+          "mcp-method": "tools/call",
+          "mcp-name": "get_dial_in_guidance",
+        }),
+      ),
+    );
+    expect(response.status).toBe(400);
+    expect((await readError(response)).code).toBe(-32022);
+    expect(upstream).toBe(0);
+  });
+
+  it("acknowledges a 2025-era notification and drops it", async () => {
+    const response = await handler.fetch(
+      post(
+        JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+        authorized(),
+      ),
+    );
+    expect(response.status).toBe(202);
+  });
+
+  it("refuses a JSON-RPC batch", async () => {
+    // Batches belong to the 2025-03-26 family; the 2026-07-28 body is one
+    // request.
+    const response = await handler.fetch(
+      post(
+        JSON.stringify([{ id: 1, jsonrpc: "2.0", method: "tools/list" }]),
+        authorized(),
+      ),
+    );
+    expect(response.status).toBe(400);
+    expect((await readError(response)).code).toBe(-32600);
   });
 });
 
@@ -262,9 +363,9 @@ describe("browser origins", () => {
     );
   });
 
-  it("lets an allowed origin read the handshake response", async () => {
+  it("lets an allowed origin read the response", async () => {
     const response = await handler.fetch(
-      post(initializeBody(), authorized({ origin: "https://claude.ai" })),
+      rpc("tools/list", {}, authorized({ origin: "https://claude.ai" })),
     );
     expect(response.status).toBe(200);
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe(
@@ -273,7 +374,7 @@ describe("browser origins", () => {
   });
 
   it("adds no CORS headers for a client that sent no Origin", async () => {
-    const response = await handler.fetch(post(initializeBody(), authorized()));
+    const response = await handler.fetch(rpc("tools/list", {}, authorized()));
     expect(response.status).toBe(200);
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe(null);
   });
@@ -301,24 +402,12 @@ describe("tools/list over the real transport", () => {
    * here would have told us.
    */
   async function listTools(): Promise<Tool[]> {
-    const response = await handler.fetch(
-      post(
-        JSON.stringify({ id: 2, jsonrpc: "2.0", method: "tools/list" }),
-        authorized(),
-      ),
-    );
+    const response = await handler.fetch(rpc("tools/list", {}, authorized()));
     expect(response.status).toBe(200);
-    const body = await response.text();
-    // The transport answers on an SSE stream unless it has a reason not to, so
-    // take the payload from whichever framing came back.
-    const payload = body.startsWith("{")
-      ? body
-      : (body
-          .split("\n")
-          .find((line) => line.startsWith("data:"))
-          ?.slice("data:".length)
-          .trim() ?? "");
-    const message = JSON.parse(payload) as { result: { tools: Tool[] } };
+    // A list result is a single JSON body; the transport only upgrades to
+    // SSE when a handler emits a notification before its result.
+    expect(response.headers.get("content-type")).toContain("application/json");
+    const message = (await response.json()) as { result: { tools: Tool[] } };
     return message.result.tools;
   }
 
@@ -401,38 +490,55 @@ describe("tools/list over the real transport", () => {
   });
 });
 
-describe("initialize logging", () => {
-  it("records which client is handshaking, and at which revision", async () => {
-    // Which client is handshaking, and at which revision. Under stateless
-    // legacy serving an initialize per turn is the expected cadence.
+describe("refused-client logging", () => {
+  function captureLogs() {
     const records: Array<Record<string, unknown>> = [];
     const spy = vi.spyOn(console, "error").mockImplementation((line) => {
       records.push(JSON.parse(String(line)));
     });
     setLogLevel("info");
+    return {
+      records,
+      restore: () => {
+        spy.mockRestore();
+        setLogLevel("silent");
+      },
+    };
+  }
+
+  it("names the 2025-era client it refused, and at which revision", async () => {
+    // When a host stops working after an upgrade, this is the record that
+    // says the host still speaks the old revision — `mcp.error` records the
+    // refusal but not who sent it.
+    const { records, restore } = captureLogs();
     try {
-      await handler.fetch(post(initializeBody(), authorized()));
+      await handler.fetch(
+        post(
+          legacyInitializeBody(),
+          authorized({ "user-agent": "legacy/0.9" }),
+        ),
+      );
     } finally {
-      spy.mockRestore();
-      setLogLevel("silent");
+      restore();
     }
     expect(
-      records.find((entry) => entry.event === "mcp.initialize"),
+      records.find((entry) => entry.event === "mcp.legacy_refused"),
     ).toMatchObject({
-      client: "test",
-      clientVersion: "1.0",
+      client: "legacy-host",
+      clientVersion: "0.9",
       protocolVersion: "2025-06-18",
+      userAgent: "legacy/0.9",
     });
+    // The SDK's own record of the same refusal, through `onerror`.
+    expect(
+      String(records.find((entry) => entry.event === "mcp.error")?.reason),
+    ).toContain("2025-era");
   });
 
-  it("still records a handshake whose params carry no client identity", async () => {
+  it("still records an initialize whose params carry no client identity", async () => {
     // clientInfo is the client's own claim; a broken client that omits it
     // must not crash the log line that exists to diagnose broken clients.
-    const records: Array<Record<string, unknown>> = [];
-    const spy = vi.spyOn(console, "error").mockImplementation((line) => {
-      records.push(JSON.parse(String(line)));
-    });
-    setLogLevel("info");
+    const { records, restore } = captureLogs();
     try {
       await handler.fetch(
         post(
@@ -441,12 +547,43 @@ describe("initialize logging", () => {
         ),
       );
     } finally {
-      spy.mockRestore();
-      setLogLevel("silent");
+      restore();
     }
     expect(
-      records.find((entry) => entry.event === "mcp.initialize"),
+      records.find((entry) => entry.event === "mcp.legacy_refused"),
     ).toBeTruthy();
+  });
+
+  it("names no client for a 2025-era request that is not an initialize", async () => {
+    // Only `initialize` carries the client's identity in the old revision.
+    const { records, restore } = captureLogs();
+    try {
+      await handler.fetch(
+        post(
+          JSON.stringify({ id: 1, jsonrpc: "2.0", method: "tools/list" }),
+          authorized(),
+        ),
+      );
+    } finally {
+      restore();
+    }
+    expect(
+      records.find((entry) => entry.event === "mcp.legacy_refused"),
+    ).toBeUndefined();
+  });
+
+  it("names no client for a 2026-07-28 request", async () => {
+    // Classified by the SDK's own routing predicate, so a modern request that
+    // happens to name `initialize` is not reported as a refused legacy one.
+    const { records, restore } = captureLogs();
+    try {
+      await handler.fetch(rpc("initialize", {}, authorized()));
+    } finally {
+      restore();
+    }
+    expect(
+      records.find((entry) => entry.event === "mcp.legacy_refused"),
+    ).toBeUndefined();
   });
 
   it("passes a JSON body that is not an object through without logging", async () => {
@@ -470,7 +607,7 @@ describe("rejection logging", () => {
     setLogLevel("warn");
     try {
       await handler.fetch(
-        post(initializeBody(), { origin: "https://evil.test" }),
+        rpc("tools/list", {}, { origin: "https://evil.test" }),
       );
     } finally {
       spy.mockRestore();
@@ -486,10 +623,10 @@ describe("rejection logging", () => {
 
 describe("shutdown", () => {
   it("resolves with nothing in flight", async () => {
-    // There are no sessions to drain any more; close aborts in-flight
-    // exchanges and resolves.
+    // There are no sessions to drain; close aborts in-flight exchanges and
+    // resolves.
     await handler
-      .fetch(post(initializeBody(), authorized()))
+      .fetch(rpc("tools/list", {}, authorized()))
       .then((response) => response.text());
     await expect(handler.shutdown()).resolves.toBeUndefined();
   });
@@ -573,7 +710,7 @@ describe("OAuth", () => {
     it("is a 401 carrying a pointer to the metadata", async () => {
       // Claude does not honour a `WWW-Authenticate` on a 200, and with no
       // pointer it never learns where the authorization server is.
-      const response = await oauthHandler.fetch(post(initializeBody()));
+      const response = await oauthHandler.fetch(rpc("tools/list"));
       expect(response.status).toBe(401);
       const challenge = response.headers.get("WWW-Authenticate") ?? "";
       expect(challenge).toContain(
@@ -597,7 +734,7 @@ describe("OAuth", () => {
         "access-token",
       );
       const response = await oauthHandler.fetch(
-        post(initializeBody(), { authorization: `Bearer ${foreign}` }),
+        rpc("tools/list", {}, { authorization: `Bearer ${foreign}` }),
       );
       expect(response.status).toBe(401);
     });
@@ -613,9 +750,9 @@ describe("OAuth", () => {
         });
       setLogLevel("warn");
       try {
-        await oauthHandler.fetch(post(initializeBody()));
+        await oauthHandler.fetch(rpc("tools/list"));
         await oauthHandler.fetch(
-          post(initializeBody(), { authorization: "Bearer nonsense" }),
+          rpc("tools/list", {}, { authorization: "Bearer nonsense" }),
         );
       } finally {
         setLogLevel("silent");
@@ -640,17 +777,9 @@ describe("OAuth", () => {
 
   describe("the scope step-up", () => {
     async function callTool(name: string, scope: string): Promise<Response> {
-      // No handshake: stateless legacy serving answers each POST alone.
+      // No handshake: every 2026-07-28 request stands alone.
       return oauthHandler.fetch(
-        post(
-          JSON.stringify({
-            id: 2,
-            jsonrpc: "2.0",
-            method: "tools/call",
-            params: { arguments: {}, name },
-          }),
-          bearer(scope),
-        ),
+        rpc("tools/call", { arguments: {}, name }, bearer(scope)),
       );
     }
 
@@ -686,9 +815,9 @@ describe("OAuth", () => {
       );
       resetClient();
 
-      await oauthHandler.fetch(post(initializeBody()));
+      await oauthHandler.fetch(rpc("tools/list"));
       await oauthHandler.fetch(
-        post(initializeBody(), { authorization: "Bearer nonsense" }),
+        rpc("tools/list", {}, { authorization: "Bearer nonsense" }),
       );
       const refused = await callTool("select_profile", "espresso:read");
 
@@ -730,24 +859,17 @@ describe("OAuth", () => {
       resetClient();
 
       const response = await oauthHandler.fetch(
-        post(
-          JSON.stringify({
-            id: 2,
-            jsonrpc: "2.0",
-            method: "tools/call",
-            params: {
-              arguments: { profile_id: "zer0" },
-              name: "select_profile",
-            },
-          }),
+        rpc(
+          "tools/call",
+          { arguments: { profile_id: "zer0" }, name: "select_profile" },
           bearer("espresso:read espresso:write"),
         ),
       );
 
       expect(response.status).toBe(200);
       // The body has to be read before the side effect is asserted: the
-      // transport answers on an SSE stream, so the handler has not necessarily
-      // run to completion until the stream is drained.
+      // response may be a stream, so the handler has not necessarily run to
+      // completion until it is drained.
       const result = await readResult(response);
       expect(result.isError).toBeFalsy();
       expect(selected).toEqual(["15"]);
