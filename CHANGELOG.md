@@ -1,5 +1,16 @@
 # Changelog
 
+## [5.0.0](https://github.com/ljcl/gaggiuino-mcp/compare/v4.0.1...v5.0.0) (2026-09-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* serve only the 2026-07-28 stateless MCP revision ([#223](https://github.com/ljcl/gaggiuino-mcp/issues/223))
+
+### Code Refactoring
+
+* serve only the 2026-07-28 stateless MCP revision ([#223](https://github.com/ljcl/gaggiuino-mcp/issues/223)) ([4bb2e69](https://github.com/ljcl/gaggiuino-mcp/commit/4bb2e69971185bb723ec1bb2241e9334a1e929fa))
+
 ## [4.0.1](https://github.com/ljcl/gaggiuino-mcp/compare/v4.0.0...v4.0.1) (2026-09-26)
 
 
