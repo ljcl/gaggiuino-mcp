@@ -1,7 +1,10 @@
 name: CodeQL
 
-# Static analysis for the TypeScript workspace. Alerts land in the Security
-# tab; this is a signal, not a merge gate.
+# Static analysis for the TypeScript workspace and for the workflows
+# themselves. Alerts land in the Security tab; this is a signal, not a merge
+# gate. The `actions` language is what flags a privileged pull_request_target
+# job checking out and running PR code — the shape dependabot-autofix.yml is
+# split into two jobs to avoid.
 
 on:
   push:
@@ -22,6 +25,10 @@ jobs:
   analyze:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript, actions]
     permissions:
       contents: read
       security-events: write
@@ -35,9 +42,9 @@ jobs:
 
       - uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
-          languages: javascript-typescript
+          languages: ${{ matrix.language }}
           build-mode: none
 
       - uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
-          category: "/language:javascript-typescript"
+          category: "/language:${{ matrix.language }}"
