@@ -27,16 +27,18 @@ permissions:
   contents: read
 
 jobs:
-  deploy:
+  # Two jobs, the shape GitHub's own Pages examples use, because the deploy
+  # credential is worth more than the site. `id-token: write` mints a GitHub
+  # OIDC token, and the MCP registry accepts one from ANY of the owner's
+  # repositories as the right to publish `io.github.ljcl/*` — so a job that
+  # also ran `bun install` and a Storybook build would hand that right to every
+  # package in the tree. `build` runs all the third-party code with a read-only
+  # token; `deploy` runs only GitHub's own Pages actions.
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -47,11 +49,22 @@ jobs:
       - name: Build Storybook
         run: bun run build-storybook
 
-      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
-
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: apps/storybook/storybook-static
+
+  deploy:
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 
       - id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

@@ -1312,6 +1312,33 @@ bun binary directly (it is the image's ENTRYPOINT) as above.
   entry stops applying and the run goes red again, so the list cannot grow into the standing
   failure it exists to prevent.
 
+### A job that holds a write credential runs no dependency code
+
+No job that references `secrets.*`, requests `id-token: write`, or holds a write permission
+may run `bun`, `bunx`, `node`, or a package script. The unit of isolation is the **job**, not
+the step: a job's secrets reach the runner at job start, every step has passwordless `sudo`,
+and a process an earlier step left running outlives it — so "the token is only exposed to the
+last step" is not a boundary.
+
+Two workflows are split for this, and each split names what it protects:
+
+- **`dependabot-autofix.yml`** — `fix` runs `bun install` and `lint:fix` on the bumped
+  versions with a read-only token and uploads a patch. `push` holds `DEPENDABOT_PAT` (the
+  owner's), checks the patch as data (modifications only; `bun.lock` and formatted source
+  only; never `.github/**`, a manifest, or tool config), applies it with `git`, and pushes
+  through a credential helper so the token is never on a command line. `fix` also runs
+  `setup-bun` with `no-cache`: a `pull_request_target` run saves caches into main's scope.
+- **`storybook.yml`** — `build` runs the install and the Storybook build; `deploy` runs only
+  GitHub's Pages actions. `id-token: write` mints an OIDC token the MCP registry accepts, from
+  any of the owner's repositories, as the right to publish `io.github.ljcl/*`.
+
+`docker.yml`'s build legs hold `packages: write` and do install dependencies, but only inside
+BuildKit `RUN` steps, which see none of the runner's environment, files, or login. That is the
+exception the rule allows, and a `run: bun ...` step added to those legs would break it.
+
+`codeql.yml` analyses the `actions` language too, which flags a privileged checkout of PR code
+statically.
+
 ### Bundle size budget
 
 `scripts/bundle-size.ts` asserts raw and gzip ceilings on

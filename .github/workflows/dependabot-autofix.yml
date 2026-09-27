@@ -1,24 +1,31 @@
 name: Dependabot autofix
 
 # Dependabot bumps package.json but cannot fix the collateral damage a bump
-# causes elsewhere in the repo. Without this job its PRs would fail on:
+# causes elsewhere in the repo. Without this workflow its PRs would fail on:
 #   - bun.lock drift: Dependabot's npm ecosystem does not reliably update
 #     Bun's text lockfile in a workspaces monorepo, so `bun install
 #     --frozen-lockfile` in the setup composite fails (dependabot-core#14223).
 #   - formatter bumps: a new Biome version can format existing code
 #     differently, so `bun run lint` fails on files the bump never touched.
-# This job regenerates bun.lock, applies formatter fixes, and pushes any
-# resulting fixup commit back to the PR branch so the bump lands green.
+# It regenerates bun.lock, applies formatter fixes, and pushes any resulting
+# fixup commit back to the PR branch so the bump lands green.
 #
 # Runs on pull_request_target because Dependabot PRs get a read-only token on
-# the plain pull_request event and so cannot push. `bun run lint:fix` executes
-# a dependency binary (Biome), so the privileged context is locked down:
-#   - the job only runs for dependabot[bot] PRs from THIS repo — the actor
-#     check alone is spoofable by enabling Dependabot on a fork, the
-#     head-repo check closes that hole;
-#   - checkout does not persist credentials, and the push token is exposed
-#     only to the final push step, after all dependency code has run;
-#   - bun does not run lifecycle scripts for untrusted dependencies.
+# the plain pull_request event and so cannot push. That context is privileged,
+# and `bun install` / `bun run lint:fix` execute code from the very versions
+# the PR is bumping, so the work is split across two jobs:
+#   - `fix` runs the dependency code and holds nothing worth stealing: a
+#     read-only token and no secret references. A job's secrets reach the
+#     runner at job start, and every step has passwordless sudo, so "the token
+#     is only exposed to the last step" is not a boundary inside one job — a
+#     separate job on a separate VM is.
+#   - `push` holds the write credential and runs no dependency code at all: no
+#     bun, no node, no package scripts. It reads the patch as data, refuses
+#     anything outside bun.lock and formatted source, and applies it with git.
+# Both jobs only run for PRs Dependabot opened, on an event Dependabot caused,
+# from THIS repo — the actor check alone is spoofable by enabling Dependabot
+# on a fork, the head-repo check closes that hole, and the author check keeps
+# a Dependabot-triggered event on someone else's PR out.
 
 on:
   pull_request_target:
@@ -32,19 +39,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  autofix:
+  fix:
     if: >-
       github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: write
+      contents: read
     steps:
-      - name: Checkout PR branch
+      - name: Checkout PR head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
       - name: Install Bun
@@ -53,16 +61,92 @@ jobs:
           # Single source of truth: the packageManager field in root
           # package.json (matches .github/actions/setup).
           bun-version-file: package.json
+          # A pull_request_target run saves caches into the base branch's
+          # scope, and this job runs the PR's dependency code before the post
+          # step would save the Bun executable — so a cached binary here is one
+          # that code had the chance to replace, restored later by main's jobs.
+          no-cache: true
 
       - name: Sync bun.lock and install dependencies
         run: bun install
 
       - name: Apply formatter fixes
         # `biome check --write` exits non-zero when unfixable diagnostics
-        # remain; commit whatever it DID fix and let CI report the rest.
+        # remain; keep whatever it DID fix and let CI report the rest.
         run: bun run lint:fix || true
 
+      - name: Export the fix as a patch
+        run: |
+          git add -A
+          git diff --cached > "$RUNNER_TEMP/autofix.patch"
+          git diff --cached --stat
+
+      - name: Upload patch
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: autofix-patch
+          path: ${{ runner.temp }}/autofix.patch
+          if-no-files-found: error
+          retention-days: 1
+
+  push:
+    needs: [fix]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Download patch
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: autofix-patch
+          path: ${{ runner.temp }}
+
+      # The patch was produced by code this workflow does not trust, so it is
+      # checked as data before anything applies it. A lockfile sync and a
+      # formatter only ever modify existing files: any new, deleted, renamed,
+      # re-moded or binary entry is refused outright, and so is any path
+      # outside bun.lock and formatted source. Some paths are refused by name
+      # even though Biome formats their file type, because they are what a
+      # hostile patch would want: .github/** runs with this repo's
+      # credentials, package.json decides what the next install executes, and
+      # .claude/, .mcp.json and .vscode/ configure tools that run commands on
+      # the owner's machine.
+      - name: Check the patch touches only bun.lock and formatted source
+        id: check
+        env:
+          PATCH: ${{ runner.temp }}/autofix.patch
+        run: |
+          set -euo pipefail
+          if [ ! -s "$PATCH" ]; then
+            echo "Lockfile and formatting already clean — nothing to do."
+            echo "empty=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if grep -Eq '^(new file mode|deleted file mode|old mode|new mode|rename from|copy from|similarity index|GIT binary patch|Binary files)' "$PATCH"; then
+            echo "::error::Refusing the autofix patch: it adds, deletes, renames, re-modes or binary-patches a file."
+            exit 1
+          fi
+          bad=0
+          while IFS= read -r path; do
+            case "$path" in
+              *' => '*|.github/*|.claude/*|.agents/*|.vscode/*|.mcp.json|*package.json|.npmrc|bunfig.toml)
+                echo "::error::Refusing the autofix patch: it touches $path." ; bad=1 ;;
+              bun.lock|*.ts|*.tsx|*.js|*.mjs|*.cjs|*.css|*.json|*.jsonc) ;;
+              *)
+                echo "::error::Refusing the autofix patch: $path is neither bun.lock nor formatted source." ; bad=1 ;;
+            esac
+          done < <(git apply --numstat "$PATCH" | cut -f3)
+          exit "$bad"
+
       - name: Commit and push fixes
+        if: steps.check.outputs.empty != 'true'
         env:
           # A PAT (or app token) is needed for the push to re-trigger the
           # required CI checks — GITHUB_TOKEN pushes deliberately do not.
@@ -70,13 +154,17 @@ jobs:
           # re-run CI on its own (a manual re-run or re-push is then needed).
           PUSH_TOKEN: ${{ secrets.DEPENDABOT_PAT || secrets.GITHUB_TOKEN }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PATCH: ${{ runner.temp }}/autofix.patch
         run: |
-          git add -A
-          if git diff --cached --quiet; then
-            echo "Lockfile and formatting already clean — nothing to do."
-            exit 0
-          fi
+          set -euo pipefail
+          git apply --index "$PATCH"
           git config user.name 'dependabot[bot]'
           git config user.email '49699333+dependabot[bot]@users.noreply.github.com'
           git commit -m 'chore(deps): sync bun.lock and formatting with the bump'
-          git push "https://x-access-token:${PUSH_TOKEN}@github.com/${{ github.repository }}.git" HEAD:"$HEAD_REF"
+          # The helper reads the token from the environment when git asks for
+          # it, so it never appears in a command line (and so never in
+          # /proc/*/cmdline) the way a token-in-URL push does. The single
+          # quotes are the point: git stores the reference, not the value.
+          # shellcheck disable=SC2016
+          git config credential.helper '!f() { echo username=x-access-token; echo "password=${PUSH_TOKEN}"; }; f'
+          git push origin "HEAD:refs/heads/${HEAD_REF}"
