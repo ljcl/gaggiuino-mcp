@@ -12,7 +12,7 @@ A Remote [MCP](https://modelcontextprotocol.io) server for integrating a [Gaggiu
 - `list_recent_shots` - The last few shots summarised, for trends over a session
 - `get_shot_data` - Structured shot summary with metrics
 - `get_shot_raw_data` - Complete time-series data
-- `view_shot_graph` - Interactive shot graph rendered in MCP-compatible hosts (pressure, flow, weight over time with target overlays and optional shot comparison)
+- `view_shot_graph` - Interactive shot graph, shown in hosts that support MCP Apps (other hosts get the text summary only) (pressure, flow, weight over time with target overlays and optional shot comparison)
 
 **Profiles and Settings**
 - `list_profiles` - Profiles on the machine, merged with this server's documentation

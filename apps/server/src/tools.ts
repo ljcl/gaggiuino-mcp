@@ -1582,9 +1582,16 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           await summarizeShot(input.compare_shot_id),
         );
       }
+      // Never "rendered above". The chart is a `ui://` resource for the host to
+      // display, not content the model receives, and a host without MCP Apps
+      // support shows nothing — so a claimed render has the model pointing the
+      // user at a chart that is not on their screen. The envelope does carry
+      // the host's declared UI capability, but gating the wording on it waits
+      // on evidence of which hosts declare it: one that renders without
+      // declaring would then be told, wrongly, that nothing rendered.
       parts.push(
         "",
-        `[Interactive shot graph rendered above${input.compare_shot_id !== undefined ? " with comparison overlay" : ""}]`,
+        `[An interactive chart of this shot${input.compare_shot_id !== undefined ? ", with the comparison overlaid," : ""} is attached for hosts that display MCP Apps. This server cannot see whether this host displayed it: if the user says there is no chart, work from the summary above and do not refer them to one.]`,
       );
       return { text: parts.join("\n") };
     },

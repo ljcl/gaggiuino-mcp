@@ -1,5 +1,7 @@
 import { type Tool } from "@modelcontextprotocol/server";
+import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mockShotData } from "./__fixtures__/api-responses";
 import { createFetchHandler, type FetchHandler } from "./http";
 import { setLogLevel } from "./logging";
 import { type SecurityConfig } from "./mcpAuth";
@@ -8,6 +10,7 @@ import { TEST_OAUTH_CONFIG } from "./oauth/__fixtures__";
 import { signToken } from "./oauth/tokens";
 import { advertisedPrompts } from "./prompts";
 import { SERVER_CAPABILITIES, SERVER_INSTRUCTIONS, TOOLS } from "./server";
+import { mockServer } from "./test-setup";
 import { TOOLS_BY_NAME } from "./tools";
 import { SERVER_INFO, SERVER_NAME, SERVER_VERSION } from "./version";
 
@@ -483,6 +486,52 @@ describe("tools/call", () => {
     expect((result._meta as Record<string, unknown>)[META_SERVER_INFO]).toEqual(
       SERVER_INFO,
     );
+  });
+
+  it("words the shot graph the same whether or not the host declares MCP Apps", async () => {
+    // The envelope carries the declared UI capability, but the result must
+    // not claim a render on either path until there is evidence of which
+    // hosts declare it: a host that renders without declaring would otherwise
+    // be told nothing was drawn.
+    mockServer.use(
+      http.get("http://gaggiuino.local/api/shots/1706547890", () =>
+        HttpResponse.json([mockShotData]),
+      ),
+    );
+    const params = {
+      arguments: { shot_id: "1706547890" },
+      name: "view_shot_graph",
+    };
+    const withUi = modernBody("tools/call", params, {
+      meta: {
+        [META_CAPABILITIES]: {
+          extensions: {
+            "io.modelcontextprotocol/ui": {
+              mimeTypes: ["text/html;profile=mcp-app"],
+            },
+          },
+        },
+        [META_VERSION]: MODERN_VERSION,
+        "io.modelcontextprotocol/clientInfo": {
+          name: "apps-host",
+          version: "1",
+        },
+      },
+    });
+    const texts: string[] = [];
+    for (const body of [modernBody("tools/call", params), withUi]) {
+      const result = await readResult(
+        await post(
+          body,
+          modernHeaders("tools/call", { name: "view_shot_graph" }),
+        ),
+      );
+      const content = result.content as Array<{ text: string }>;
+      texts.push(content[0]?.text ?? "");
+    }
+    expect(texts[0]).toBe(texts[1]);
+    expect(texts[0]).not.toMatch(/rendered/i);
+    expect(texts[0]).toContain("attached for hosts that display MCP Apps");
   });
 
   it("returns an unknown tool as an isError result, not a JSON-RPC error", async () => {

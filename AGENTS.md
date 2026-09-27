@@ -743,6 +743,14 @@ The `view_shot_graph` tool renders an interactive Recharts chart in MCP-compatib
 - Bundled as single HTML file via `vite-plugin-singlefile` (~1MB)
 - Served as MCP resource at `ui://shot-graph/app.html`
 - Calls `get_shot_raw_json` (app-only visibility) to fetch data after render
+- The tool's text never claims the chart was rendered. The chart is a `ui://`
+  resource the host may not display, and "rendered above" had the model point
+  a user of a host without MCP Apps at a chart that was not there. The request
+  envelope does carry the host's declared UI capability
+  (`io.modelcontextprotocol/clientCapabilities` → `extensions`
+  → `io.modelcontextprotocol/ui`), but gating the wording on it waits on
+  evidence of which hosts declare it — a host that renders without declaring
+  would be told nothing was drawn. `tools/list` never varies by client.
 - Supports shot comparison overlay; "Compare previous" calls
   `get_previous_shot_json`, which resolves the real previous id server-side
   rather than subtracting one from the current one

@@ -30,7 +30,7 @@ espresso_shot_analyst:
     - **Peak pressure** — the maximum pressure point, labeled with the value (e.g. "9.3 bar")
     - **First drip** — when output weight first exceeds 0.5g, marking the transition from fill to extraction
 
-    When comparing two shots, both sets of annotations are shown (primary as solid dots, comparison as faded open circles on the opposite side) so differences in timing and pressure are immediately visible. You don't need to describe these annotations — the user can see them. Instead, reference them in your analysis (e.g. "peak pressure shifted earlier by 2s compared to the previous shot").
+    When comparing two shots, both sets of annotations are shown (primary as solid dots, comparison as faded open circles on the opposite side) so differences in timing and pressure are immediately visible. When the chart is displayed you don't need to describe these annotations — the user can see them. Instead, reference them in your analysis (e.g. "peak pressure shifted earlier by 2s compared to the previous shot"). Not every host displays the chart; if the user says they cannot see one, describe the shot from the summary `view_shot_graph` returned instead of referring to it.
 
     ## Profile Selection
 

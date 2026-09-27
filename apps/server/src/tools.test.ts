@@ -295,6 +295,18 @@ describe("tool dispatch", () => {
       expect(result.text).toContain("LMD 9-8 v1.5 (milk)");
     });
 
+    it("never claims the chart was rendered", async () => {
+      // The chart is a ui:// resource the host may or may not display. A
+      // claimed render has the model pointing the user at a chart that is not
+      // on the screen of a host without MCP Apps support.
+      const result = await handleToolCall("view_shot_graph", {
+        shot_id: "1706547890",
+      });
+      expect(result.text).not.toMatch(/rendered/i);
+      expect(result.text).toContain("attached for hosts that display MCP Apps");
+      expect(result.text).toContain("work from the summary above");
+    });
+
     it("returns the summary as structured content with units normalized", async () => {
       const result = await handleToolCall("get_shot_data", {
         shot_id: "1706547890",
@@ -1959,7 +1971,7 @@ describe("tool dispatch", () => {
       });
       expect(result.text).toContain("Comparison shot:");
       expect(result.text).toContain("Time Stop Profile");
-      expect(result.text).toContain("with comparison overlay");
+      expect(result.text).toContain("with the comparison overlaid");
     });
 
     it("costs one upstream fetch per shot, not one per caller", async () => {
