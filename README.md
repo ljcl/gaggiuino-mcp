@@ -282,6 +282,8 @@ volumes:
 
 From a repo checkout, copy each `*.example-local.yaml` to `*.local.yaml` alongside it in `apps/server/src/data/` instead - they are gitignored and picked up automatically.
 
+A missing override file is fine. An override file that is present but cannot be read (for example, a bind mount the container's user, UID 65534, has no read access to), is not valid YAML, or has the wrong shape stops the server at startup. The log line is `config.invalid`, and it names the file and the bad key. The server does not ignore a broken override and continue without it.
+
 ## Connecting to AI Tools
 
 Many AI tools (like Claude Desktop) route MCP requests through their own servers, not from your local machine. This means your MCP server needs to be accessible via a public HTTPS URL.

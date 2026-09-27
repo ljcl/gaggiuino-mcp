@@ -1063,6 +1063,18 @@ sides of every branch are covered by `loader.test.ts` regardless of what is on d
 way: a test that writes a real `*.local.yaml` into `src/data/` would clobber a contributor's own
 equipment configuration and put the disk back in the coverage number.
 
+**A broken override stops the server; it is never ignored.** `readLocalOverrides` returns
+`undefined` for `ENOENT` alone — any other read failure, and any YAML parse failure, is a
+`ConfigError` naming the file — and both merges turn a schema failure into a `ConfigError`
+naming the file and each bad key. An empty or all-comment file parses to `null` and counts as
+no overrides. `index.ts` calls `loadProfiles()` and `loadPrompts()` inside its `ConfigError`
+guard, so a bad override exits with `config.invalid` before the port binds. The two failures
+this replaced were both silent at startup: a syntax error dropped the user's equipment context
+with nothing logged, and a wrong shape threw a raw `ZodError` on every request — `prompts/list`
+included, which is the mid-discovery JSON-RPC error that can make a host abandon discovery.
+Same stance as a leftover `MCP_OAUTH_*` variable: a deployment holding a belief about this
+server that is false should find out at startup.
+
 `packages/ui`, `packages/design-system`, and `packages/shot-graph` are **intentionally
 unthresholded**. Their coverage is the story render path measured by `bun run
 test:stories:coverage` (see Storybook below), not per-package unit coverage. Do not "fix" this by

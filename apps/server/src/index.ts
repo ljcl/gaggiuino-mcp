@@ -1,5 +1,6 @@
 import { ConfigError, loadServerConfig } from "./config";
 import { createFetchHandler } from "./http";
+import { loadProfiles, loadPrompts } from "./loader";
 import { logger } from "./logging";
 import { describeSecurity, loadSecurityConfig } from "./mcpAuth";
 import { SERVER_VERSION } from "./version";
@@ -19,6 +20,12 @@ try {
   // checked against, so getting it wrong fails silently — discovery succeeds, a
   // token is issued, and then every request 401s.
   security = loadSecurityConfig();
+  // The data files too, so a broken *.local.yaml stops the server here rather
+  // than being ignored or failing every request that reads it — prompts/list
+  // included, which can make a host abandon discovery altogether. The README
+  // says overrides merge "at startup"; this is what makes that true.
+  loadProfiles();
+  loadPrompts();
 } catch (error) {
   if (!(error instanceof ConfigError)) throw error;
   // Fail before binding a port, and name the variable. Unvalidated, a bad PORT
