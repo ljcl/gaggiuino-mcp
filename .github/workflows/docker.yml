@@ -63,6 +63,7 @@ jobs:
               - "turbo.json"
               - ".dockerignore"
               - ".github/workflows/docker.yml"
+              - "scripts/image-smoke.sh"
 
   build:
     needs: [changes]
@@ -110,6 +111,46 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Start the image before anything publishes it. The build below proves
+      # the Dockerfile builds; only running it proves the runner stage's COPY
+      # set, the .dockerignore exclusions and the HEALTHCHECK work, and a
+      # failing leg keeps the merge job from tagging anything. Loaded without
+      # attestations (a local image store cannot hold them); the push build
+      # then reuses this builder's layer cache.
+      - name: Build for the smoke test
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: apps/server/Dockerfile
+          platforms: ${{ matrix.platform }}
+          load: true
+          tags: gaggiuino-mcp:smoke
+          sbom: false
+          provenance: false
+          cache-from: type=gha,scope=${{ steps.prep.outputs.pair }}
+
+      # The script comes from the workflow's own commit, not the built ref: a
+      # backfill dispatch builds an old release tag that predates it. The tool
+      # contract it compares against still comes from the built ref, since that
+      # is what the image was built from. Removed straight after, so the push
+      # build below sees the same context the smoke build did.
+      - name: Checkout the smoke test
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .smoke
+          sparse-checkout: scripts/image-smoke.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Smoke test the image
+        env:
+          TOOL_CONTRACT: apps/server/src/tool-contract.json
+        run: |
+          cp .smoke/scripts/image-smoke.sh "$RUNNER_TEMP/image-smoke.sh"
+          rm -rf .smoke
+          "$RUNNER_TEMP/image-smoke.sh" gaggiuino-mcp:smoke
 
       - name: Build (push by digest on non-PR)
         id: build

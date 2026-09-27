@@ -10,6 +10,16 @@ runs:
         # package.json, so CI follows Dependabot's bumps automatically.
         bun-version-file: package.json
 
+    # Node runs everything whose bin says `#!/usr/bin/env node` (vitest,
+    # storybook, playwright) — including the coverage run, since V8 coverage
+    # works only on Node. Taken from .tool-versions so CI measures on the same
+    # major a developer does; the runner image's own Node is a different one,
+    # and the coverage ratchet is floored locally and enforced here.
+    - name: Install Node
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version-file: .tool-versions
+
     - name: Restore Turborepo cache
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
