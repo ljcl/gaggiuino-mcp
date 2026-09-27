@@ -632,19 +632,51 @@ describe("Prompts", () => {
     // A prompt taking no arguments omits the key rather than advertising [].
     expect(byName.get("espresso_shot_analyst")?.arguments).toBeUndefined();
 
-    const args = byName.get("dial_in_new_bag")?.arguments ?? [];
-    expect(
-      args
-        .map((arg) => [arg.name, arg.required])
-        .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
-    ).toEqual([
+    // The exact order, not a sorted copy: a host that binds arguments
+    // positionally gives the first token to the first argument advertised, so
+    // a required argument listed last cannot be supplied that way at all.
+    const order = (name: string) =>
+      (byName.get(name)?.arguments ?? []).map((arg) => [
+        arg.name,
+        arg.required,
+      ]);
+    expect(order("dial_in_new_bag")).toEqual([
       ["bean", true],
       ["dose_g", false],
       ["roast_level", false],
       ["target", false],
     ]);
-    for (const arg of args) {
-      expect(arg.description, arg.name).toBeTruthy();
+    expect(order("diagnose_last_shot")).toEqual([
+      ["taste", true],
+      ["changed", false],
+    ]);
+    expect(order("choose_profile")).toEqual([
+      ["roast_level", true],
+      ["drink", false],
+      ["notes", false],
+    ]);
+    for (const prompt of prompts) {
+      for (const arg of prompt.arguments ?? []) {
+        expect(arg.description, `${prompt.name}.${arg.name}`).toBeTruthy();
+      }
+    }
+  });
+
+  it("serves a single positional token to the required argument", async () => {
+    // What `/choose_profile light` does on a host that binds space-separated
+    // tokens in advertised order. Before the order was pinned, the token went
+    // to `drink` and the request failed with "roast_level: missing".
+    const { prompts } = await client.listPrompts();
+    for (const [name, token] of [
+      ["choose_profile", "light"],
+      ["diagnose_last_shot", "sour"],
+      ["dial_in_new_bag", "Ethiopia Guji"],
+    ] as const) {
+      const [first] =
+        prompts.find((prompt) => prompt.name === name)?.arguments ?? [];
+      expect(first?.required, name).toBe(true);
+      const text = await promptText(name, { [String(first?.name)]: token });
+      expect(text, name).toContain(token);
     }
   });
 

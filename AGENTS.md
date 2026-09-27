@@ -586,7 +586,7 @@ data for. An empty list is a valid answer; `-32601` is not.
 `prompts.ts` mirrors the tool contract: one `definePrompt(...)` per prompt, and
 `tryRenderPrompt` is the only place a prompt is rendered — it `safeParse`s the
 arguments before the render function runs, so a render function receives typed
-values and never re-checks presence. Four things follow from that shape.
+values and never re-checks presence. Five things follow from that shape.
 
 - **The advertised `arguments` array is generated, never hand-written.**
   `promptArguments` runs the same `z.toJSONSchema` path the tool schemas use over
@@ -611,6 +611,14 @@ values and never re-checks presence. Four things follow from that shape.
   rather than vanishing ("Dose: not stated — use the recommended dose for the
   profile you pick"), because a dropped line leaves the model free to invent a
   number a tool could have told it.
+- **Required arguments are advertised first.** Claude Code binds prompt
+  arguments positionally — `/choose_profile light` gives `light` to the first
+  argument advertised — and the schema's key order cannot carry that, because
+  Biome keeps object keys sorted. That put `roast_level` behind `drink` and
+  `notes` and failed the obvious invocation with "roast_level: missing".
+  `promptArguments` sorts required-first (stably, so schema order holds within
+  each group), and `server.test.ts` asserts the exact order rather than a
+  sorted copy. `prompts/list` is not a grant key, so the order moves nothing.
 - **The workflow plans live in code, not `prompts.yaml`.** What they contain is a
   numbered plan naming *this server's own tools*, so a local override could point
   a step at a tool that does not exist — `prompts.test.ts` checks every backticked
