@@ -9,6 +9,7 @@ import {
   mockShotWithTimeStop,
 } from "./__fixtures__/api-responses";
 import { resetClient } from "./client";
+import { shapeDefinition } from "./profileDefinition";
 import { TEST_PASSPHRASE_HASH } from "./oauth/__fixtures__";
 import { handleToolCall } from "./server";
 import { mockServer } from "./test-setup";
@@ -940,6 +941,29 @@ describe("tool dispatch", () => {
 
       expect(result.isError).toBeFalsy();
       expect(received).toEqual(mockProfileDefinition);
+    });
+
+    it("accepts get_profile_info's definition of a profile with no recipe or global stops", async () => {
+      // The round trip above starts from the raw fixture; this one starts from
+      // what get_profile_info actually hands the model, where a missing
+      // section is an explicit null. Refusing that shape broke the documented
+      // get -> edit -> upload path for every profile without those sections.
+      const { globalStopConditions, recipe, ...bare } = mockProfileDefinition;
+      const definition = shapeDefinition(bare);
+      expect(definition).toMatchObject({
+        globalStopConditions: null,
+        recipe: null,
+      });
+
+      machineAccepts();
+      const result = await handleToolCall("upload_profile", {
+        profile: { ...definition, name: "18g Double v2" },
+      });
+
+      expect(result.isError).toBeFalsy();
+      // Absent, not null: the reference documents neither field as nullable,
+      // and absent is the form it reads as "none".
+      expect(received).toEqual({ ...bare, name: "18g Double v2" });
     });
 
     it("rejects the x10 wire format a model just read off a shot", async () => {

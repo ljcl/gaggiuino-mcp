@@ -515,8 +515,8 @@ const BrewRecipeInput = z.strictObject({
 });
 
 const ProfileUploadInput = z.strictObject({
-  globalStopConditions: GlobalStopConditionsInput.optional().describe(
-    "What ends the whole shot, whichever phase is running.",
+  globalStopConditions: GlobalStopConditionsInput.nullish().describe(
+    "What ends the whole shot, whichever phase is running. Null or absent when the profile has none.",
   ),
   name: z
     .string()
@@ -532,8 +532,8 @@ const ProfileUploadInput = z.strictObject({
     .describe(
       "The phases the shot runs, in order. The machine requires at least one.",
     ),
-  recipe: BrewRecipeInput.optional().describe(
-    "Dose and yield the profile is written for. Informational.",
+  recipe: BrewRecipeInput.nullish().describe(
+    "Dose and yield the profile is written for. Informational. Null or absent when the profile has none.",
   ),
   waterTemperature: z
     .number()
@@ -1038,6 +1038,27 @@ async function refuseTakenName(name: string): Promise<ErrorReply | undefined> {
   };
 }
 
+/**
+ * The upload body, with a `null` section dropped rather than sent.
+ *
+ * `null` is accepted for `recipe` and `globalStopConditions` because
+ * `get_profile_info`'s `definition` reports a missing section as an explicit
+ * `null` — and that field is this tool's documented input, so refusing its
+ * own shape broke the get → edit → upload workflow for every profile without a
+ * recipe or global stop conditions. It is not forwarded, because the reference
+ * documents neither field as nullable and fills a malformed field with a
+ * zero-value default: absent is the one form the machine is documented to read
+ * as "none".
+ */
+function withoutNullSections<
+  T extends { globalStopConditions?: unknown; recipe?: unknown },
+>(profile: T): T {
+  const body = { ...profile };
+  if (body.globalStopConditions === null) delete body.globalStopConditions;
+  if (body.recipe === null) delete body.recipe;
+  return body;
+}
+
 async function summarizeShot(shotId: string): Promise<string> {
   const shot = await getClient().getShotData(shotId);
   return formatShotSummary(generateShotSummary(shot));
@@ -1383,7 +1404,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
 
       let created: CreatedProfile;
       try {
-        created = await getClient().createProfile(input.profile);
+        created = await getClient().createProfile(
+          withoutNullSections(input.profile),
+        );
       } catch (error) {
         const failure = describeUploadFailure(error, input.profile.name);
         if (failure === undefined) throw error;

@@ -1108,37 +1108,44 @@
           "description": "The profile to save. Do not include an id — the machine assigns a fresh one and ignores any id sent, and passing one is rejected here so a copied profile cannot be mistaken for an edit of the original.",
           "properties": {
             "globalStopConditions": {
-              "additionalProperties": false,
-              "description": "What ends the whole shot, whichever phase is running.",
-              "properties": {
-                "switchToManuaFlowCtrl": {
-                  "description": "Switch to manual flow control instead of stopping. Spelled exactly as the firmware spells it, with one 'l' in 'Manua' — that misspelling is the machine's wire format, not a typo here.",
-                  "type": "boolean"
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "switchToManuaFlowCtrl": {
+                      "description": "Switch to manual flow control instead of stopping. Spelled exactly as the firmware spells it, with one 'l' in 'Manua' — that misspelling is the machine's wire format, not a typo here.",
+                      "type": "boolean"
+                    },
+                    "switchToManualPressureCtrl": {
+                      "description": "Switch to manual pressure control instead of stopping.",
+                      "type": "boolean"
+                    },
+                    "time": {
+                      "description": "Stop the shot after this long, in MILLISECONDS (40000 = 40 seconds).",
+                      "maximum": 600000,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "waterPumped": {
+                      "description": "Stop once this many millilitres have been pumped.",
+                      "maximum": 1000,
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "weight": {
+                      "description": "Stop once the scale reads this many grams — the usual way to end a shot on a machine with scales.",
+                      "maximum": 500,
+                      "minimum": 0,
+                      "type": "number"
+                    }
+                  },
+                  "type": "object"
                 },
-                "switchToManualPressureCtrl": {
-                  "description": "Switch to manual pressure control instead of stopping.",
-                  "type": "boolean"
-                },
-                "time": {
-                  "description": "Stop the shot after this long, in MILLISECONDS (40000 = 40 seconds).",
-                  "maximum": 600000,
-                  "minimum": 0,
-                  "type": "integer"
-                },
-                "waterPumped": {
-                  "description": "Stop once this many millilitres have been pumped.",
-                  "maximum": 1000,
-                  "minimum": 0,
-                  "type": "number"
-                },
-                "weight": {
-                  "description": "Stop once the scale reads this many grams — the usual way to end a shot on a machine with scales.",
-                  "maximum": 500,
-                  "minimum": 0,
-                  "type": "number"
+                {
+                  "type": "null"
                 }
-              },
-              "type": "object"
+              ],
+              "description": "What ends the whole shot, whichever phase is running. Null or absent when the profile has none."
             },
             "name": {
               "description": "Name the profile appears under on the machine. Give a copy a distinct name — the machine does not enforce unique names, and two profiles called the same thing are indistinguishable on its screen.",
@@ -1286,29 +1293,36 @@
               "type": "array"
             },
             "recipe": {
-              "additionalProperties": false,
-              "description": "Dose and yield the profile is written for. Informational.",
-              "properties": {
-                "coffeeIn": {
-                  "description": "Dry dose, in grams.",
-                  "maximum": 200,
-                  "minimum": 0,
-                  "type": "number"
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "coffeeIn": {
+                      "description": "Dry dose, in grams.",
+                      "maximum": 200,
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "coffeeOut": {
+                      "description": "Target yield, in grams.",
+                      "maximum": 500,
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "ratio": {
+                      "description": "Yield divided by dose; 2 means 1:2. Informational — the machine does not enforce it.",
+                      "maximum": 20,
+                      "minimum": 0,
+                      "type": "number"
+                    }
+                  },
+                  "type": "object"
                 },
-                "coffeeOut": {
-                  "description": "Target yield, in grams.",
-                  "maximum": 500,
-                  "minimum": 0,
-                  "type": "number"
-                },
-                "ratio": {
-                  "description": "Yield divided by dose; 2 means 1:2. Informational — the machine does not enforce it.",
-                  "maximum": 20,
-                  "minimum": 0,
-                  "type": "number"
+                {
+                  "type": "null"
                 }
-              },
-              "type": "object"
+              ],
+              "description": "Dose and yield the profile is written for. Informational. Null or absent when the profile has none."
             },
             "waterTemperature": {
               "description": "Brew temperature in degrees Celsius, e.g. 93. Real degrees — not the x10-scaled 930 a shot's temperature datapoint reports. Required here even though the machine would default it to 0, because a profile that brews at 0°C is not a profile.",

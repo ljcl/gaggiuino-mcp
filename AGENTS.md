@@ -467,6 +467,20 @@ Four things about it are load-bearing.
   five-millisecond ramp, which the machine accepts — the reference fills
   malformed fields with zero-value defaults rather than rejecting them. All the
   humanising happens in `formatProfileDefinition`, in the prose.
+
+  **So `upload_profile` accepts the definition's own `null`s.** `shapeDefinition`
+  reports a missing `recipe` or `globalStopConditions` as an explicit `null`,
+  and the upload schema used to declare both `.optional()` — which accepts
+  absent and refuses `null`, so the documented get → edit → upload path failed
+  for every profile without those sections. Both are `.nullish()` now, and
+  `withoutNullSections` drops a `null` before the request, because the
+  reference documents neither field as nullable and absent is the form it reads
+  as "none". This was chosen over making `definition` omit the field instead:
+  either one re-keys a grant, since the output schema requires all five
+  top-level fields, and re-keying a write tool that prompts anyway costs less
+  than re-keying a read the user has likely set to "always allow". The
+  round-trip test in `tools.test.ts` starts from `shapeDefinition`, not the raw
+  fixture, which is what the older one missed.
 - **The output schema is loose for the same reason the client boundary is.** A
   strict `z.object` emits `additionalProperties: false`, so a phase field a
   future firmware adds would be dropped from `definition` — and a model that
