@@ -1299,8 +1299,18 @@ bun binary directly (it is the image's ENTRYPOINT) as above.
   save on `main` pushes, the bundle size budget, and an informational knip JSON summary into the
   job summary.
 - **`audit`** — `bun audit --audit-level=high`. Advisory (`continue-on-error`) on PRs and `main`
-  pushes, since most findings are transitive deps with no local fix; hard-failing on the weekly
-  `schedule` trigger so new advisories still surface between PRs.
+  pushes; hard-failing on the weekly `schedule` trigger, where **`audit-issue`** opens (or
+  comments on) one "Weekly dependency audit is failing" issue and closes it when the run passes
+  again. That job holds `issues: write` and runs no dependency code.
+
+  **The scheduled run is only a signal while it is normally green.** It was red for eight weeks
+  straight, and four new advisories arrived without changing anything anyone could see — while
+  fixed versions sat inside the existing ranges the whole time. Nothing else lifts a transitive
+  pin in `bun.lock` (Dependabot does not maintain it, and a plain `bun install` keeps existing
+  pins), so the fix is `bun audit fix` and a committed lockfile. An advisory with no in-range fix
+  is accepted in `.github/audit-ignore.txt` with a reason and a **review date**; on that date the
+  entry stops applying and the run goes red again, so the list cannot grow into the standing
+  failure it exists to prevent.
 
 ### Bundle size budget
 
