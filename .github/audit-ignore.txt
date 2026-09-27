@@ -1,0 +1,12 @@
+# Advisories the `audit` job in ci.yml accepts, one per line:
+#
+#   GHSA-xxxx-xxxx-xxxx  YYYY-MM-DD  why it is accepted
+#
+# The date is a review date, not decoration: on and after it the entry stops
+# applying, the advisory fails the scheduled run again, and the tracking issue
+# reopens. Accepting an advisory is a decision with an expiry, so a list that
+# only grows cannot quietly turn the weekly gate back into a standing failure.
+#
+# Prefer `bun audit fix` (and committing bun.lock) over an entry here. Add one
+# only when no in-range fixed version exists, and say in the reason what would
+# let it be removed.
