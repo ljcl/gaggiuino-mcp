@@ -7,6 +7,13 @@ services:
     container_name: gaggiuino-mcp
     network_mode: host
     restart: unless-stopped
+    # The server persists nothing and needs no privilege: its code is
+    # root-owned and read-only to it, it binds an unprivileged port, and it
+    # never changes user. So the filesystem is read-only, every capability is
+    # dropped, and setuid binaries cannot raise it back.
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     env_file:
       # Put MCP_PUBLIC_URL, MCP_OAUTH_SECRET and MCP_OAUTH_PASSPHRASE_HASH here
       # before exposing this through a tunnel — without them /mcp is

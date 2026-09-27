@@ -42,6 +42,12 @@ story-shots/
 **/*.test.ts
 **/__fixtures__/
 apps/server/src/test-setup.ts
+# Imported only by tests and by the contract generator, which writes into src/
+# and so has nothing to do in a read-only image.
+apps/server/src/mcpTestClient.ts
+apps/server/src/toolContract.ts
+apps/server/src/tool-contract.json
+apps/server/scripts/generate-tool-contract.ts
 
 # Docs
 docs/

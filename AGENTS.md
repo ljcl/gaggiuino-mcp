@@ -1307,8 +1307,20 @@ instead:
 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 docker inspect --format '{{.State.Health.Status}}' gaggiuino-mcp   # -> healthy
 docker exec gaggiuino-mcp /usr/local/bin/bun --eval \
-  'fetch("http://localhost:8000/health").then(r=>console.log(r.status))'
+  'fetch("http://localhost:"+(process.env.PORT||"8000")+"/health").then(r=>console.log(r.status))'
 ```
+
+The image's own HEALTHCHECK reads `PORT` the same way. Under host networking,
+changing `PORT` is how a user avoids a clash, and a probe pinned to 8000 reported a
+container serving on another port as unhealthy.
+
+The runner's files are **root-owned** and the process runs as 65534, so it can
+read its code and cannot rewrite it; compose adds `read_only: true`,
+`cap_drop: [ALL]` and `no-new-privileges`. That holds because the server persists
+nothing to disk. If something ever needs a writable path, add a `tmpfs` for that
+path rather than relaxing either. `.dockerignore` also drops the test-only
+modules (`mcpTestClient.ts`, `toolContract.ts`, `tool-contract.json`) and the
+contract generator that imports them.
 
 The runner has no shell, so `docker exec ... /bin/sh` fails by design; exec the
 bun binary directly (it is the image's ENTRYPOINT) as above.
