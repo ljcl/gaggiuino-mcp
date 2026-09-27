@@ -19,7 +19,7 @@ import { logger } from "./logging";
 import { getAllProfilesText, getProfile } from "./profiles";
 import { advertisedPrompts, tryRenderPrompt } from "./prompts";
 import { TOOL_DEFINITIONS, TOOLS_BY_NAME, type ToolDefinition } from "./tools";
-import { SERVER_NAME, SERVER_VERSION } from "./version";
+import { SERVER_INFO } from "./version";
 
 /**
  * Resolved once at startup via the `@gaggiuino/shot-graph` package's `./app.html`
@@ -338,6 +338,26 @@ export async function readResource(
 }
 
 /**
+ * What a host with tool search on loads before any tool schema.
+ *
+ * Under deferred tool loading only tool *names* and these instructions reach
+ * the model at session start, and a name like `get_status` does not say it
+ * belongs to an espresso machine. So this says three things the names cannot:
+ * what the server is, where to start, and that an unreachable machine means
+ * "stop and ask" — every tool waits out the same timeout, so trying the next
+ * one only makes the user wait longer. Hosts truncate at 2,048 characters, and
+ * `modern.test.ts` holds it under that. It deliberately does not restate the
+ * dial-in guidance; it points at the tool that serves it.
+ */
+export const SERVER_INSTRUCTIONS = [
+  "This server reads one Gaggiuino, a modified Gaggia espresso machine, and its shot history, and can switch, save and delete its brew profiles.",
+  "For the shot just pulled, start with get_latest_shot_id (its id and outcome metrics), then get_shot_data for the phase breakdown. list_profiles shows what the machine holds.",
+  "Call get_dial_in_guidance before giving dial-in or profile advice: it carries the user's equipment and how to read a shot.",
+  "The machine is one ESP32 on Wi-Fi and is often switched off. If a tool says it cannot reach the machine, stop and tell the user rather than trying other tools, which will wait out the same timeout. get_dial_in_guidance and list_profiles still answer from bundled documentation.",
+  "select_profile, upload_profile and delete_profile change the machine: call them only when the user asks, after confirming with them.",
+].join(" ");
+
+/**
  * How long a client may cache the static surface (`server/discover` and the
  * four list/read methods, the 2026-07-28 revision's closed cacheable set).
  *
@@ -360,20 +380,18 @@ const STATIC_SURFACE_TTL_MS = 3_600_000;
  * surface once.
  */
 export function createServer(): Server {
-  const server = new Server(
-    { name: SERVER_NAME, version: SERVER_VERSION },
-    {
-      cacheHints: {
-        "prompts/list": { ttlMs: STATIC_SURFACE_TTL_MS },
-        "resources/list": { ttlMs: STATIC_SURFACE_TTL_MS },
-        "resources/read": { ttlMs: STATIC_SURFACE_TTL_MS },
-        "resources/templates/list": { ttlMs: STATIC_SURFACE_TTL_MS },
-        "server/discover": { ttlMs: STATIC_SURFACE_TTL_MS },
-        "tools/list": { ttlMs: STATIC_SURFACE_TTL_MS },
-      },
-      capabilities: SERVER_CAPABILITIES,
+  const server = new Server(SERVER_INFO, {
+    cacheHints: {
+      "prompts/list": { ttlMs: STATIC_SURFACE_TTL_MS },
+      "resources/list": { ttlMs: STATIC_SURFACE_TTL_MS },
+      "resources/read": { ttlMs: STATIC_SURFACE_TTL_MS },
+      "resources/templates/list": { ttlMs: STATIC_SURFACE_TTL_MS },
+      "server/discover": { ttlMs: STATIC_SURFACE_TTL_MS },
+      "tools/list": { ttlMs: STATIC_SURFACE_TTL_MS },
     },
-  );
+    capabilities: SERVER_CAPABILITIES,
+    instructions: SERVER_INSTRUCTIONS,
+  });
 
   // The SDK's result types spell out every reserved `_meta` envelope key,
   // which the generated JSON-schema tables here cannot satisfy structurally;

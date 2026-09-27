@@ -19,7 +19,7 @@ import {
   TOOL_CONTRACT_PATH,
 } from "./toolContract";
 import { TOOLS_BY_NAME } from "./tools";
-import { SERVER_NAME, SERVER_VERSION } from "./version";
+import { SERVER_INFO, SERVER_NAME, SERVER_VERSION } from "./version";
 
 /**
  * These tests drive the server over the wire — real 2026-07-28 `Request`s
@@ -264,7 +264,8 @@ describe("server/discover", () => {
   it("advertises the released version, not a hardcoded one", async () => {
     // Read back off the client, so this asserts what actually crossed the
     // wire rather than what the constant says.
-    expect(client.getServerVersion()).toEqual({
+    expect(client.getServerVersion()).toEqual(SERVER_INFO);
+    expect(client.getServerVersion()).toMatchObject({
       name: SERVER_NAME,
       version: SERVER_VERSION,
     });

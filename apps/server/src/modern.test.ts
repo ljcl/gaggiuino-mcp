@@ -7,8 +7,9 @@ import { PROTOCOL_VERSION } from "./mcpTestClient";
 import { TEST_OAUTH_CONFIG } from "./oauth/__fixtures__";
 import { signToken } from "./oauth/tokens";
 import { advertisedPrompts } from "./prompts";
-import { SERVER_CAPABILITIES, TOOLS } from "./server";
-import { SERVER_NAME, SERVER_VERSION } from "./version";
+import { SERVER_CAPABILITIES, SERVER_INSTRUCTIONS, TOOLS } from "./server";
+import { TOOLS_BY_NAME } from "./tools";
+import { SERVER_INFO, SERVER_NAME, SERVER_VERSION } from "./version";
 
 /**
  * The 2026-07-28 wire, driven through the real fetch handler like
@@ -376,8 +377,35 @@ describe("server/discover", () => {
     expect(result.ttlMs).toBeGreaterThan(0);
     expect(result.cacheScope).toBe("private");
     expect((result._meta as Record<string, unknown>)[META_SERVER_INFO]).toEqual(
-      { name: SERVER_NAME, version: SERVER_VERSION },
+      SERVER_INFO,
     );
+    expect(SERVER_INFO).toMatchObject({
+      name: SERVER_NAME,
+      title: expect.any(String),
+      version: SERVER_VERSION,
+      websiteUrl: expect.stringMatching(/^https:\/\//),
+    });
+  });
+
+  it("sends instructions a host with tool search can route on", async () => {
+    // Under deferred tool loading these and the tool names are all a model
+    // sees at session start, so they have to name the entry points and say
+    // what an unreachable machine means. Hosts cut them at 2,048 characters.
+    const result = await readResult(await call("server/discover"));
+    const instructions = String(result.instructions);
+    expect(instructions).toBe(SERVER_INSTRUCTIONS);
+    expect(instructions.length).toBeLessThanOrEqual(2048);
+    expect(instructions).toContain("get_latest_shot_id");
+    expect(instructions).toContain("get_dial_in_guidance");
+    expect(instructions).toMatch(/cannot reach the machine, stop/);
+  });
+
+  it("names only tools this server advertises in its instructions", () => {
+    for (const [, name] of SERVER_INSTRUCTIONS.matchAll(
+      /\b([a-z]+(?:_[a-z]+)+)\b/g,
+    )) {
+      expect(TOOLS_BY_NAME.has(name ?? ""), name).toBe(true);
+    }
   });
 });
 
@@ -453,7 +481,7 @@ describe("tools/call", () => {
     expect(content[0]?.type).toBe("text");
     expect(content[0]?.text.length).toBeGreaterThan(100);
     expect((result._meta as Record<string, unknown>)[META_SERVER_INFO]).toEqual(
-      { name: SERVER_NAME, version: SERVER_VERSION },
+      SERVER_INFO,
     );
   });
 

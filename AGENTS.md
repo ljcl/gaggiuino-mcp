@@ -1823,6 +1823,17 @@ Things worth not re-breaking:
   revision change moved no grant: `tool-contract.json` is unchanged by it.
   `callTool` in `server.ts` is the one dispatch-and-log layer, so "every call
   is one record" holds for every call.
+- **`server/discover` carries `instructions`, and `serverInfo` a `title` and
+  `websiteUrl`.** Under a host's deferred tool loading, tool names and these
+  instructions are all the model sees at session start, and `get_status` does
+  not say it belongs to an espresso machine. `SERVER_INSTRUCTIONS` names the
+  entry points (`get_latest_shot_id`, `get_dial_in_guidance`) and says an
+  unreachable machine means stop and ask; it points at the dial-in guidance
+  rather than restating it. Hosts truncate at 2,048 characters, which
+  `modern.test.ts` asserts, along with every tool name the text mentions
+  existing. `SERVER_INFO` lives in `version.ts`, and `version.test.ts` holds its
+  `websiteUrl` equal to `server.json`'s. Neither field is part of `tools/list`,
+  so no grant moves.
 - **The advertised `supported` versions list only `2026-07-28`.** It is the
   one revision this server serves, and it is what a refused 2025-era client
   reads to fall forward.

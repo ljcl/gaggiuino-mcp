@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { SERVER_NAME, SERVER_VERSION } from "./version";
+import { SERVER_INFO, SERVER_NAME, SERVER_VERSION } from "./version";
 
 /**
  * These tests guard SERVER_VERSION staying equal to the released version: they
@@ -8,7 +8,9 @@ import { SERVER_NAME, SERVER_VERSION } from "./version";
  * the release-please annotation that keeps it current is dropped by a refactor.
  */
 
-async function readJson(relativePath: string): Promise<{ version?: string }> {
+async function readJson(
+  relativePath: string,
+): Promise<{ version?: string; websiteUrl?: string }> {
   const url = new URL(relativePath, import.meta.url);
   return JSON.parse(await fs.readFile(url, "utf-8"));
 }
@@ -52,5 +54,12 @@ describe("SERVER_NAME", () => {
     // server.json is namespaced (`io.github.<owner>/<name>`); the handshake
     // advertises the bare name. The suffix is the part that has to agree.
     expect(serverManifest.name).toMatch(new RegExp(`/${SERVER_NAME}$`));
+  });
+});
+
+describe("SERVER_INFO", () => {
+  it("points at the same page server.json gives the MCP registry", async () => {
+    const serverManifest = await readJson("../../../server.json");
+    expect(SERVER_INFO.websiteUrl).toBe(serverManifest.websiteUrl);
   });
 });
