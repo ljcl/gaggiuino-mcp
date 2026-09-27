@@ -8,7 +8,7 @@ import {
   mockShotData,
   mockShotWithTimeStop,
 } from "./__fixtures__/api-responses";
-import { resetClient } from "./client";
+import { getClient, resetClient } from "./client";
 import { TEST_PASSPHRASE_HASH } from "./oauth/__fixtures__";
 import { shapeDefinition } from "./profileDefinition";
 import { handleToolCall } from "./server";
@@ -1187,6 +1187,38 @@ describe("tool dispatch", () => {
       expect(result.isError).toBe(true);
       expect(result.text).toContain("'Zer0' (machineProfileId 15)");
       expect(result.text).toContain("Nothing was saved");
+      expect(requests).toBe(0);
+    });
+
+    it("refuses a taken name even when the machine gave the holder no id", async () => {
+      machineAccepts();
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.json([{ name: "18g Double" }]),
+        ),
+      );
+      const result = await handleToolCall("upload_profile", { profile: valid });
+
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("named '18g Double'. Nothing was saved");
+      expect(requests).toBe(0);
+    });
+
+    it("leaves a bug in the taken-name check to the dispatcher", async () => {
+      // Same contract as describeUploadFailure: only an upstream failure is
+      // turned into advice; anything else is this server's bug and is not
+      // dressed up as "could not read the machine's profile list".
+      machineAccepts();
+      const spy = vi
+        .spyOn(getClient(), "getMachineProfiles")
+        .mockRejectedValue(new Error("planted bug"));
+      try {
+        await expect(
+          handleToolCall("upload_profile", { profile: valid }),
+        ).rejects.toThrow("planted bug");
+      } finally {
+        spy.mockRestore();
+      }
       expect(requests).toBe(0);
     });
 
