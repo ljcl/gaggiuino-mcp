@@ -34,7 +34,7 @@ COPY --from=pruner /app/out/full/ ./
 RUN turbo run build --filter=@gaggiuino/server^...
 
 # 3) Prod-only deps, prepared in a SHELL stage.
-#    Distroless cannot RUN, so the install and chown happen here.
+#    Distroless cannot RUN, so the install happens here.
 #
 #    Only the server's own runtime closure is installed. The pruned workspace
 #    still lists shot-graph, ui, design-system and vite-config, and a plain
@@ -65,7 +65,6 @@ RUN bun --eval ' \
 RUN --mount=type=cache,target=/root/.bun/install/cache \
     bun install --lockfile-only && \
     bun install --frozen-lockfile --production
-RUN chown -R 65534:65534 /app
 
 # 4) Distroless runner: COPY only. nonroot (65534), no shell, ENTRYPOINT is bun.
 FROM oven/bun:1.4.2-distroless AS runner
@@ -75,19 +74,28 @@ WORKDIR /app
 # this image as its OCI package, and the registry pulls the image to check this
 # label matches the server name. Must stay in sync with `name` in server.json.
 LABEL io.modelcontextprotocol.server.name="io.github.ljcl/gaggiuino-mcp"
-COPY --from=prod-deps --chown=65534:65534 /app ./
-COPY --from=builder  --chown=65534:65534 /app/apps/server/src ./apps/server/src
-COPY --from=builder  --chown=65534:65534 /app/apps/server/scripts ./apps/server/scripts
-COPY --from=builder  --chown=65534:65534 /app/packages/shot-graph/dist ./packages/shot-graph/dist
+
+# Root-owned on purpose. The server runs as 65534 and persists nothing to disk,
+# so it needs to read its code, never to write it; files owned by the runtime
+# user are files a compromised process can rewrite and have run on the next
+# start. World-readable is all 65534 needs, and it is COPY's default.
+COPY --from=prod-deps /app ./
+COPY --from=builder  /app/apps/server/src ./apps/server/src
+COPY --from=builder  /app/apps/server/scripts ./apps/server/scripts
+COPY --from=builder  /app/packages/shot-graph/dist ./packages/shot-graph/dist
 
 USER 65534:65534
 ENV NODE_ENV=production
 EXPOSE 8000
 
 # Exec-form healthcheck: no shell, no wget. Full bun path because HEALTHCHECK
-# does not route through ENTRYPOINT.
+# does not route through ENTRYPOINT. It reads PORT from the container's own
+# environment (env_file in compose): under network_mode: host, changing PORT
+# is how a user avoids a clash, and a probe pinned to 8000 then reports a
+# serving container as unhealthy — which breaks service_healthy dependants and
+# auto-restarters.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD ["/usr/local/bin/bun","--eval","fetch('http://localhost:8000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    CMD ["/usr/local/bin/bun","--eval","fetch('http://localhost:'+(process.env.PORT||'8000')+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
 
 # ENTRYPOINT is already /usr/local/bin/bun, so CMD omits the leading "bun".
 CMD ["run","apps/server/src/index.ts"]
