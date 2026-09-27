@@ -1,5 +1,16 @@
 # Changelog
 
+## [6.0.0](https://github.com/ljcl/gaggiuino-mcp/compare/v5.0.1...v6.0.0) (2026-09-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **server:** tools and prompts that keep their promises ([#289](https://github.com/ljcl/gaggiuino-mcp/issues/289))
+
+### Features
+
+* **server:** tools and prompts that keep their promises ([#289](https://github.com/ljcl/gaggiuino-mcp/issues/289)) ([3a0c5ae](https://github.com/ljcl/gaggiuino-mcp/commit/3a0c5aef9b3a277594386158b9390642411ec5af))
+
 ## [5.0.1](https://github.com/ljcl/gaggiuino-mcp/compare/v5.0.0...v5.0.1) (2026-09-27)
 
 
