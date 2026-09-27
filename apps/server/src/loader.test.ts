@@ -1,14 +1,16 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
+import { parse } from "yaml";
 import {
   loadProfiles,
   loadPrompts,
   mergeProfileOverrides,
   mergePromptOverrides,
   type Profile,
+  ProfilesSchema,
   type Prompt,
   readLocalOverrides,
 } from "./loader";
@@ -39,6 +41,41 @@ describe("loadProfiles", () => {
     expect(profile?.targetRatio).toBeTypeOf("string");
     expect(profile?.targetTime).toBeTypeOf("string");
     expect(profile?.description).toBeTypeOf("string");
+  });
+});
+
+describe("bundled profiles.yaml", () => {
+  // Parsed directly rather than through loadProfiles, so a contributor's own
+  // profiles.local.yaml cannot make this pass or fail. User overrides are
+  // deliberately not held to it at run time.
+  const bundled = ProfilesSchema.parse(
+    parse(
+      readFileSync(new URL("./data/profiles.yaml", import.meta.url), "utf-8"),
+    ),
+  );
+
+  it("writes every target_ratio as dose:yield, the order its schema states", () => {
+    // ProfileOutput.targetRatio says "dose to yield". A model trusting that
+    // reads "2.3:1" as 2.3 g of coffee to 1 g in the cup — about 8 g from a
+    // 19 g dose, not 44 — and choose_profile compares ratios across profiles,
+    // which is exactly where two orders would meet.
+    for (const [id, profile] of Object.entries(bundled)) {
+      expect(
+        profile.target_ratio,
+        `${id}.target_ratio is not dose:yield`,
+      ).toMatch(/^1:\d+(\.\d+)?( to 1:\d+(\.\d+)?)?$/);
+    }
+  });
+
+  it("uses the same order in the prose beside it", () => {
+    // Any espresso ratio with more coffee in than drink out is the reverse
+    // order, so "2:1" and "2.3:1" are what a regression looks like.
+    for (const [id, profile] of Object.entries(bundled)) {
+      expect(
+        profile.description,
+        `${id}.description has a yield:dose ratio`,
+      ).not.toMatch(/(?<![\d.])[2-9](\.\d+)?:1(?![\d.])/);
+    }
   });
 });
 

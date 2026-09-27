@@ -162,7 +162,7 @@ lpd-fiso-v2:
   type: pressure
   roast_level:
     - dark
-  target_ratio: "2:1 to 2.5:1"
+  target_ratio: "1:2 to 1:2.5"
   target_time: "25-35s"
   recommended_dose: "19g"
   description: |
@@ -175,7 +175,7 @@ lpd-fiso-v2:
     Intense, full-bodied shots with thick mouthfeel and syrupy texture. Optimized for dark roasts to maximize body while managing the bitterness that can come with extended extraction of darker beans.
 
     ## Dial-In Tips
-    - Start with 19g dose and 2:1 to 2.5:1 ratio (38-48g yield)
+    - Start with 19g dose and 1:2 to 1:2.5 ratio (38-48g yield)
     - The shorter ratio prevents overextraction of dark roast compounds
     - Good puck prep is essential—the fast pressure ramp can expose distribution issues
     - If shots taste harsh or ashy, grind coarser or reduce ratio
@@ -186,7 +186,7 @@ lpl-fiso-v2.2:
   type: pressure
   roast_level:
     - light
-  target_ratio: "2.3:1"
+  target_ratio: "1:2.3"
   target_time: "25-35s"
   recommended_dose: "19g"
   description: |
@@ -199,8 +199,8 @@ lpl-fiso-v2.2:
     Intense, full-bodied shots with thick mouthfeel and syrupy texture. The FISO curve emphasizes sweetness and body over brightness.
 
     ## Dial-In Tips
-    - Start with 19g dose and 2.3:1 ratio (approximately 44g yield)
-    - Ratios between 2:1 and 3:1 work depending on the bean
+    - Start with 19g dose and 1:2.3 ratio (approximately 44g yield)
+    - Ratios between 1:2 and 1:3 work depending on the bean
     - The fast pressure ramp requires good puck prep—distribution and tamping matter
     - If shots channel early, improve puck prep or grind slightly coarser
     - Compare with SISO variant to see which suits your beans better
@@ -210,7 +210,7 @@ lpl-siso-v2.2:
   type: pressure
   roast_level:
     - light
-  target_ratio: "2.3:1"
+  target_ratio: "1:2.3"
   target_time: "25-35s"
   recommended_dose: "19g"
   description: |
@@ -223,8 +223,8 @@ lpl-siso-v2.2:
     Balanced shots with thick mouthfeel and good clarity. The SISO curve tends to produce more even extraction than FISO, with a balance of sweetness and brightness.
 
     ## Dial-In Tips
-    - Start with 19g dose and 2.3:1 ratio (approximately 44g yield)
-    - Ratios between 2:1 and 3:1 work depending on the bean
+    - Start with 19g dose and 1:2.3 ratio (approximately 44g yield)
+    - Ratios between 1:2 and 1:3 work depending on the bean
     - More forgiving than FISO—a good starting point if new to La Pavoni-style profiles
     - If shots taste uneven, the slow ramp usually isn't the issue—check grind consistency
     - Compare with FISO variant: FISO for more body, SISO for more balance
