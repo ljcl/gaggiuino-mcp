@@ -1,4 +1,9 @@
 version: 2
+# Every ecosystem waits `cooldown` days before proposing a version. Patch and
+# minor bumps auto-merge once CI passes (dependabot-auto-merge.yml), usually
+# within three minutes of opening, so CI is the only review a fresh release
+# gets. Three days lets a compromised or broken publish be yanked before it
+# arrives. Security updates are never delayed by it.
 updates:
   - package-ecosystem: npm
     directory: "/"
@@ -8,6 +13,8 @@ updates:
       time: "09:00"
       timezone: Australia/Melbourne
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 3
     # fix(deps), not chore(deps): production deps ship inside the published
     # Docker image (server runtime plus the bundled MCP App HTML), so a bump
     # must cut a patch release or users never receive it. Dev-only tooling
@@ -48,6 +55,8 @@ updates:
       time: "09:00"
       timezone: Australia/Melbourne
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 3
     commit-message:
       prefix: "chore(ci)"
     groups:
@@ -67,6 +76,8 @@ updates:
       time: "09:00"
       timezone: Australia/Melbourne
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 3
     # fix(deps) for the same reason as npm: base-image bumps only reach users
     # via a new release publishing a fresh image.
     commit-message:

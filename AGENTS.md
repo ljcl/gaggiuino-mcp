@@ -2172,7 +2172,7 @@ Releases are automated by release-please (`.github/workflows/release-please.yml`
   `server.json` is NOT templated — `publish-mcp.yml` stamps it from the git tag at
   publish time, since release-please's json updater cannot rewrite part of a string.)
 - Merging that PR pushes the `vX.Y.Z` tag (via the `RELEASE_PLEASE_PAT` secret), which
-  triggers `docker.yml` to publish `ghcr.io/ljcl/gaggiuino-mcp:X.Y.Z` and `:X.Y`, and
+  triggers `docker.yml` to publish `ghcr.io/ljcl/gaggiuino-mcp:X.Y.Z`, `:X.Y` and `:latest`, and
   `publish-mcp.yml` to publish `server.json` to the MCP registry via GitHub OIDC.
   The registry proves image ownership by pulling the GHCR image and checking its
   `io.modelcontextprotocol.server.name` label (set in `apps/server/Dockerfile`, must
@@ -2185,6 +2185,13 @@ Releases are automated by release-please (`.github/workflows/release-please.yml`
   an **anonymous** pull token decides: 200 proceeds, 401/403 fails immediately telling
   you to make the package public, 404 retries briefly for tag propagation. Package
   visibility is UI-only — GitHub exposes no REST endpoint for it.
+- **`latest` moves only on a `v*` tag push.** A main push publishes `edge` and
+  `main-<sha>`. `latest` is what the README and `docker-compose.yml` default to, and it
+  used to be the main build: the `refactor!` that became 5.0.0 was `latest` before any
+  release said so. `flavor: latest=false` matters as much as the explicit rule, since
+  metadata-action otherwise adds `latest` to every semver tag, backfills included. The
+  release commit is built twice (main push, then tag push); both digests carry the same
+  source, and removing the first would race the tag build for `edge`.
 - Published manifests carry supply-chain attestations: an SPDX SBOM and max-mode
   provenance per architecture from BuildKit, plus a Sigstore-signed provenance statement
   for the multi-arch index pushed to GHCR as a referrer. Verification commands are in
@@ -2200,6 +2207,12 @@ Releases are automated by release-please (`.github/workflows/release-please.yml`
   `chore(deps)`/`chore(ci)` for dev tooling and GitHub Actions (no shipped artifact, no
   release). The npm groups are split by dependency-type so one grouped PR never mixes
   the two prefixes.
+- **A Dependabot merge must run the pipeline, or `fix(deps)` means nothing.**
+  `dependabot-auto-merge.yml` arms auto-merge with `DEPENDABOT_PAT`, because the merge is
+  made by whoever armed it and a `GITHUB_TOKEN` push starts no workflow. Armed that way,
+  seven merged bumps got no CI, no image and no release-please run, and a `fix(deps)`
+  took 34 days to reach a release. Every ecosystem sets `cooldown: 3 days`, since patch
+  and minor bumps merge minutes after opening and CI is their only review.
 - To force a specific version, land an empty commit on `main` with a `Release-As` footer
   (`git commit --allow-empty -m "chore: force release" -m "Release-As: X.Y.Z"`); the
   release PR retargets on the next run. `release-please.yml` also has a
