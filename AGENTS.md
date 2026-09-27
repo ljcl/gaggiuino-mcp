@@ -1233,6 +1233,18 @@ The server resolves the MCP App at runtime via
 must declare an `./app.html` export and a `dist/` build output, and the runner
 stage must `COPY` that `dist/` explicitly.
 
+**The image installs the server's runtime closure and nothing else** — four npm
+packages (`@modelcontextprotocol/server`, `@modelcontextprotocol/core`, `zod`,
+`yaml`). `turbo prune` keeps shot-graph, ui, design-system and vite-config in the
+workspace because the server depends on shot-graph, and a plain `--production`
+install then brings in all of *their* `dependencies`: 182 packages in 5.0.0,
+including React, Vite, esbuild and the v1 SDK with a vulnerable `fast-uri`, none
+of which the server loads. So `prod-deps` empties those packages' dependency
+fields in-stage, re-resolves with `--lockfile-only`, then installs. It is
+deliberately not `--filter @gaggiuino/server`, which keeps React and the v1 SDK
+for the same reason. The repo's own manifests are untouched, so knip and
+Dependabot's `fix(deps)`/`chore(deps)` split see what they always did.
+
 The turbo version installed in the toolchain stage is read from root
 `package.json`, so a Dependabot turbo bump cannot drift from the image. The Bun
 base image version is pinned separately in the two `FROM oven/bun:` lines and is

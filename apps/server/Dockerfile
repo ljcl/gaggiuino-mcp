@@ -35,10 +35,36 @@ RUN turbo run build --filter=@gaggiuino/server^...
 
 # 3) Prod-only deps, prepared in a SHELL stage.
 #    Distroless cannot RUN, so the install and chown happen here.
+#
+#    Only the server's own runtime closure is installed. The pruned workspace
+#    still lists shot-graph, ui, design-system and vite-config, and a plain
+#    `--production` install brings in every one of their `dependencies` —
+#    React, recharts, the v1 MCP SDK, Vite, esbuild — none of which the server
+#    loads: it reaches shot-graph only to resolve the prebuilt dist/app.html.
+#    That was ~180 packages where the server needs four, and every scanner
+#    run against the image flagged CVEs in code that never executes.
+#
+#    So the workspace packages' dependency fields are emptied here (in this
+#    stage only; the repo's manifests are untouched), `--lockfile-only`
+#    re-resolves the lockfile against the existing pins without running
+#    anything, and the production install then sees only the server's deps.
+#    The workspace link to @gaggiuino/shot-graph survives, which is what the
+#    runtime `require.resolve("@gaggiuino/shot-graph/app.html")` needs.
 FROM base AS prod-deps
 COPY --from=pruner /app/out/json/ ./
 COPY --from=pruner /app/out/bun.lock ./bun.lock
-RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile --production
+RUN bun --eval ' \
+      const fs = require("node:fs"); \
+      for (const dir of fs.readdirSync("packages")) { \
+        const file = `packages/${dir}/package.json`; \
+        if (!fs.existsSync(file)) continue; \
+        const pkg = JSON.parse(fs.readFileSync(file, "utf8")); \
+        for (const field of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) delete pkg[field]; \
+        fs.writeFileSync(file, JSON.stringify(pkg, null, 2)); \
+      }'
+RUN --mount=type=cache,target=/root/.bun/install/cache \
+    bun install --lockfile-only && \
+    bun install --frozen-lockfile --production
 RUN chown -R 65534:65534 /app
 
 # 4) Distroless runner: COPY only. nonroot (65534), no shell, ENTRYPOINT is bun.
