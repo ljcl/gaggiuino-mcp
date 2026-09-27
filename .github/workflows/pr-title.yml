@@ -10,6 +10,7 @@ on:
 
 permissions:
   pull-requests: read
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
@@ -43,3 +44,56 @@ jobs:
             style
             revert
           requireScope: false
+
+      # A host stores "always allow" against a tool's advertised identity, so a
+      # PR that changes or removes an existing tool's entry in
+      # tool-contract.json silently drops every installation's grant for it.
+      # That is a breaking change whether or not a line of tool code moved: a
+      # zod bump regenerated eight output schemas in #222, which squashed as
+      # fix(deps) and shipped as a patch. This makes the title say so, which is
+      # what makes release-please cut a major and the CHANGELOG say why.
+      #
+      # Both files are fetched through the API as data — this job runs on
+      # pull_request_target and never checks out PR code. Title and body arrive
+      # through env, never interpolated into the script. A PR that only adds a
+      # tool passes: a new tool has no grant to lose.
+      - name: Re-keyed tool grants need a breaking-change marker
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          path=apps/server/src/tool-contract.json
+          # Compare against the merge base, not the base branch's tip, so a
+          # contract change that landed on main after this branch was cut is
+          # not read as this PR undoing it.
+          base=$(gh api "repos/$REPO/compare/$BASE_SHA...$HEAD_SHA" --jq .merge_base_commit.sha)
+          contract() {
+            if ! gh api -H "Accept: application/vnd.github.raw+json" \
+                "repos/$REPO/contents/$path?ref=$1" > "$2" 2> "$2.err"; then
+              # Absent is an empty contract (no tools); any other failure is
+              # not, and must not pass as one.
+              grep -q 'HTTP 404' "$2.err" || { cat "$2.err" >&2; exit 1; }
+              echo '[]' > "$2"
+            fi
+          }
+          contract "$base" base.json
+          contract "$HEAD_SHA" head.json
+          rekeyed=$(jq -rn --slurpfile b base.json --slurpfile h head.json '
+            ($h[0] | map({key: .name, value: .}) | from_entries) as $H
+            | [$b[0][] | select($H[.name] != .) | .name] | join(", ")')
+          if [ -z "$rekeyed" ]; then
+            echo "No existing tool's advertised entry changed."
+            exit 0
+          fi
+          if printf '%s' "$TITLE" | grep -Eq '^[a-z]+(\([^)]*\))?!:' ||
+             printf '%s\n' "$BODY" | grep -Eq '^BREAKING[ -]CHANGE:'; then
+            echo "Re-keyed tools ($rekeyed); the PR is marked as a breaking change."
+            exit 0
+          fi
+          echo "::error::This PR changes or removes the advertised entry of: $rekeyed. Every installation's permission grant for those tools is dropped (see AGENTS.md \"The advertised surface is a permission-grant key\"). Mark it breaking: add ! to the title (e.g. fix(deps)!: ...) or a BREAKING CHANGE: line to the body."
+          exit 1
