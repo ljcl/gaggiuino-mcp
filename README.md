@@ -78,12 +78,16 @@ The server is available at `http://<your-docker-host>:8000/mcp`.
 
 ### Choosing a Version
 
-The compose file tracks `latest`. To pin a release, set `GAGGIUINO_MCP_TAG` in `.env`:
+The compose file tracks `latest`, which is always the newest release. To pin one instead, set
+`GAGGIUINO_MCP_TAG` in `.env`:
 
 ```bash
-GAGGIUINO_MCP_TAG=3.2    # latest 3.2.x patch
-GAGGIUINO_MCP_TAG=3.2.0  # exact release
+GAGGIUINO_MCP_TAG=5.0    # newest 5.0.x patch
+GAGGIUINO_MCP_TAG=5.0.0  # exact release
 ```
+
+Builds of unreleased `main` are published as `edge` (and `main-<sha>`). They can carry a
+breaking change that no release has announced yet, so use them only to try a fix before it ships.
 
 Upgrade with:
 

@@ -13,6 +13,7 @@ jobs:
     # branch protection does not control.
     if: >-
       github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -26,11 +27,27 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Armed with the PAT, not GITHUB_TOKEN, because the eventual merge is made
+      # by whoever armed it — and a push made with GITHUB_TOKEN starts no
+      # workflow. Armed that way, a merged bump got no CI run on main, no
+      # release-please run and no image: a fix(deps) merged on 2026-08-23
+      # reached a release 34 days later. This job checks out and runs nothing,
+      # which is what makes it a safe place to hold the credential.
+      #
+      # Falls back to GITHUB_TOKEN (with a warning) if the PAT is missing or
+      # lacks pull-request write: the bump still merges, it just triggers
+      # nothing until the next human push.
       - name: Enable auto-merge for patch and minor updates
         if: >-
           steps.meta.outputs.update-type == 'version-update:semver-patch' ||
           steps.meta.outputs.update-type == 'version-update:semver-minor'
-        run: gh pr merge --auto --squash "$PR_URL"
+        run: |
+          if [ -n "$PAT" ] && GH_TOKEN="$PAT" gh pr merge --auto --squash "$PR_URL"; then
+            exit 0
+          fi
+          echo "::warning::Could not arm auto-merge with DEPENDABOT_PAT; using GITHUB_TOKEN, so this merge will not trigger CI, Docker or release-please on main."
+          GH_TOKEN="$FALLBACK_TOKEN" gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PAT: ${{ secrets.DEPENDABOT_PAT }}
+          FALLBACK_TOKEN: ${{ secrets.GITHUB_TOKEN }}
