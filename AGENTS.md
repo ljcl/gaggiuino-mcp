@@ -391,6 +391,25 @@ it is deliberate at four independent points, and no two of them fail together:
   documented profile `entry.name` is the YAML's and the machine's may differ in
   case; `CatalogEntry.machineName` exists to carry the second, on the interface
   only, so `ProfileOutput`'s `z.object` strips it and no grant moves.
+
+  **This gate says nothing about duplicates, and the lookup has to.** The
+  machine does not enforce unique names and the documentation join is on the
+  name, so two machine profiles called "Zer0" are two rows sharing the id
+  `zer0` *and* the name `Zer0` — the id gate and this gate then pass together
+  for either copy. `findCatalogEntry` therefore returns a `CatalogLookup` with
+  `ambiguous` as a first-class answer rather than the first match, and
+  `resolveOne` in `tools.ts` refuses it — naming each candidate's
+  `machineProfileId` and sending nothing — before this gate runs. An exact
+  `machineProfileId` match wins over every other match: it is the one key the
+  machine keeps unique, so it is how a caller steps out of the ambiguity, and a
+  user-made profile *named* "25" must not shadow it. `select_profile` and
+  `get_profile_info` refuse the same way; the read refuses rather than
+  answering with the first copy plus a note, because its `definition` is where
+  an edit starts and the wrong base is the harm. `upload_profile` closes the
+  other end: it refuses a name the machine already holds (the cached list,
+  which `createProfile` evicts after every attempt, and failing closed when the
+  list cannot be read), which also turns a blind retry after an ambiguous
+  upload failure into a refusal instead of a second copy.
 - **A refusal to delete the selected profile**, read live from
   `/api/system/status`'s `profileId` — undocumented upstream, but captured off
   real hardware and already arriving through the loose client schema. That
