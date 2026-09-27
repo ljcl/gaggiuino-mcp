@@ -5,6 +5,13 @@ export default defineConfig({
     globals: true,
     include: ["src/**/*.test.ts"],
     setupFiles: ["./src/test-setup.ts"],
+    // Every handler in the suite mocks http://gaggiuino.local, and client.ts
+    // reads GAGGIUINO_URL once, at module load. Pinned here because Bun loads
+    // apps/server/.env into every test worker on its own (Node does not), and
+    // that file is the developer's real deployment config: with it present,
+    // `bun run test` sent every request to their actual machine's URL, MSW
+    // refused each one, and 106 tests failed while CI (no .env) passed.
+    env: { GAGGIUINO_URL: "http://gaggiuino.local" },
     coverage: {
       enabled: false,
       reporter: ["text", "json-summary"],

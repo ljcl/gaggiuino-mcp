@@ -971,6 +971,20 @@ Gaggiuino API returns values scaled by 10 (e.g., pressure 91 = 9.1 bar). The `no
 
 ## Test coverage
 
+**The server suite runs on Bun; its coverage run runs on Node.** `apps/server`'s `test` is
+`bun --bun vitest run`. Without `--bun`, `bun run` honours vitest's `#!/usr/bin/env node`
+shebang, so no test ran on the runtime that ships, and the two differ in ways the server
+depends on (an empty 200 body: Bun's `response.json()` returns `null`, Node's throws).
+`test:coverage` stays on Node because V8 coverage is Node-only, so CI's two passes over the
+suite are one per runtime. CI's Node comes from `.tool-versions` via `setup-node`, the same
+major a developer's ratchet run measures on; `.tool-versions`' Bun pin is held to
+`packageManager` by the skew step.
+
+`vitest.config.ts` pins `GAGGIUINO_URL` in `test.env`, and that is load-bearing for the Bun
+run: Bun loads `apps/server/.env` into every test worker on its own, and that file is the
+developer's real deployment config. Unpinned, every request went to their actual machine's
+URL, MSW refused each one, and 106 tests failed locally while CI (no `.env`) passed.
+
 Coverage is opt-in: plain `bun run test` does not compute it, and `bun run test:coverage`
 (`turbo run test:coverage`) writes each package's `coverage/coverage-summary.json`.
 
@@ -1292,6 +1306,17 @@ docker exec gaggiuino-mcp /usr/local/bin/bun --eval \
 
 The runner has no shell, so `docker exec ... /bin/sh` fails by design; exec the
 bun binary directly (it is the image's ENTRYPOINT) as above.
+
+`scripts/image-smoke.sh IMAGE` is the same check CI runs on every image build, and
+it works on a Mac because it publishes the port instead of using host networking:
+healthy, `/health`, `server/discover`, a `tools/list` equal to
+`tool-contract.json`, and a non-empty `resources/read ui://shot-graph/app.html`.
+`docker.yml` runs it on each build leg **before** the push build, so a runtime-only
+break (a missing `COPY`, a `.dockerignore` rule that reaches something the server
+imports) fails the leg and the merge job tags nothing. It needs only docker, curl
+and jq, which keeps it inside the rule that a job holding `packages: write` runs no
+dependency code. The script is checked out from the workflow's own commit, not
+the built ref, so a backfill of a tag that predates it still runs it.
 
 ## CI
 
