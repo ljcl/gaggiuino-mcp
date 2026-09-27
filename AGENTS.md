@@ -486,7 +486,13 @@ server without a line of this repo's code changing.
 fail) and `server.test.ts` compares the live list against it. Regenerate with
 `bun run generate-tool-contract` — deliberately. **The diff is the list of grants
 every existing installation is about to lose**, so review it as a breaking change
-and land it with a release the user can re-grant against. It is excluded from
+and land it with a release the user can re-grant against. `pr-title.yml` enforces
+that: a PR that changes or removes an existing tool's entry fails the required
+`pr-title` check, naming the tools, until its title carries `!` or its body a
+`BREAKING CHANGE:` line. #222 is why it is a check and not a convention — a zod
+bump regenerated eight output schemas and squashed as `fix(deps)`, so the grants
+went with a patch release whose CHANGELOG said nothing about them. Adding a tool
+passes: it has no grant to lose. It is excluded from
 Biome (like `*.schema.json`) so the file stays byte-for-byte what the generator
 writes.
 
