@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.0.1](https://github.com/ljcl/gaggiuino-mcp/compare/v5.0.0...v5.0.1) (2026-09-27)
+
+
+### Bug Fixes
+
+* **docker:** install only the server's runtime packages in the image ([#283](https://github.com/ljcl/gaggiuino-mcp/issues/283)) ([bcb525f](https://github.com/ljcl/gaggiuino-mcp/commit/bcb525fa89a177cae1e17357cf482b0d1cad2d20))
+* **docker:** make the HEALTHCHECK follow PORT, and stop the runtime user owning its own code ([#288](https://github.com/ljcl/gaggiuino-mcp/issues/288)) ([34c01f9](https://github.com/ljcl/gaggiuino-mcp/commit/34c01f9577a34f9e39e49e00cab47f97b29e36ee))
+
 ## [5.0.0](https://github.com/ljcl/gaggiuino-mcp/compare/v4.0.1...v5.0.0) (2026-09-26)
 
 
