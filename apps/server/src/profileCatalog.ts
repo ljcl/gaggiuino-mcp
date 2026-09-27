@@ -67,8 +67,13 @@ export interface ProfileCatalog {
   source: "documentation" | "machine";
 }
 
-/** Profile names are user-typed; match them the way a person would read them. */
-function matchKey(name: string): string {
+/**
+ * Profile names are user-typed; match them the way a person would read them.
+ * Exported because `upload_profile`'s taken-name check has to agree with the
+ * lookup here: a name this server would treat as the same profile is a name it
+ * must not let a second profile have.
+ */
+export function matchKey(name: string): string {
   return name.trim().toLowerCase();
 }
 
@@ -174,19 +179,70 @@ export async function loadProfileCatalog(): Promise<ProfileCatalog> {
   };
 }
 
+/**
+ * What one caller-supplied id resolves to. `ambiguous` is a first-class answer,
+ * not a corner of `found`.
+ *
+ * The machine does not enforce unique names, and the documentation join is on
+ * the name, so two machine profiles called "Zer0" become two rows that share
+ * the documented id `zer0` *and* the name `Zer0`. A lookup that returned the
+ * first match would then act on whichever copy the firmware happened to list
+ * first — and for `delete_profile` the exact-name echo cannot tell the copies
+ * apart either, so the id gate and the name gate fail together on exactly the
+ * input they exist to check. Duplicates arise on documented paths (copy a
+ * profile and keep its name; an upload that failed ambiguously but landed), so
+ * every caller that acts on one profile has to be told there were two.
+ */
+export type CatalogLookup =
+  | { catalog: ProfileCatalog; entry: CatalogEntry; kind: "found" }
+  | { catalog: ProfileCatalog; kind: "missing" }
+  | { candidates: CatalogEntry[]; catalog: ProfileCatalog; kind: "ambiguous" };
+
+/**
+ * Resolve an id, a machine profile id, or a name to one catalog entry.
+ *
+ * An exact `machineProfileId` match wins over every other kind of match. It is
+ * the one key the machine itself guarantees is unique, so it is how a caller
+ * steps out of an ambiguity — and it must not be shadowed by a user-made
+ * profile that happens to be *named* "25".
+ */
 export async function findCatalogEntry(
   profileId: string,
-): Promise<{ catalog: ProfileCatalog; entry: CatalogEntry | undefined }> {
+): Promise<CatalogLookup> {
   const catalog = await loadProfileCatalog();
   const wanted = matchKey(profileId);
-  return {
-    catalog,
-    entry: catalog.entries.find(
-      (candidate) =>
-        matchKey(candidate.id) === wanted ||
-        matchKey(candidate.name) === wanted ||
-        (candidate.machineProfileId !== null &&
-          matchKey(candidate.machineProfileId) === wanted),
-    ),
-  };
+  const byMachineId = catalog.entries.filter(
+    (candidate) =>
+      candidate.machineProfileId !== null &&
+      matchKey(candidate.machineProfileId) === wanted,
+  );
+  const matches =
+    byMachineId.length > 0
+      ? byMachineId
+      : catalog.entries.filter(
+          (candidate) =>
+            matchKey(candidate.id) === wanted ||
+            matchKey(candidate.name) === wanted,
+        );
+  const [first] = matches;
+  if (first === undefined) return { catalog, kind: "missing" };
+  if (matches.length > 1) {
+    return { candidates: matches, catalog, kind: "ambiguous" };
+  }
+  return { catalog, entry: first, kind: "found" };
+}
+
+/**
+ * Name each candidate by the one key that tells them apart, so the caller can
+ * pass it straight back. The machine's own spelling of the name is shown where
+ * there is one, because that is what the user sees on its screen.
+ */
+export function describeCandidates(candidates: CatalogEntry[]): string {
+  return candidates
+    .map((candidate) =>
+      candidate.machineProfileId === null
+        ? `id ${candidate.id} ('${candidate.machineName ?? candidate.name}')`
+        : `machineProfileId ${candidate.machineProfileId} ('${candidate.machineName ?? candidate.name}')`,
+    )
+    .join(", ");
 }

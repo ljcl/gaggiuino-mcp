@@ -391,6 +391,25 @@ it is deliberate at four independent points, and no two of them fail together:
   documented profile `entry.name` is the YAML's and the machine's may differ in
   case; `CatalogEntry.machineName` exists to carry the second, on the interface
   only, so `ProfileOutput`'s `z.object` strips it and no grant moves.
+
+  **This gate says nothing about duplicates, and the lookup has to.** The
+  machine does not enforce unique names and the documentation join is on the
+  name, so two machine profiles called "Zer0" are two rows sharing the id
+  `zer0` *and* the name `Zer0` — the id gate and this gate then pass together
+  for either copy. `findCatalogEntry` therefore returns a `CatalogLookup` with
+  `ambiguous` as a first-class answer rather than the first match, and
+  `resolveOne` in `tools.ts` refuses it — naming each candidate's
+  `machineProfileId` and sending nothing — before this gate runs. An exact
+  `machineProfileId` match wins over every other match: it is the one key the
+  machine keeps unique, so it is how a caller steps out of the ambiguity, and a
+  user-made profile *named* "25" must not shadow it. `select_profile` and
+  `get_profile_info` refuse the same way; the read refuses rather than
+  answering with the first copy plus a note, because its `definition` is where
+  an edit starts and the wrong base is the harm. `upload_profile` closes the
+  other end: it refuses a name the machine already holds (the cached list,
+  which `createProfile` evicts after every attempt, and failing closed when the
+  list cannot be read), which also turns a blind retry after an ambiguous
+  upload failure into a refusal instead of a second copy.
 - **A refusal to delete the selected profile**, read live from
   `/api/system/status`'s `profileId` — undocumented upstream, but captured off
   real hardware and already arriving through the loose client schema. That
@@ -448,6 +467,20 @@ Four things about it are load-bearing.
   five-millisecond ramp, which the machine accepts — the reference fills
   malformed fields with zero-value defaults rather than rejecting them. All the
   humanising happens in `formatProfileDefinition`, in the prose.
+
+  **So `upload_profile` accepts the definition's own `null`s.** `shapeDefinition`
+  reports a missing `recipe` or `globalStopConditions` as an explicit `null`,
+  and the upload schema used to declare both `.optional()` — which accepts
+  absent and refuses `null`, so the documented get → edit → upload path failed
+  for every profile without those sections. Both are `.nullish()` now, and
+  `withoutNullSections` drops a `null` before the request, because the
+  reference documents neither field as nullable and absent is the form it reads
+  as "none". This was chosen over making `definition` omit the field instead:
+  either one re-keys a grant, since the output schema requires all five
+  top-level fields, and re-keying a write tool that prompts anyway costs less
+  than re-keying a read the user has likely set to "always allow". The
+  round-trip test in `tools.test.ts` starts from `shapeDefinition`, not the raw
+  fixture, which is what the older one missed.
 - **The output schema is loose for the same reason the client boundary is.** A
   strict `z.object` emits `additionalProperties: false`, so a phase field a
   future firmware adds would be dropped from `definition` — and a model that
@@ -553,7 +586,7 @@ data for. An empty list is a valid answer; `-32601` is not.
 `prompts.ts` mirrors the tool contract: one `definePrompt(...)` per prompt, and
 `tryRenderPrompt` is the only place a prompt is rendered — it `safeParse`s the
 arguments before the render function runs, so a render function receives typed
-values and never re-checks presence. Four things follow from that shape.
+values and never re-checks presence. Five things follow from that shape.
 
 - **The advertised `arguments` array is generated, never hand-written.**
   `promptArguments` runs the same `z.toJSONSchema` path the tool schemas use over
@@ -578,6 +611,14 @@ values and never re-checks presence. Four things follow from that shape.
   rather than vanishing ("Dose: not stated — use the recommended dose for the
   profile you pick"), because a dropped line leaves the model free to invent a
   number a tool could have told it.
+- **Required arguments are advertised first.** Claude Code binds prompt
+  arguments positionally — `/choose_profile light` gives `light` to the first
+  argument advertised — and the schema's key order cannot carry that, because
+  Biome keeps object keys sorted. That put `roast_level` behind `drink` and
+  `notes` and failed the obvious invocation with "roast_level: missing".
+  `promptArguments` sorts required-first (stably, so schema order holds within
+  each group), and `server.test.ts` asserts the exact order rather than a
+  sorted copy. `prompts/list` is not a grant key, so the order moves nothing.
 - **The workflow plans live in code, not `prompts.yaml`.** What they contain is a
   numbered plan naming *this server's own tools*, so a local override could point
   a step at a tool that does not exist — `prompts.test.ts` checks every backticked
@@ -702,6 +743,14 @@ The `view_shot_graph` tool renders an interactive Recharts chart in MCP-compatib
 - Bundled as single HTML file via `vite-plugin-singlefile` (~1MB)
 - Served as MCP resource at `ui://shot-graph/app.html`
 - Calls `get_shot_raw_json` (app-only visibility) to fetch data after render
+- The tool's text never claims the chart was rendered. The chart is a `ui://`
+  resource the host may not display, and "rendered above" had the model point
+  a user of a host without MCP Apps at a chart that was not there. The request
+  envelope does carry the host's declared UI capability
+  (`io.modelcontextprotocol/clientCapabilities` → `extensions`
+  → `io.modelcontextprotocol/ui`), but gating the wording on it waits on
+  evidence of which hosts declare it — a host that renders without declaring
+  would be told nothing was drawn. `tools/list` never varies by client.
 - Supports shot comparison overlay; "Compare previous" calls
   `get_previous_shot_json`, which resolves the real previous id server-side
   rather than subtracting one from the current one
@@ -1029,6 +1078,18 @@ reading them, and `readLocalOverrides` is exported so a test can point it at a t
 sides of every branch are covered by `loader.test.ts` regardless of what is on disk. Keep it that
 way: a test that writes a real `*.local.yaml` into `src/data/` would clobber a contributor's own
 equipment configuration and put the disk back in the coverage number.
+
+**A broken override stops the server; it is never ignored.** `readLocalOverrides` returns
+`undefined` for `ENOENT` alone — any other read failure, and any YAML parse failure, is a
+`ConfigError` naming the file — and both merges turn a schema failure into a `ConfigError`
+naming the file and each bad key. An empty or all-comment file parses to `null` and counts as
+no overrides. `index.ts` calls `loadProfiles()` and `loadPrompts()` inside its `ConfigError`
+guard, so a bad override exits with `config.invalid` before the port binds. The two failures
+this replaced were both silent at startup: a syntax error dropped the user's equipment context
+with nothing logged, and a wrong shape threw a raw `ZodError` on every request — `prompts/list`
+included, which is the mid-discovery JSON-RPC error that can make a host abandon discovery.
+Same stance as a leftover `MCP_OAUTH_*` variable: a deployment holding a belief about this
+server that is false should find out at startup.
 
 `packages/ui`, `packages/design-system`, and `packages/shot-graph` are **intentionally
 unthresholded**. Their coverage is the story render path measured by `bun run
@@ -1770,6 +1831,17 @@ Things worth not re-breaking:
   revision change moved no grant: `tool-contract.json` is unchanged by it.
   `callTool` in `server.ts` is the one dispatch-and-log layer, so "every call
   is one record" holds for every call.
+- **`server/discover` carries `instructions`, and `serverInfo` a `title` and
+  `websiteUrl`.** Under a host's deferred tool loading, tool names and these
+  instructions are all the model sees at session start, and `get_status` does
+  not say it belongs to an espresso machine. `SERVER_INSTRUCTIONS` names the
+  entry points (`get_latest_shot_id`, `get_dial_in_guidance`) and says an
+  unreachable machine means stop and ask; it points at the dial-in guidance
+  rather than restating it. Hosts truncate at 2,048 characters, which
+  `modern.test.ts` asserts, along with every tool name the text mentions
+  existing. `SERVER_INFO` lives in `version.ts`, and `version.test.ts` holds its
+  `websiteUrl` equal to `server.json`'s. Neither field is part of `tools/list`,
+  so no grant moves.
 - **The advertised `supported` versions list only `2026-07-28`.** It is the
   one revision this server serves, and it is what a refused 2025-era client
   reads to fall forward.

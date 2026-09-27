@@ -106,6 +106,29 @@ describe("renderPrompt", () => {
     }
   });
 
+  it("gives choose_profile a path for a machine that is off", () => {
+    // Read literally, "recommend only onMachine: true" recommends nothing when
+    // the machine is unreachable, because every onMachine is then null — and
+    // each get_profile_info call waits out the full retry budget to return
+    // documentation list_profiles already sent.
+    const text = renderPrompt("choose_profile", { roast_level: "light" });
+    expect(text).toContain('`source: "documentation"`');
+    expect(text).toContain("recommend from the documentation with that caveat");
+    expect(text).toMatch(/skip steps 4 and 6/);
+    expect(text).toMatch(/4\. Otherwise, call `get_profile_info`/);
+    expect(text).toMatch(/6\. Ask me before calling `select_profile`/);
+  });
+
+  it("writes the dose unit once, whether or not the user typed it", () => {
+    const dose = (dose_g: string) =>
+      renderPrompt("dial_in_new_bag", { bean: "x", dose_g })
+        .split("\n")
+        .find((line) => line.startsWith("- Dose:"));
+    expect(dose("18")).toBe("- Dose: 18 g");
+    expect(dose("18g")).toBe("- Dose: 18g");
+    expect(dose("18 grams")).toBe("- Dose: 18 grams");
+  });
+
   it("throws naming the field when a required argument is absent", () => {
     expect(() => renderPrompt("choose_profile", {})).toThrow(
       /roast_level: missing/,

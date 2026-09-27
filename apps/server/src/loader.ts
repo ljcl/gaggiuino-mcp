@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import { z } from "zod";
+import { ConfigError } from "./config";
 
 export const ProfileSchema = z.object({
   name: z.string(),
@@ -40,24 +42,76 @@ export interface Prompt {
   userContext?: string;
 }
 
+/** Where a bundled data file's user override lives. */
+function localPathFor(baseFilePath: URL): URL {
+  return new URL(
+    baseFilePath.pathname.replace(/\.yaml$/, ".local.yaml"),
+    baseFilePath,
+  );
+}
+
 /**
  * Read the `*.local.yaml` sitting beside a bundled data file, or `undefined`
  * when the user has not written one. Absence is the normal case, not an error.
+ *
+ * Every *other* failure is a `ConfigError` naming the file, and `index.ts`
+ * reads both overrides before the port binds. Swallowing them was worse than
+ * failing: a YAML syntax error silently dropped the user's equipment context
+ * from the guidance, and a bind mount the runtime user cannot read (the image
+ * runs as 65534) looked exactly like no override at all. Only `ENOENT` means
+ * "not written".
  *
  * Exported so a test can point it at a temp directory, keeping coverage
  * independent of whatever override files happen to be on disk. See AGENTS.md
  * "Test coverage".
  */
 export function readLocalOverrides(baseFilePath: URL): unknown {
-  const localPath = new URL(
-    baseFilePath.pathname.replace(/\.yaml$/, ".local.yaml"),
-    baseFilePath,
-  );
+  const localPath = localPathFor(baseFilePath);
+  let text: string;
   try {
-    return parse(readFileSync(localPath, "utf-8"));
-  } catch {
-    return undefined;
+    text = readFileSync(localPath, "utf-8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return undefined;
+    }
+    throw new ConfigError(
+      `Could not read ${fileURLToPath(localPath)}: ${String(error)}`,
+    );
   }
+  try {
+    return parse(text);
+  } catch (error) {
+    throw new ConfigError(
+      `${fileURLToPath(localPath)} is not valid YAML: ${String(error)}`,
+    );
+  }
+}
+
+/**
+ * Validate an override file's contents, or throw a `ConfigError` that names
+ * the file and every offending key.
+ *
+ * An empty file — or one holding only comments, which is what a copied example
+ * with every line commented out is — parses to `null` and means "no
+ * overrides". Anything else has to have the override shape: a scalar or a list
+ * used to be ignored, or to throw a raw `ZodError` on every request once the
+ * loader's cache refused to fill, which failed `prompts/list` mid-discovery.
+ */
+function parseOverrides<T>(
+  schema: z.ZodType<T>,
+  overrides: unknown,
+  source: string,
+): T | undefined {
+  if (overrides === undefined || overrides === null) return undefined;
+  const parsed = schema.safeParse(overrides);
+  if (parsed.success) return parsed.data;
+  const issues = parsed.error.issues
+    .map(
+      (issue) =>
+        `  - ${issue.path.join(".") || "(top level)"}: ${issue.message}`,
+    )
+    .join("\n");
+  throw new ConfigError(`${source} is not a valid override file:\n${issues}`);
 }
 
 function transformProfile(profile: z.output<typeof ProfileSchema>): Profile {
@@ -84,16 +138,17 @@ function transformProfile(profile: z.output<typeof ProfileSchema>): Profile {
 export function mergeProfileOverrides(
   base: Record<string, Profile>,
   overrides: unknown,
+  source: string,
 ): Record<string, Profile> {
-  if (!overrides || typeof overrides !== "object") {
-    return base;
-  }
+  const parsed = parseOverrides(
+    z.record(z.string(), ProfileSchema.nullable()),
+    overrides,
+    source,
+  );
+  if (parsed === undefined) return base;
 
-  const LocalProfilesSchema = z.record(z.string(), ProfileSchema.nullable());
   const merged = { ...base };
-  for (const [id, profile] of Object.entries(
-    LocalProfilesSchema.parse(overrides),
-  )) {
+  for (const [id, profile] of Object.entries(parsed)) {
     if (profile === null) {
       delete merged[id];
     } else {
@@ -111,16 +166,17 @@ export function mergeProfileOverrides(
 export function mergePromptOverrides(
   base: Record<string, Prompt>,
   overrides: unknown,
+  source: string,
 ): Record<string, Prompt> {
-  if (!overrides || typeof overrides !== "object") {
-    return base;
-  }
+  const parsed = parseOverrides(
+    z.record(z.string(), PromptSchema.partial()),
+    overrides,
+    source,
+  );
+  if (parsed === undefined) return base;
 
-  const LocalPromptsSchema = z.record(z.string(), PromptSchema.partial());
   const merged = { ...base };
-  for (const [id, override] of Object.entries(
-    LocalPromptsSchema.parse(overrides),
-  )) {
+  for (const [id, override] of Object.entries(parsed)) {
     const existing = merged[id] ?? { description: "", template: "" };
     merged[id] = {
       description: override.description ?? existing.description,
@@ -154,6 +210,7 @@ export function loadProfiles(): Record<string, Profile> {
   cachedProfiles = mergeProfileOverrides(
     profiles,
     readLocalOverrides(filePath),
+    fileURLToPath(localPathFor(filePath)),
   );
   return cachedProfiles;
 }
@@ -182,6 +239,10 @@ export function loadPrompts(): Record<string, Prompt> {
     ]),
   );
 
-  cachedPrompts = mergePromptOverrides(prompts, readLocalOverrides(filePath));
+  cachedPrompts = mergePromptOverrides(
+    prompts,
+    readLocalOverrides(filePath),
+    fileURLToPath(localPathFor(filePath)),
+  );
   return cachedPrompts;
 }

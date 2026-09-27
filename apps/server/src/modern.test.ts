@@ -1,5 +1,7 @@
 import { type Tool } from "@modelcontextprotocol/server";
+import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mockShotData } from "./__fixtures__/api-responses";
 import { createFetchHandler, type FetchHandler } from "./http";
 import { setLogLevel } from "./logging";
 import { type SecurityConfig } from "./mcpAuth";
@@ -7,8 +9,10 @@ import { PROTOCOL_VERSION } from "./mcpTestClient";
 import { TEST_OAUTH_CONFIG } from "./oauth/__fixtures__";
 import { signToken } from "./oauth/tokens";
 import { advertisedPrompts } from "./prompts";
-import { SERVER_CAPABILITIES, TOOLS } from "./server";
-import { SERVER_NAME, SERVER_VERSION } from "./version";
+import { SERVER_CAPABILITIES, SERVER_INSTRUCTIONS, TOOLS } from "./server";
+import { mockServer } from "./test-setup";
+import { TOOLS_BY_NAME } from "./tools";
+import { SERVER_INFO, SERVER_NAME, SERVER_VERSION } from "./version";
 
 /**
  * The 2026-07-28 wire, driven through the real fetch handler like
@@ -376,8 +380,35 @@ describe("server/discover", () => {
     expect(result.ttlMs).toBeGreaterThan(0);
     expect(result.cacheScope).toBe("private");
     expect((result._meta as Record<string, unknown>)[META_SERVER_INFO]).toEqual(
-      { name: SERVER_NAME, version: SERVER_VERSION },
+      SERVER_INFO,
     );
+    expect(SERVER_INFO).toMatchObject({
+      name: SERVER_NAME,
+      title: expect.any(String),
+      version: SERVER_VERSION,
+      websiteUrl: expect.stringMatching(/^https:\/\//),
+    });
+  });
+
+  it("sends instructions a host with tool search can route on", async () => {
+    // Under deferred tool loading these and the tool names are all a model
+    // sees at session start, so they have to name the entry points and say
+    // what an unreachable machine means. Hosts cut them at 2,048 characters.
+    const result = await readResult(await call("server/discover"));
+    const instructions = String(result.instructions);
+    expect(instructions).toBe(SERVER_INSTRUCTIONS);
+    expect(instructions.length).toBeLessThanOrEqual(2048);
+    expect(instructions).toContain("get_latest_shot_id");
+    expect(instructions).toContain("get_dial_in_guidance");
+    expect(instructions).toMatch(/cannot reach the machine, stop/);
+  });
+
+  it("names only tools this server advertises in its instructions", () => {
+    for (const [, name] of SERVER_INSTRUCTIONS.matchAll(
+      /\b([a-z]+(?:_[a-z]+)+)\b/g,
+    )) {
+      expect(TOOLS_BY_NAME.has(name ?? ""), name).toBe(true);
+    }
   });
 });
 
@@ -453,8 +484,54 @@ describe("tools/call", () => {
     expect(content[0]?.type).toBe("text");
     expect(content[0]?.text.length).toBeGreaterThan(100);
     expect((result._meta as Record<string, unknown>)[META_SERVER_INFO]).toEqual(
-      { name: SERVER_NAME, version: SERVER_VERSION },
+      SERVER_INFO,
     );
+  });
+
+  it("words the shot graph the same whether or not the host declares MCP Apps", async () => {
+    // The envelope carries the declared UI capability, but the result must
+    // not claim a render on either path until there is evidence of which
+    // hosts declare it: a host that renders without declaring would otherwise
+    // be told nothing was drawn.
+    mockServer.use(
+      http.get("http://gaggiuino.local/api/shots/1706547890", () =>
+        HttpResponse.json([mockShotData]),
+      ),
+    );
+    const params = {
+      arguments: { shot_id: "1706547890" },
+      name: "view_shot_graph",
+    };
+    const withUi = modernBody("tools/call", params, {
+      meta: {
+        [META_CAPABILITIES]: {
+          extensions: {
+            "io.modelcontextprotocol/ui": {
+              mimeTypes: ["text/html;profile=mcp-app"],
+            },
+          },
+        },
+        [META_VERSION]: MODERN_VERSION,
+        "io.modelcontextprotocol/clientInfo": {
+          name: "apps-host",
+          version: "1",
+        },
+      },
+    });
+    const texts: string[] = [];
+    for (const body of [modernBody("tools/call", params), withUi]) {
+      const result = await readResult(
+        await post(
+          body,
+          modernHeaders("tools/call", { name: "view_shot_graph" }),
+        ),
+      );
+      const content = result.content as Array<{ text: string }>;
+      texts.push(content[0]?.text ?? "");
+    }
+    expect(texts[0]).toBe(texts[1]);
+    expect(texts[0]).not.toMatch(/rendered/i);
+    expect(texts[0]).toContain("attached for hosts that display MCP Apps");
   });
 
   it("returns an unknown tool as an isError result, not a JSON-RPC error", async () => {

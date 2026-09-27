@@ -8,8 +8,9 @@ import {
   mockShotData,
   mockShotWithTimeStop,
 } from "./__fixtures__/api-responses";
-import { resetClient } from "./client";
+import { getClient, resetClient } from "./client";
 import { TEST_PASSPHRASE_HASH } from "./oauth/__fixtures__";
+import { shapeDefinition } from "./profileDefinition";
 import { handleToolCall } from "./server";
 import { mockServer } from "./test-setup";
 import { describeDeleteFailure, describeUploadFailure } from "./tools";
@@ -294,6 +295,18 @@ describe("tool dispatch", () => {
       expect(result.text).toContain("LMD 9-8 v1.5 (milk)");
     });
 
+    it("never claims the chart was rendered", async () => {
+      // The chart is a ui:// resource the host may or may not display. A
+      // claimed render has the model pointing the user at a chart that is not
+      // on the screen of a host without MCP Apps support.
+      const result = await handleToolCall("view_shot_graph", {
+        shot_id: "1706547890",
+      });
+      expect(result.text).not.toMatch(/rendered/i);
+      expect(result.text).toContain("attached for hosts that display MCP Apps");
+      expect(result.text).toContain("work from the summary above");
+    });
+
     it("returns the summary as structured content with units normalized", async () => {
       const result = await handleToolCall("get_shot_data", {
         shot_id: "1706547890",
@@ -530,6 +543,39 @@ describe("tool dispatch", () => {
         machineProfileId: "15",
         name: "Zer0",
       });
+    });
+
+    it("refuses to pick between two machine profiles with one name", async () => {
+      // The definition is where the edit-and-upload workflow starts, so the
+      // original's served in place of the copy is the copy edited from the
+      // wrong base. Nothing tells the caller that unless the lookup does.
+      let definitionReads = 0;
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.json([
+            { id: "15", name: "Zer0" },
+            { id: "25", name: "Zer0" },
+          ]),
+        ),
+        http.get("http://gaggiuino.local/api/profile/:id", () => {
+          definitionReads += 1;
+          return HttpResponse.json(mockProfileDefinition);
+        }),
+      );
+
+      for (const profile_id of ["zer0", "Zer0"]) {
+        const result = await handleToolCall("get_profile_info", { profile_id });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("machineProfileId 15 ('Zer0')");
+        expect(result.text).toContain("machineProfileId 25 ('Zer0')");
+      }
+      expect(definitionReads).toBe(0);
+
+      const exact = await handleToolCall("get_profile_info", {
+        profile_id: "25",
+      });
+      expect(exact.isError).toBeFalsy();
+      expect(exact.structuredContent).toMatchObject({ machineProfileId: "25" });
     });
 
     it("resolves a machine profile id as well as a documented one", async () => {
@@ -828,6 +874,12 @@ describe("tool dispatch", () => {
       configureOAuth();
       received = undefined;
       requests = 0;
+      // The taken-name check reads this before every upload.
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.json([{ id: "15", name: "Zer0" }]),
+        ),
+      );
     });
 
     afterEach(() => {
@@ -901,6 +953,29 @@ describe("tool dispatch", () => {
 
       expect(result.isError).toBeFalsy();
       expect(received).toEqual(mockProfileDefinition);
+    });
+
+    it("accepts get_profile_info's definition of a profile with no recipe or global stops", async () => {
+      // The round trip above starts from the raw fixture; this one starts from
+      // what get_profile_info actually hands the model, where a missing
+      // section is an explicit null. Refusing that shape broke the documented
+      // get -> edit -> upload path for every profile without those sections.
+      const { globalStopConditions, recipe, ...bare } = mockProfileDefinition;
+      const definition = shapeDefinition(bare);
+      expect(definition).toMatchObject({
+        globalStopConditions: null,
+        recipe: null,
+      });
+
+      machineAccepts();
+      const result = await handleToolCall("upload_profile", {
+        profile: { ...definition, name: "18g Double v2" },
+      });
+
+      expect(result.isError).toBeFalsy();
+      // Absent, not null: the reference documents neither field as nullable,
+      // and absent is the form it reads as "none".
+      expect(received).toEqual({ ...bare, name: "18g Double v2" });
     });
 
     it("rejects the x10 wire format a model just read off a shot", async () => {
@@ -1101,6 +1176,93 @@ describe("tool dispatch", () => {
       expect(after.text).toContain("18g Double");
     });
 
+    it("refuses a name the machine already holds, and sends nothing", async () => {
+      // Matched the way every lookup here matches, so a copy differing only
+      // in case is refused too — select_profile could not tell it apart.
+      machineAccepts();
+      const result = await handleToolCall("upload_profile", {
+        profile: { ...valid, name: " zer0 " },
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("'Zer0' (machineProfileId 15)");
+      expect(result.text).toContain("Nothing was saved");
+      expect(requests).toBe(0);
+    });
+
+    it("refuses a taken name even when the machine gave the holder no id", async () => {
+      machineAccepts();
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.json([{ name: "18g Double" }]),
+        ),
+      );
+      const result = await handleToolCall("upload_profile", { profile: valid });
+
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("named '18g Double'. Nothing was saved");
+      expect(requests).toBe(0);
+    });
+
+    it("leaves a bug in the taken-name check to the dispatcher", async () => {
+      // Same contract as describeUploadFailure: only an upstream failure is
+      // turned into advice; anything else is this server's bug and is not
+      // dressed up as "could not read the machine's profile list".
+      machineAccepts();
+      const spy = vi
+        .spyOn(getClient(), "getMachineProfiles")
+        .mockRejectedValue(new Error("planted bug"));
+      try {
+        await expect(
+          handleToolCall("upload_profile", { profile: valid }),
+        ).rejects.toThrow("planted bug");
+      } finally {
+        spy.mockRestore();
+      }
+      expect(requests).toBe(0);
+    });
+
+    it("turns a blind retry after an ambiguous failure into a refusal", async () => {
+      // The failure this tool's own text warns about: the upload landed, the
+      // machine never said so, and a second call would leave two copies.
+      let listed = [{ id: "15", name: "Zer0" }];
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.json(listed),
+        ),
+        http.post("http://gaggiuino.local/api/profile", () => {
+          requests += 1;
+          return HttpResponse.error();
+        }),
+      );
+
+      const failed = await handleToolCall("upload_profile", { profile: valid });
+      expect(failed.text).toContain("may have been applied");
+      listed = [...listed, { id: "4", name: "18g Double" }];
+
+      const retried = await handleToolCall("upload_profile", {
+        profile: valid,
+      });
+      expect(retried.isError).toBe(true);
+      expect(retried.text).toContain("machineProfileId 4");
+      expect(requests).toBe(1);
+    });
+
+    it("fails closed when the profile list cannot be read", async () => {
+      machineAccepts();
+      mockServer.use(
+        http.get("http://gaggiuino.local/api/profiles/all", () =>
+          HttpResponse.error(),
+        ),
+      );
+      const result = await handleToolCall("upload_profile", { profile: valid });
+
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("Nothing was saved");
+      expect(result.text).toContain("powered off");
+      expect(requests).toBe(0);
+    });
+
     it("leaves a failure it does not recognise to the dispatcher", () => {
       // Same contract describeUpstreamError has: anything that is not an
       // upstream failure is a bug in this server, and must not be dressed up as
@@ -1254,6 +1416,47 @@ describe("tool dispatch", () => {
         configureOAuth();
       });
 
+      it("refuses to guess between two machine profiles with one name", async () => {
+        // Both rows share the documented id and the name, so either key
+        // resolves to two profiles. The first listed is as likely to be the
+        // copy as the original.
+        const selected = machineHolding([
+          { id: "15", name: "Zer0" },
+          { id: "30", name: "Zer0" },
+        ]);
+
+        for (const profile_id of ["zer0", "Zer0"]) {
+          const result = await handleToolCall("select_profile", { profile_id });
+          expect(result.isError).toBe(true);
+          expect(result.text).toContain("machineProfileId 15");
+          expect(result.text).toContain("machineProfileId 30");
+          expect(result.text).toContain("Nothing was selected");
+        }
+        expect(selected).toEqual([]);
+
+        const exact = await handleToolCall("select_profile", {
+          profile_id: "30",
+        });
+        expect(exact.isError).toBeUndefined();
+        expect(selected).toEqual(["30"]);
+      });
+
+      it("lets an exact machine profile id win over a profile named like one", async () => {
+        // The machine id is the one key the machine keeps unique, so it is how
+        // a caller steps out of an ambiguity. A user-made profile *named* "25"
+        // must not make that key ambiguous too.
+        const selected = machineHolding([
+          { id: "25", name: "Zer0" },
+          { id: "40", name: "25" },
+        ]);
+
+        const result = await handleToolCall("select_profile", {
+          profile_id: "25",
+        });
+        expect(result.isError).toBeUndefined();
+        expect(selected).toEqual(["25"]);
+      });
+
       it("selects by documented id, posting the machine's own id", async () => {
         const selected = machineHolding([{ id: "15", name: "Zer0" }]);
 
@@ -1400,6 +1603,70 @@ describe("tool dispatch", () => {
     describe("with the endpoint authenticated", () => {
       beforeEach(() => {
         configureOAuth();
+      });
+
+      it("refuses a duplicate name by id or by name, and deletes nothing", async () => {
+        // The repro that motivated the lookup change: both copies share the
+        // documented id *and* the exact name, so the id gate and the name
+        // gate passed together and the first copy listed was deleted.
+        const deleted = machineHolding(
+          [
+            { id: "15", name: "Zer0" },
+            { id: "25", name: "Zer0" },
+          ],
+          "7",
+        );
+
+        for (const profile_id of ["zer0", "Zer0"]) {
+          const result = await handleToolCall("delete_profile", {
+            confirm_name: "Zer0",
+            profile_id,
+          });
+          expect(result.isError).toBe(true);
+          expect(result.text).toContain("machineProfileId 15 ('Zer0')");
+          expect(result.text).toContain("machineProfileId 25 ('Zer0')");
+          expect(result.text).toContain("Nothing was deleted");
+        }
+        expect(deleted).toEqual([]);
+      });
+
+      it("deletes only the copy named by its machine profile id", async () => {
+        const deleted = machineHolding(
+          [
+            { id: "15", name: "Zer0" },
+            { id: "25", name: "Zer0" },
+          ],
+          "7",
+        );
+
+        const result = await handleToolCall("delete_profile", {
+          confirm_name: "Zer0",
+          profile_id: "25",
+        });
+        expect(result.isError).toBeUndefined();
+        expect(deleted).toEqual(["25"]);
+      });
+
+      it("refuses the ambiguity before the selected-profile guard can steer it", async () => {
+        // With the first copy selected, the guard used to refuse and advise
+        // selecting something else first — advice that, followed, deletes the
+        // original and keeps the copy. The ambiguity has to be the answer.
+        const deleted = machineHolding(
+          [
+            { id: "15", name: "Zer0" },
+            { id: "30", name: "Zer0" },
+          ],
+          "15",
+        );
+
+        const result = await handleToolCall("delete_profile", {
+          confirm_name: "Zer0",
+          profile_id: "zer0",
+        });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("machineProfileId 30");
+        expect(result.text).not.toContain("currently has selected");
+        expect(deleted).toEqual([]);
       });
 
       it("deletes the profile when the id and the exact name agree", async () => {
@@ -1736,7 +2003,7 @@ describe("tool dispatch", () => {
       });
       expect(result.text).toContain("Comparison shot:");
       expect(result.text).toContain("Time Stop Profile");
-      expect(result.text).toContain("with comparison overlay");
+      expect(result.text).toContain("with the comparison overlaid");
     });
 
     it("costs one upstream fetch per shot, not one per caller", async () => {

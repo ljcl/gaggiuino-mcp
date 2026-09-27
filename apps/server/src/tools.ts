@@ -12,9 +12,12 @@ import {
 import {
   type CreatedProfile,
   getClient,
+  MACHINE_URL,
   type MachineMaintenance,
+  type MachineProfile,
 } from "./client";
 import {
+  describeUpstreamError,
   MalformedUpstreamError,
   UpstreamHttpError,
   UpstreamUnreachableError,
@@ -26,8 +29,11 @@ import { loadSecurityConfig } from "./mcpAuth";
 import { normalizeValue, SCALE_BY_10 } from "./normalize";
 import {
   type CatalogEntry,
+  type CatalogLookup,
+  describeCandidates,
   findCatalogEntry,
   loadProfileCatalog,
+  matchKey,
   type ProfileCatalog,
 } from "./profileCatalog";
 import {
@@ -509,8 +515,8 @@ const BrewRecipeInput = z.strictObject({
 });
 
 const ProfileUploadInput = z.strictObject({
-  globalStopConditions: GlobalStopConditionsInput.optional().describe(
-    "What ends the whole shot, whichever phase is running.",
+  globalStopConditions: GlobalStopConditionsInput.nullish().describe(
+    "What ends the whole shot, whichever phase is running. Null or absent when the profile has none.",
   ),
   name: z
     .string()
@@ -526,8 +532,8 @@ const ProfileUploadInput = z.strictObject({
     .describe(
       "The phases the shot runs, in order. The machine requires at least one.",
     ),
-  recipe: BrewRecipeInput.optional().describe(
-    "Dose and yield the profile is written for. Informational.",
+  recipe: BrewRecipeInput.nullish().describe(
+    "Dose and yield the profile is written for. Informational. Null or absent when the profile has none.",
   ),
   waterTemperature: z
     .number()
@@ -957,6 +963,102 @@ export function describeDeleteFailure(
   return undefined;
 }
 
+/**
+ * Narrow a lookup to the one profile it names, or to the refusal that says why
+ * it names none.
+ *
+ * `outcome` is the sentence that says what did not happen ("Nothing was
+ * deleted."). An ambiguous lookup is refused before any request that acts on
+ * the machine: which copy to act on is the user's call, and guessing does not
+ * recover it — the first copy listed is as likely to be the original as the
+ * duplicate.
+ */
+function resolveOne(
+  lookup: CatalogLookup,
+  profileId: string,
+  outcome?: string,
+): { catalog: ProfileCatalog; entry: CatalogEntry } | { refusal: ErrorReply } {
+  const nothingHappened = outcome ? ` ${outcome}` : "";
+  if (lookup.kind === "missing") {
+    return {
+      refusal: {
+        isError: true,
+        text: `No profile matching '${profileId}'.${nothingHappened} Available ids: ${lookup.catalog.entries.map((candidate) => candidate.id).join(", ")}.`,
+      },
+    };
+  }
+  if (lookup.kind === "ambiguous") {
+    return {
+      refusal: {
+        isError: true,
+        text: `'${profileId}' matches ${lookup.candidates.length} profiles: ${describeCandidates(lookup.candidates)}. The machine does not require profile names to be unique, so this server will not pick one.${nothingHappened} Call again with the machineProfileId of the one that is meant — if the user has not said which, ask them.`,
+      },
+    };
+  }
+  return { catalog: lookup.catalog, entry: lookup.entry };
+}
+
+/**
+ * Refuse an upload whose name the machine already holds, or `undefined` when
+ * the name is free.
+ *
+ * The machine does not enforce unique names, but everything that acts on one
+ * profile here resolves it by name, so a second profile with a taken name is
+ * one `select_profile` and `delete_profile` then refuse to act on — and one the
+ * user cannot tell apart on the machine's screen either. It also turns the
+ * worst retry this tool has into a safe one: an upload that failed without a
+ * clear answer may have landed, and a blind second call would otherwise leave
+ * two copies.
+ *
+ * Fails closed. A list that cannot be read is not evidence the name is free,
+ * and refusing an upload costs nothing that trying again later does not repay.
+ * The read is the cached `/api/profiles/all`, and `createProfile` evicts that
+ * entry after every attempt, so the check after a failed upload is never
+ * answered from the list read before it.
+ */
+async function refuseTakenName(name: string): Promise<ErrorReply | undefined> {
+  let held: MachineProfile[];
+  try {
+    held = await getClient().getMachineProfiles();
+  } catch (error) {
+    const reason = describeUpstreamError(error, MACHINE_URL);
+    if (reason === null) throw error;
+    return {
+      isError: true,
+      text: `Nothing was saved: this server checks that '${name}' is not already a profile name on the machine before creating it, and could not read the machine's profile list to do so. ${reason}`,
+    };
+  }
+  const taken = held.find(
+    (profile) => matchKey(profile.name) === matchKey(name),
+  );
+  if (taken === undefined) return undefined;
+  return {
+    isError: true,
+    text: `The machine already has a profile named '${taken.name}'${taken.id === undefined ? "" : ` (machineProfileId ${taken.id})`}. Nothing was saved. Two profiles with one name cannot be told apart on the machine's screen, and select_profile and delete_profile refuse to guess between them. Give the new profile a distinct name. If an earlier upload_profile call in this conversation failed without a clear answer, this may be that profile, already saved — check with get_profile_info before uploading again.`,
+  };
+}
+
+/**
+ * The upload body, with a `null` section dropped rather than sent.
+ *
+ * `null` is accepted for `recipe` and `globalStopConditions` because
+ * `get_profile_info`'s `definition` reports a missing section as an explicit
+ * `null` — and that field is this tool's documented input, so refusing its
+ * own shape broke the get → edit → upload workflow for every profile without a
+ * recipe or global stop conditions. It is not forwarded, because the reference
+ * documents neither field as nullable and fills a malformed field with a
+ * zero-value default: absent is the one form the machine is documented to read
+ * as "none".
+ */
+function withoutNullSections<
+  T extends { globalStopConditions?: unknown; recipe?: unknown },
+>(profile: T): T {
+  const body = { ...profile };
+  if (body.globalStopConditions === null) delete body.globalStopConditions;
+  if (body.recipe === null) delete body.recipe;
+  return body;
+}
+
 async function summarizeShot(shotId: string): Promise<string> {
   const shot = await getClient().getShotData(shotId);
   return formatShotSummary(generateShotSummary(shot));
@@ -1129,13 +1231,16 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       "Get everything known about one brew profile: the machine's own definition of it — brew temperature, the phases it runs with their targets and stop conditions, and the recipe it was written around — plus this server's prose documentation when it has any, whether the profile is on the machine, and the id select_profile takes. This is the right tool for 'what does this profile actually do', including a profile the user built themselves. The definition comes back in the machine's own wire format, so it can be edited and handed to upload_profile. Accepts a documented id, a machine profile id, or the profile's name. Call list_profiles first if you do not already have one. Firmware that predates the machine's per-profile export answers with the documentation alone and says so.",
     handler: async (input) => {
-      const { catalog, entry } = await findCatalogEntry(input.profile_id);
-      if (!entry) {
-        return {
-          isError: true,
-          text: `No profile matching '${input.profile_id}'. Available ids: ${catalog.entries.map((candidate) => candidate.id).join(", ")}.`,
-        };
-      }
+      // Ambiguity is refused here too, although this tool changes nothing. Its
+      // definition is the start of the edit-and-upload workflow, and serving
+      // the original's definition to a model that asked for the copy is how
+      // the copy gets edited from the wrong base.
+      const resolved = resolveOne(
+        await findCatalogEntry(input.profile_id),
+        input.profile_id,
+      );
+      if ("refusal" in resolved) return resolved.refusal;
+      const { catalog, entry } = resolved;
       const definition = await loadProfileDefinition(entry, catalog);
       const lines = [`# ${entry.name}`, ""];
       if (entry.onMachine === false) {
@@ -1253,13 +1358,13 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       const denied = writeToolDisabled("Profile selection");
       if (denied) return denied;
 
-      const { catalog, entry } = await findCatalogEntry(input.profile_id);
-      if (!entry) {
-        return {
-          isError: true,
-          text: `No profile matching '${input.profile_id}'. Available ids: ${catalog.entries.map((candidate) => candidate.id).join(", ")}.`,
-        };
-      }
+      const resolved = resolveOne(
+        await findCatalogEntry(input.profile_id),
+        input.profile_id,
+        "Nothing was selected.",
+      );
+      if ("refusal" in resolved) return resolved.refusal;
+      const { catalog, entry } = resolved;
       if (entry.machineProfileId === null) {
         return {
           isError: true,
@@ -1294,10 +1399,14 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     handler: async (input) => {
       const denied = writeToolDisabled("Profile upload");
       if (denied) return denied;
+      const taken = await refuseTakenName(input.profile.name);
+      if (taken) return taken;
 
       let created: CreatedProfile;
       try {
-        created = await getClient().createProfile(input.profile);
+        created = await getClient().createProfile(
+          withoutNullSections(input.profile),
+        );
       } catch (error) {
         const failure = describeUploadFailure(error, input.profile.name);
         if (failure === undefined) throw error;
@@ -1331,13 +1440,15 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       const denied = writeToolDisabled("Profile deletion");
       if (denied) return denied;
 
-      const { catalog, entry } = await findCatalogEntry(input.profile_id);
-      if (!entry) {
-        return {
-          isError: true,
-          text: `No profile matching '${input.profile_id}'. Nothing was deleted. Available ids: ${catalog.entries.map((candidate) => candidate.id).join(", ")}.`,
-        };
-      }
+      // Before the name gate, not after it: two copies share their name, so
+      // the echo would pass for both and cannot be what separates them.
+      const resolved = resolveOne(
+        await findCatalogEntry(input.profile_id),
+        input.profile_id,
+        "Nothing was deleted.",
+      );
+      if ("refusal" in resolved) return resolved.refusal;
+      const { catalog, entry } = resolved;
       if (entry.machineProfileId === null) {
         return {
           isError: true,
@@ -1471,9 +1582,16 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           await summarizeShot(input.compare_shot_id),
         );
       }
+      // Never "rendered above". The chart is a `ui://` resource for the host to
+      // display, not content the model receives, and a host without MCP Apps
+      // support shows nothing — so a claimed render has the model pointing the
+      // user at a chart that is not on their screen. The envelope does carry
+      // the host's declared UI capability, but gating the wording on it waits
+      // on evidence of which hosts declare it: one that renders without
+      // declaring would then be told, wrongly, that nothing rendered.
       parts.push(
         "",
-        `[Interactive shot graph rendered above${input.compare_shot_id !== undefined ? " with comparison overlay" : ""}]`,
+        `[An interactive chart of this shot${input.compare_shot_id !== undefined ? ", with the comparison overlaid," : ""} is attached for hosts that display MCP Apps. This server cannot see whether this host displayed it: if the user says there is no chart, work from the summary above and do not refer them to one.]`,
       );
       return { text: parts.join("\n") };
     },

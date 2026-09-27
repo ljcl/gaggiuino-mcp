@@ -84,6 +84,14 @@ function detail(label: string, value: string | undefined, whenBlank: string) {
  * Generated through the same `z.toJSONSchema` path the tool schemas use, so the
  * advertised name, description, and required flag come from the schema the
  * renderer enforces — there is no second hand-maintained list to drift.
+ *
+ * **Required arguments come first, and the order is part of the contract.** A
+ * host that takes prompt arguments positionally — Claude Code binds
+ * `/choose_profile light` space-separated, in the advertised order — gives the
+ * first token to the first argument. The schema's own key order cannot carry
+ * that, because Biome keeps object keys sorted, which put `roast_level` behind
+ * `drink` and `notes` and turned `/choose_profile light` into "roast_level:
+ * missing". The sort is stable, so within each group the schema order holds.
  */
 function promptArguments(schema: ArgsSchema): PromptArgument[] {
   // An object schema always carries `properties`, even when empty; `required` is
@@ -95,11 +103,13 @@ function promptArguments(schema: ArgsSchema): PromptArgument[] {
     required?: string[];
   };
   const requiredNames = new Set(required ?? []);
-  return Object.entries(properties).map(([name, property]) => ({
-    description: property.description,
-    name,
-    required: requiredNames.has(name),
-  }));
+  return Object.entries(properties)
+    .map(([name, property]) => ({
+      description: property.description,
+      name,
+      required: requiredNames.has(name),
+    }))
+    .sort((a, b) => Number(b.required) - Number(a.required));
 }
 
 /**
@@ -209,7 +219,10 @@ export const PROMPT_DEFINITIONS: PromptDefinition[] = [
         ),
         detail(
           "Dose",
-          args.dose_g && `${args.dose_g} g`,
+          // A bare number gets its unit; "18g" or "18 grams" already has one.
+          args.dose_g && /\d$/.test(args.dose_g)
+            ? `${args.dose_g} g`
+            : args.dose_g,
           "not stated — use the recommended dose for the profile you pick",
         ),
         detail(
@@ -298,10 +311,11 @@ export const PROMPT_DEFINITIONS: PromptDefinition[] = [
         "Work through this in order:",
         "",
         "1. Call `get_dial_in_guidance` for the roast-level-to-profile-type mapping and the profile characteristics.",
-        "2. Call `list_profiles`. Recommend only profiles with `onMachine: true` — if the best match on paper is documented but not loaded on the machine, say so rather than recommending something I cannot select.",
-        "3. Call `get_profile_info` for your top two candidates and compare their target ratio and time.",
-        "4. Recommend one with a one-sentence reason tied to the roast level, and name the runner-up and when I would prefer it.",
-        "5. Ask me before calling `select_profile`.",
+        "2. Call `list_profiles`. It already carries each profile's target ratio and time, so compare those from the list. Recommend only profiles with `onMachine: true` — if the best match on paper is documented but not loaded on the machine, say so rather than recommending something I cannot select.",
+        '3. If `list_profiles` reported `source: "documentation"`, the machine could not be reached: `onMachine` is null for every profile, so nothing can be confirmed as loaded. Tell me the machine is unreachable, recommend from the documentation with that caveat, and skip steps 4 and 6 — they would only wait out the same unreachable machine.',
+        "4. Otherwise, call `get_profile_info` for your top two candidates, for what the list does not carry: the brew temperature and the phase shape from the definition it returns.",
+        "5. Recommend one with a one-sentence reason tied to the roast level, and name the runner-up and when I would prefer it.",
+        "6. Ask me before calling `select_profile`.",
       ].join("\n"),
     title: "Choose a brew profile",
   }),

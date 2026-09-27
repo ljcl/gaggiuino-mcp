@@ -19,3 +19,16 @@ export const SERVER_VERSION = "5.0.1"; // x-release-please-version
 
 /** The server name advertised in the handshake, and the MCP registry's key for it. */
 export const SERVER_NAME = "gaggiuino-mcp";
+
+/**
+ * Everything `serverInfo` carries — on `server/discover` and on every result's
+ * `_meta`. `title` is what a host shows a person, `name` stays the stable key.
+ * `websiteUrl` repeats `server.json`'s, and `version.test.ts` holds the two
+ * equal so the registry and the server cannot point at different pages.
+ */
+export const SERVER_INFO = {
+  name: SERVER_NAME,
+  title: "Gaggiuino Espresso",
+  version: SERVER_VERSION,
+  websiteUrl: "https://github.com/ljcl/gaggiuino-mcp#readme",
+};
