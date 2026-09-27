@@ -9,8 +9,8 @@ import {
   mockShotWithTimeStop,
 } from "./__fixtures__/api-responses";
 import { resetClient } from "./client";
-import { shapeDefinition } from "./profileDefinition";
 import { TEST_PASSPHRASE_HASH } from "./oauth/__fixtures__";
+import { shapeDefinition } from "./profileDefinition";
 import { handleToolCall } from "./server";
 import { mockServer } from "./test-setup";
 import { describeDeleteFailure, describeUploadFailure } from "./tools";
