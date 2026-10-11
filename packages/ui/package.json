@@ -13,7 +13,7 @@
   "dependencies": {
     "@gaggiuino/design-system": "workspace:*",
     "@modelcontextprotocol/ext-apps": "1.7.5",
-    "@modelcontextprotocol/sdk": "1.30.0",
+    "@modelcontextprotocol/sdk": "1.31.0",
     "react": "19.3.0"
   },
   "devDependencies": {
