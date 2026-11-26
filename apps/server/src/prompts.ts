@@ -113,6 +113,15 @@ function promptArguments(schema: ArgsSchema): PromptArgument[] {
 }
 
 /**
+ * Appended to each plan's step 1. The `espresso-dial-in` skill (`skills.ts`)
+ * is the same guidance, so a host that has already loaded it should not pull
+ * all ~29 KB in again through the tool. A `const` for the same reason as
+ * `ADJUSTMENT_POLICY`: three copies of one sentence drift.
+ */
+const SKILL_ALTERNATIVE =
+  " If the espresso-dial-in skill is already loaded, use it instead: it is the same guidance.";
+
+/**
  * The termination policy for the dial-in loop.
  *
  * Change-one-variable-and-re-pull is incomplete without how far to move, which
@@ -233,7 +242,8 @@ export const PROMPT_DEFINITIONS: PromptDefinition[] = [
         "",
         "Work through this in order:",
         "",
-        "1. Call `get_dial_in_guidance` and follow it for the rest of this conversation. It carries the roast-level-to-profile mapping and my equipment.",
+        "1. Call `get_dial_in_guidance` and follow it for the rest of this conversation. It carries the roast-level-to-profile mapping and my equipment." +
+          SKILL_ALTERNATIVE,
         "2. Call `get_status` to check the machine is up to temperature and has water.",
         "3. Call `list_profiles` and choose the profile whose type suits this roast. Recommend only profiles the machine actually holds, and say in one sentence why that one.",
         "4. If it is not the profile already loaded, ask me before calling `select_profile` — that one changes the machine.",
@@ -271,7 +281,8 @@ export const PROMPT_DEFINITIONS: PromptDefinition[] = [
         "",
         "Work through this in order:",
         "",
-        "1. Call `get_dial_in_guidance` and diagnose against it, not against generic espresso advice.",
+        "1. Call `get_dial_in_guidance` and diagnose against it, not against generic espresso advice." +
+          SKILL_ALTERNATIVE,
         "2. Call `get_latest_shot_id` for the shot's id and headline numbers.",
         "3. Call `get_shot_data` with that id for the phase-by-phase breakdown.",
         "4. Call `get_profile_info` for the profile the shot ran, so you read the numbers against that profile's targets rather than a generic ideal.",
@@ -310,7 +321,8 @@ export const PROMPT_DEFINITIONS: PromptDefinition[] = [
         "",
         "Work through this in order:",
         "",
-        "1. Call `get_dial_in_guidance` for the roast-level-to-profile-type mapping and the profile characteristics.",
+        "1. Call `get_dial_in_guidance` for the roast-level-to-profile-type mapping and the profile characteristics." +
+          SKILL_ALTERNATIVE,
         "2. Call `list_profiles`. It already carries each profile's target ratio and time, so compare those from the list. Recommend only profiles with `onMachine: true` — if the best match on paper is documented but not loaded on the machine, say so rather than recommending something I cannot select.",
         '3. If `list_profiles` reported `source: "documentation"`, the machine could not be reached: `onMachine` is null for every profile, so nothing can be confirmed as loaded. Tell me the machine is unreachable, recommend from the documentation with that caveat, and skip steps 4 and 6 — they would only wait out the same unreachable machine.',
         "4. Otherwise, call `get_profile_info` for your top two candidates, for what the list does not carry: the brew temperature and the phase shape from the definition it returns.",

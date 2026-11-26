@@ -35,6 +35,8 @@ Each workflow prompt lays out the tools to call in order, so the analysis starts
 
 **MCP Resources** - `gaggiuino://profiles` and `gaggiuino://profiles/{id}` for profile data
 
+**MCP Skill** (beta) - `espresso-dial-in`, the dial-in guidance published through the [Skills over MCP](https://modelcontextprotocol.io/extensions/skills/overview) extension. It is the same text as `get_dial_in_guidance`, but a host that supports MCP skills loads it only when the task needs it, and reads its reference sections (profile editing, profile documentation, diagnostics) one at a time. Claude Code lists it as `/<server>:espresso-dial-in` in local sessions. If you change `prompts.local.yaml`, the host asks you to approve the skill again, because its content changed.
+
 ## Quick Start
 
 The server is published as a multi-arch image (linux/amd64, linux/arm64) at
