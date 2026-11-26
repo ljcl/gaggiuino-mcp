@@ -627,19 +627,64 @@ values and never re-checks presence. Five things follow from that shape.
   genuinely wants to tune is already `user_context` in the YAML, and every plan
   picks it up by calling `get_dial_in_guidance` in step 1 instead of restating it.
 
-### One template, two surfaces
+### One template, three surfaces
 
-`guidance.ts` renders the dial-in guidance, and `get_dial_in_guidance` and the
-`espresso_shot_analyst` prompt both call it. One renderer is the point:
-interpolating the same template independently in two files means a placeholder
-added to `prompts.yaml` gets substituted on one surface and left raw on the
-other. `server.test.ts` asserts the two are byte-identical.
+`guidance.ts` renders the dial-in guidance, and `get_dial_in_guidance`, the
+`espresso_shot_analyst` prompt and the `espresso-dial-in` skill all take their
+text from it. One renderer is the point: interpolating the same template
+independently in two files means a placeholder added to `prompts.yaml` gets
+substituted on one surface and left raw on the other. `server.test.ts` asserts
+the tool and the prompt are byte-identical, and `skills.test.ts` asserts every
+section of the rendering lands in exactly one skill file.
 
-Both surfaces exist on purpose and neither is redundant: a **prompt** is
-user-invoked, so a model that decides mid-conversation it needs the guidance
+The tool and the prompt exist on purpose and neither is redundant: a **prompt**
+is user-invoked, so a model that decides mid-conversation it needs the guidance
 cannot reach one — that is what the tool is for. The tool therefore keeps
-returning the whole document rather than a pointer to the prompt, and the ~7KB is
-the price of the expertise it was asked for.
+returning the whole document rather than a pointer to the prompt, and the ~29 KB
+is the price of the expertise it was asked for.
+
+### The skill is the same text, loaded in pieces
+
+`skills.ts` publishes the guidance through the Skills over MCP extension
+(`io.modelcontextprotocol/skills`, SDK 2.4.0+). The host loads a skill only when
+the task needs it and reads its supporting files one at a time, which the tool
+cannot do. It cuts the rendering at its `## ` headings. The sections named in
+`REFERENCE_SECTIONS` become `references/*.md` files, verbatim, and the rest stay
+in `SKILL.md` in their original order, with an index that says when to read each
+reference. `SKILL.md` is ~10 KB of the ~29 KB. Five things are load-bearing:
+
+- **A section the table does not name stays in `SKILL.md`.** That table is keyed
+  by heading text, the only handle the template gives a section. So a
+  `prompts.local.yaml` override that adds or renames a section changes where it
+  lands, never whether it lands. The user's `user_context` renders inside
+  "Important Notes", so it is always in the file the host reads first.
+- **The bytes are fixed per deployment, and that is a grant rule.** The host
+  checks each file against the manifest's `sha256` digest, and a changed
+  manifest revokes the user's approval of the skill. `dialInSkill()` is memoised
+  on the rendered text, and the template loads once at startup. So the digest
+  moves only when a release or an override edit changes the guidance text. Treat
+  such a change the way a tool-grant change is treated: say so in the CHANGELOG.
+- **The server serves the extension itself, on the low-level `Server`.** The
+  SDK's `SkillsExtension.attach()` takes an `McpServer` and serves skill files
+  through its own resource template, and this server answers `resources/read`
+  from one handler. So `server.ts` registers `skills/list` and `skills/get`
+  (custom methods take the three-argument `setRequestHandler`), declares the
+  extension in `SERVER_CAPABILITIES`, and adds a `skill://` branch to
+  `readResource`. The SDK's `skillEntry()` still builds the manifest, digests and
+  frontmatter checks, so none of that is hand-written. Both results carry their
+  own `ttlMs`/`cacheScope`, because the extension requires them and `cacheHints`
+  covers only the core cacheable set.
+- **No `directoryRead`, and no skill file in `resources/list`.** Claiming
+  `directoryRead` commits the server to `resources/directory/read` for every skill
+  directory (the rule in "Answer every method the advertised capabilities
+  imply"). Listing skill files would invite the ahead-of-need fetch the spec
+  forbids hosts to make.
+- **The tool and the prompt stay.** Skills are beta and Claude Code does not load
+  MCP skills in cloud sessions, `claude -p`, the Agent SDK or Desktop
+  connectors. Removing the tool would also drop a grant existing installations
+  hold. `SERVER_INSTRUCTIONS` and each workflow plan's step 1 say the skill and
+  the tool are the same guidance, so a host with the skill loaded does not pull
+  the whole document in again.
 
 The prompt's advertised **description** comes from the loaded template, not a
 literal. A literal in the ListPrompts handler would make a

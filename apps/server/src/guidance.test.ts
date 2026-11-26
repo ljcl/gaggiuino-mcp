@@ -6,8 +6,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * Every other test in this repo runs against the real bundled YAML, where the
  * prompt is always present — so the three surfaces that have to cope without it
  * are only reachable by replacing the loader. Each fails differently on purpose:
- * a tool returns an `isError` result, a prompt throws, and ListPrompts falls back
- * to a built-in description rather than advertising nothing.
+ * a tool returns an `isError` result, a prompt throws, ListPrompts falls back
+ * to a built-in description rather than advertising nothing, and the skills
+ * extension lists no skill rather than answering an error mid-discovery.
  */
 const loadPrompts = vi.hoisted(() => vi.fn());
 
@@ -21,6 +22,8 @@ const { MISSING_GUIDANCE_TEXT, renderDialInGuidance } = await import(
 );
 const { advertisedPrompts, tryRenderPrompt } = await import("./prompts");
 const { TOOLS_BY_NAME } = await import("./tools");
+const { connectTestClient } = await import("./mcpTestClient");
+const { DIAL_IN_SKILL_URI } = await import("./skills");
 
 beforeEach(() => {
   loadPrompts.mockReset();
@@ -58,6 +61,21 @@ describe("with the dial-in prompt missing from prompts.yaml", () => {
     );
     expect(advertised?.description).toBeTruthy();
   });
+
+  it("lists no skill, and answers -32602 for the skill and its files", async () => {
+    // skills/list is part of discovery once the extension is declared, so an
+    // empty list is the answer; an error there is the failed-discovery case
+    // AGENTS.md "Answer every method the advertised capabilities imply" names.
+    const client = await connectTestClient();
+    const list = await client.send("skills/list");
+    expect((list.result as { skills: unknown[] }).skills).toEqual([]);
+    const get = await client.send("skills/get", { uri: DIAL_IN_SKILL_URI });
+    expect(get.error?.code).toBe(-32602);
+    const read = await client.send("resources/read", {
+      uri: DIAL_IN_SKILL_URI,
+    });
+    expect(read.error?.code).toBe(-32602);
+  });
 });
 
 describe("with a user's equipment context configured", () => {
@@ -76,5 +94,24 @@ describe("with a user's equipment context configured", () => {
     expect(guidance).toContain("- Grinder: DF64 with SSP MP burrs");
     expect(guidance).toContain("Available Profiles");
     expect(guidance).not.toContain("{user_context}");
+  });
+
+  it("keeps the user context in the skill's SKILL.md, the file a host reads first", async () => {
+    loadPrompts.mockReturnValue({
+      espresso_shot_analyst: {
+        description: "…",
+        template: "Equipment:\n{user_context}\n\n{profiles_text}",
+        userContext: "- Grinder: DF64 with SSP MP burrs",
+      },
+    });
+    const client = await connectTestClient();
+    const read = await client.readResource({ uri: DIAL_IN_SKILL_URI });
+    expect(read.contents[0]?.text).toContain(
+      "- Grinder: DF64 with SSP MP burrs",
+    );
+    // The profile list is reference material and moves out.
+    expect(read.contents[0]?.text).toContain(
+      "references/available-profiles.md",
+    );
   });
 });

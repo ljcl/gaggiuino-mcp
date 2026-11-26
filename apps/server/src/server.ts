@@ -1,6 +1,13 @@
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import {
+  GetSkillRequestParamsSchema,
+  ListSkillsRequestParamsSchema,
+  SKILLS_EXTENSION_ID,
+  SKILLS_GET_METHOD,
+  SKILLS_LIST_METHOD,
+} from "@modelcontextprotocol/core/ext/skills";
+import {
   type CallToolResult,
   CLIENT_INFO_META_KEY,
   INVALID_PARAMS,
@@ -18,6 +25,7 @@ import { describeUpstreamError, formatFieldIssues } from "./errors";
 import { logger } from "./logging";
 import { getAllProfilesText, getProfile } from "./profiles";
 import { advertisedPrompts, tryRenderPrompt } from "./prompts";
+import { dialInSkill, SKILL_FILE_MIME_TYPE } from "./skills";
 import { TOOL_DEFINITIONS, TOOLS_BY_NAME, type ToolDefinition } from "./tools";
 import { SERVER_INFO } from "./version";
 
@@ -134,8 +142,15 @@ export async function handleToolCall(
  * is a module-level constant, and `listChanged` is a promise to tell the host
  * to re-fetch — a re-fetch being exactly what re-keys the cached tools a
  * permission grant is stored against.
+ *
+ * The skills extension is declared without `directoryRead`: this server
+ * serves `skills/list`, `skills/get` and the skill files through
+ * `resources/read`, and nothing else the extension can imply. Claiming
+ * `directoryRead` would commit it to `resources/directory/read` for every skill
+ * directory — the same rule as answering every method a capability implies.
  */
 export const SERVER_CAPABILITIES = {
+  extensions: { [SKILLS_EXTENSION_ID]: {} },
   prompts: {},
   resources: {},
   tools: {},
@@ -321,6 +336,11 @@ export async function readResource(
       ],
     };
   }
+  if (uri.startsWith("skill://")) {
+    const text = (await dialInSkill())?.files.get(uri);
+    if (text === undefined) return { missing: `Unknown skill file: ${uri}` };
+    return { contents: [{ uri, mimeType: SKILL_FILE_MIME_TYPE, text }] };
+  }
   if (uri === "ui://shot-graph/app.html") {
     const html = await fs.readFile(SHOT_GRAPH_HTML_PATH, "utf-8");
     return {
@@ -353,6 +373,7 @@ export const SERVER_INSTRUCTIONS = [
   "This server reads one Gaggiuino, a modified Gaggia espresso machine, and its shot history, and can switch, save and delete its brew profiles.",
   "For the shot just pulled, start with get_latest_shot_id (its id and outcome metrics), then get_shot_data for the phase breakdown. list_profiles shows what the machine holds.",
   "Call get_dial_in_guidance before giving dial-in or profile advice: it carries the user's equipment and how to read a shot.",
+  "The same guidance is published as the espresso-dial-in skill, which loads its reference sections only when needed; if the skill is loaded, do not also call get_dial_in_guidance.",
   "The machine is one ESP32 on Wi-Fi and is often switched off. If a tool says it cannot reach the machine, stop and tell the user rather than trying other tools, which will wait out the same timeout. get_dial_in_guidance and list_profiles still answer from bundled documentation.",
   "select_profile, upload_profile and delete_profile change the machine: call them only when the user asks, after confirming with them.",
 ].join(" ");
@@ -440,6 +461,41 @@ export function createServer(): Server {
       ],
     };
   });
+
+  // The skills extension's two methods. Custom (non-spec) methods take the
+  // three-argument form, which validates `params` before the handler runs.
+  // Both results carry their own `ttlMs`/`cacheScope`: the extension requires
+  // them, and `cacheHints` above covers only the core cacheable set.
+  server.setRequestHandler(
+    SKILLS_LIST_METHOD,
+    { params: ListSkillsRequestParamsSchema },
+    async () => {
+      const skill = await dialInSkill();
+      return {
+        cacheScope: "private",
+        skills: skill === undefined ? [] : [skill.entry],
+        ttlMs: STATIC_SURFACE_TTL_MS,
+      };
+    },
+  );
+  server.setRequestHandler(
+    SKILLS_GET_METHOD,
+    { params: GetSkillRequestParamsSchema },
+    async (params) => {
+      const skill = await dialInSkill();
+      if (skill === undefined || skill.entry.uri !== params.uri) {
+        throw new ProtocolError(
+          INVALID_PARAMS,
+          `No skill is served at ${params.uri}`,
+        );
+      }
+      return {
+        cacheScope: "private",
+        skill: skill.entry,
+        ttlMs: STATIC_SURFACE_TTL_MS,
+      };
+    },
+  );
 
   server.setRequestHandler("resources/list", async () => ({
     resources: RESOURCES as unknown as ListResourcesResult["resources"],
