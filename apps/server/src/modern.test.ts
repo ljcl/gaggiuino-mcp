@@ -193,17 +193,20 @@ describe("era detection", () => {
 });
 
 describe("request validation", () => {
-  it("serves a request whose envelope names the version but whose header is absent", async () => {
-    // The envelope is the era marker; the header exists for intermediaries,
-    // and the SDK tolerates its absence rather than stranding a client whose
-    // proxy stripped it. When the header IS present it must agree — the
-    // mismatch tests below pin that.
+  it("rejects a missing MCP-Protocol-Version header, naming it", async () => {
+    // SEP-2243 requires the header on every modern request, first among the
+    // standard headers. SDK 2.0.0 served a request without it, because the
+    // body envelope alone classifies the era. SDK 2.4.0 still classifies on
+    // the body (so a stripped header cannot change the era), then refuses to
+    // serve it. Same rule as the Mcp-Method and Mcp-Name cases below.
     const response = await post(
       modernBody("tools/list"),
       modernHeaders("tools/list", { version: null }),
     );
-    const result = await readResult(response);
-    expect(result.resultType).toBe("complete");
+    expect(response.status).toBe(400);
+    const error = await readError(response);
+    expect(error.code).toBe(-32020);
+    expect(error.message).toContain("MCP-Protocol-Version");
   });
 
   it("rejects a header that disagrees with the body version", async () => {

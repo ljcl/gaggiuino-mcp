@@ -14,8 +14,8 @@
   },
   "dependencies": {
     "@gaggiuino/shot-graph": "workspace:*",
-    "@modelcontextprotocol/core": "2.0.0",
-    "@modelcontextprotocol/server": "2.0.0",
+    "@modelcontextprotocol/core": "2.4.0",
+    "@modelcontextprotocol/server": "2.4.0",
     "yaml": "2.9.1",
     "zod": "4.6.5"
   },
