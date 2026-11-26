@@ -446,6 +446,53 @@ this path **regardless of method**, so the generic 404 branch names
 404 on a delete is genuinely ambiguous between "already gone" and "this firmware
 has no delete endpoint", and the text says both rather than picking.
 
+### On a host with forms, the user types the name
+
+The exact-name echo is typed by the model: it reads the name from
+`list_profiles` and copies it back, which stops an off-by-one id and shows
+nothing about what a person chose. The approval prompt shows the arguments, and
+`profile_id: 25` is easy to approve unread. So when the client declares form
+elicitation, `delete_profile` adds one step after every gate above: it answers
+round 1 with an `InputRequiredResult` (2026-07-28 multi-round-trip) whose form
+asks the user to type the profile's name, and deletes only on the retried call
+whose answer matches. `confirmation.ts` owns the round trip; `confirmDeletion`
+in `tools.ts` is the step. Five things are load-bearing:
+
+- **Round 2 runs every gate again.** The handler runs from the top on the
+  retried call, and the form step comes after the scope gate, the lookup, the
+  name echo and the live selected-profile read. A profile selected while the
+  form was open is refused on round 2 against the machine as it is then.
+- **The state is signed, and the SDK checks it before any handler runs.**
+  `createRequestStateCodec` (HMAC, ten-minute TTL, bound to the method) mints it,
+  and `ServerOptions.requestState.verify` refuses a forged or expired one with
+  the SDK's frozen `-32602`. The payload names the tool and the
+  `machineProfileId`, and `confirmDeletion` compares both with the call it is
+  serving, so a genuine state minted for one profile cannot be spent on another.
+  An answer that arrives with no state at all lands on round 1 again: an answer
+  counts only as a reply to a question this server asked.
+- **The key is random per process.** One process serves every round, so nothing
+  has to be configured or shared, and nothing depends on `MCP_OAUTH_SECRET`
+  (#279 may remove it). A restart drops every pending form, which is the right
+  failure for an irreversible action.
+- **This stops the model, not a stranger.** A client holding a write token can
+  invent an answer as easily as it can leave the capability out. The scope gate
+  is still what keeps strangers out. That is why the state is not bound to the
+  token's principal: a binding would add no protection a token holder could not
+  walk around.
+- **A host without forms keeps the old single call, byte for byte.** That covers
+  a client that declares no `elicitation`, and one that declares `url` mode
+  only (the server must not send a mode the client did not declare). No tool's
+  input schema, description or annotations changed, so `tool-contract.json` did
+  not move and no grant was lost: `confirm_name` stays, because it is the gate
+  on those hosts.
+
+Matching trims surrounding whitespace and nothing else, so `zer0` does not
+confirm `Zer0`. A decline or a dismissal is the user's answer, not a tool
+failure, so it is not an `isError`. Its text tells the model not to try again on
+its own. The `tool.call` record says `input_required` for the form and
+`declined`, `cancelled`, `confirmation_mismatch` or `confirmation_missing` for the
+answer, via a reply's `logOutcome`, because ok/error would mislabel all five.
+
 ### The machine is also the authority on what a profile *does*
 
 `GET /api/profile/{id}` serves a profile's full definition — phases, targets,

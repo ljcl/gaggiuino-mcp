@@ -134,18 +134,28 @@ function post(body: unknown, headers: Record<string, string> = {}): Request {
 }
 
 /** The reserved envelope keys a 2026-07-28 request carries in `params._meta`. */
-function envelope(clientName: string): Record<string, unknown> {
+function envelope(
+  clientName: string,
+  clientCapabilities: Record<string, unknown>,
+): Record<string, unknown> {
   return {
-    [META_CLIENT_CAPABILITIES]: {},
+    [META_CLIENT_CAPABILITIES]: clientCapabilities,
     [META_CLIENT_INFO]: { name: clientName, version: "1.0" },
     [META_VERSION]: PROTOCOL_VERSION,
   };
 }
 
-/** Connect a client bound to the handler and run `server/discover`. */
+/**
+ * Connect a client bound to the handler and run `server/discover`.
+ *
+ * `clientCapabilities` is what every request's envelope declares — `{}` by
+ * default, so a suite that wants a form-capable host says so, e.g.
+ * `{ elicitation: { form: {} } }`.
+ */
 export async function connectTestClient(
   clientName = "test-client",
   handler: FetchHandler = createFetchHandler({ security: OPEN }),
+  clientCapabilities: Record<string, unknown> = {},
 ): Promise<McpTestClient> {
   let nextId = 1;
 
@@ -160,7 +170,7 @@ export async function connectTestClient(
         // Caller-supplied keys win, so a test can override an envelope claim
         // (e.g. name an unsupported revision on purpose).
         _meta: {
-          ...envelope(clientName),
+          ...envelope(clientName, clientCapabilities),
           ...(merged._meta as Record<string, unknown> | undefined),
         },
       },

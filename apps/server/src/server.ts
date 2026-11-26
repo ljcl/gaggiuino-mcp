@@ -11,6 +11,7 @@ import {
   type CallToolResult,
   CLIENT_INFO_META_KEY,
   INVALID_PARAMS,
+  type InputRequiredResult,
   type ListResourcesResult,
   type ListToolsResult,
   ProtocolError,
@@ -21,6 +22,12 @@ import {
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { MACHINE_URL } from "./client";
+import {
+  interactionFor,
+  NO_INTERACTION,
+  type ToolInteraction,
+  verifyRequestState,
+} from "./confirmation";
 import { describeUpstreamError, formatFieldIssues } from "./errors";
 import { logger } from "./logging";
 import { getAllProfilesText, getProfile } from "./profiles";
@@ -75,7 +82,11 @@ function toMcpTool(tool: ToolDefinition): Tool {
 export const TOOLS: Tool[] = TOOL_DEFINITIONS.map(toMcpTool);
 
 export interface ToolOutcome {
+  /** The round-1 answer of a call that needs the user; `text` says why, for the log. */
+  inputRequired?: InputRequiredResult;
   isError?: boolean;
+  /** What the `tool.call` record says instead of ok/error, when that would mislabel it. */
+  logOutcome?: string;
   structuredContent?: Record<string, unknown>;
   text: string;
 }
@@ -96,6 +107,7 @@ function describeInvalidInput(toolName: string, error: z.ZodError): string {
 export async function handleToolCall(
   name: string,
   args: Record<string, unknown>,
+  interaction: ToolInteraction = NO_INTERACTION,
 ): Promise<ToolOutcome> {
   const tool = TOOLS_BY_NAME.get(name);
   if (!tool) {
@@ -109,19 +121,23 @@ export async function handleToolCall(
 
   let reply: Awaited<ReturnType<ToolDefinition["handler"]>>;
   try {
-    reply = await tool.handler(parsed.data);
+    reply = await tool.handler(parsed.data, interaction);
   } catch (error) {
     const actionable = describeUpstreamError(error, MACHINE_URL);
     if (actionable === null) throw error;
     return { isError: true, text: actionable };
   }
 
+  if ("inputRequired" in reply) {
+    return { inputRequired: reply.inputRequired, text: reply.text };
+  }
+
   if ("isError" in reply) {
-    return { isError: true, text: reply.text };
+    return { isError: true, logOutcome: reply.logOutcome, text: reply.text };
   }
 
   if (!tool.outputSchema) {
-    return { text: reply.text };
+    return { logOutcome: reply.logOutcome, text: reply.text };
   }
 
   // Parsing on the way out keeps `structuredContent` and the advertised
@@ -132,6 +148,7 @@ export async function handleToolCall(
       string,
       unknown
     >,
+    logOutcome: reply.logOutcome,
     text: reply.text,
   };
 }
@@ -204,7 +221,8 @@ export async function callTool(
   name: string,
   args: Record<string, unknown>,
   client: CallingClient = {},
-): Promise<CallToolResultShape> {
+  interaction: ToolInteraction = NO_INTERACTION,
+): Promise<CallToolResultShape | InputRequiredResult> {
   const startedAt = performance.now();
   const finish = (outcome: string, fields?: Record<string, unknown>) => {
     logger.info("tool.call", {
@@ -218,7 +236,13 @@ export async function callTool(
   };
 
   try {
-    const outcome = await handleToolCall(name, args);
+    const outcome = await handleToolCall(name, args, interaction);
+    if (outcome.inputRequired) {
+      // Not a result yet: the client asks the user and calls again. Logged
+      // with what it is waiting for, so a form nobody answered is visible.
+      finish("input_required", { reason: outcome.text });
+      return outcome.inputRequired;
+    }
     const result: CallToolResultShape = {
       content: [{ text: outcome.text, type: "text" }],
     };
@@ -228,8 +252,10 @@ export async function callTool(
     }
     // The text of an expected failure is written to be actionable, so it is
     // worth carrying into the log rather than a bare "error".
-    finish(outcome.isError ? "error" : "ok", {
-      ...(outcome.isError ? { reason: outcome.text } : {}),
+    finish(outcome.logOutcome ?? (outcome.isError ? "error" : "ok"), {
+      ...(outcome.isError || outcome.logOutcome
+        ? { reason: outcome.text }
+        : {}),
     });
     return result;
   } catch (error) {
@@ -412,6 +438,9 @@ export function createServer(): Server {
     },
     capabilities: SERVER_CAPABILITIES,
     instructions: SERVER_INSTRUCTIONS,
+    // Every echoed `requestState` is verified before any handler runs; a
+    // forged or expired one is the SDK's frozen -32602. See confirmation.ts.
+    requestState: { verify: verifyRequestState },
   });
 
   // The SDK's result types spell out every reserved `_meta` envelope key,
@@ -429,7 +458,9 @@ export function createServer(): Server {
       // The SDK lifts the reserved keys out of `params._meta` before a
       // handler runs; this is where it puts them.
       callingClient(ctx.mcpReq.envelope),
+      interactionFor(ctx),
     );
+    if (!("content" in result)) return result;
     // The result projection lives in the SDK codec; low-level tools/call
     // handlers route through it themselves. Identity for this server's
     // always-text, object-structured results.

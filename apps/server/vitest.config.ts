@@ -22,7 +22,7 @@ export default defineConfig({
       // against a threshold the previous run wrote sixty seconds earlier.
       // See AGENTS.md "Test coverage".
       thresholds: {
-        branches: 96.1,
+        branches: 96.2,
         functions: 100,
         lines: 99.9,
         statements: 99.7,

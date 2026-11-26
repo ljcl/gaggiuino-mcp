@@ -1,4 +1,7 @@
-import { type ToolAnnotations } from "@modelcontextprotocol/server";
+import {
+  type InputRequiredResult,
+  type ToolAnnotations,
+} from "@modelcontextprotocol/server";
 import { z } from "zod";
 import {
   extractOutcomeMetrics,
@@ -16,6 +19,7 @@ import {
   type MachineMaintenance,
   type MachineProfile,
 } from "./client";
+import { NO_INTERACTION, type ToolInteraction } from "./confirmation";
 import {
   describeUpstreamError,
   MalformedUpstreamError,
@@ -600,24 +604,45 @@ const MaintenanceOutput = z.object({
 
 type ObjectSchema = z.ZodObject;
 
+/**
+ * `logOutcome` names an outcome the plain ok/error split would mislabel in the
+ * `tool.call` record — a user who declined a confirmation form is neither a
+ * success nor a failure of the tool. It never reaches the model.
+ */
 interface ErrorReply {
   isError: true;
+  logOutcome?: string;
+  text: string;
+}
+
+/**
+ * The tool needs the user before it can finish: `inputRequired` is the round-1
+ * answer, and `text` says what it is waiting for, for the log.
+ */
+interface InputRequiredReply {
+  inputRequired: InputRequiredResult;
   text: string;
 }
 
 type SuccessReply<O> = O extends ObjectSchema
-  ? { structured: z.input<O>; text: string }
-  : { text: string };
+  ? { logOutcome?: string; structured: z.input<O>; text: string }
+  : { logOutcome?: string; text: string };
 
-type ToolReply<O> = ErrorReply | SuccessReply<O>;
+type ToolReply<O> = ErrorReply | InputRequiredReply | SuccessReply<O>;
 
 /** A tool as the dispatcher sees it, with its handler's argument type erased. */
 export interface ToolDefinition {
   annotations: ToolAnnotations;
   description: string;
+  /** `interaction` defaults to {@link NO_INTERACTION}: a call that can ask nothing. */
   handler: (
     input: unknown,
-  ) => Promise<ErrorReply | { text: string; structured?: unknown }>;
+    interaction?: ToolInteraction,
+  ) => Promise<
+    | ErrorReply
+    | InputRequiredReply
+    | { logOutcome?: string; structured?: unknown; text: string }
+  >;
   inputSchema: ObjectSchema;
   meta?: Record<string, unknown>;
   name: string;
@@ -631,7 +656,10 @@ function defineTool<
 >(spec: {
   annotations: ToolAnnotations;
   description: string;
-  handler: (input: z.output<I>) => Promise<ToolReply<O>> | ToolReply<O>;
+  handler: (
+    input: z.output<I>,
+    interaction: ToolInteraction,
+  ) => Promise<ToolReply<O>> | ToolReply<O>;
   inputSchema: I;
   meta?: Record<string, unknown>;
   name: string;
@@ -641,7 +669,8 @@ function defineTool<
   return {
     annotations: spec.annotations,
     description: spec.description,
-    handler: async (input) => spec.handler(input as z.output<I>),
+    handler: async (input, interaction = NO_INTERACTION) =>
+      spec.handler(input as z.output<I>, interaction),
     inputSchema: spec.inputSchema,
     meta: spec.meta,
     name: spec.name,
@@ -961,6 +990,92 @@ export function describeDeleteFailure(
     };
   }
   return undefined;
+}
+
+/** Key of the typed-name form in `inputRequests` and `inputResponses`. */
+const CONFIRM_DELETE_KEY = "confirm_delete";
+
+/**
+ * The typed-name step of `delete_profile`: `undefined` means go ahead and
+ * delete, anything else is the reply to send instead.
+ *
+ * Three cases, by what the request carries:
+ *
+ * - **No state, form-capable client** — round 1. Send the form, signed for
+ *   this profile id, and delete nothing.
+ * - **No state, no form** — the host cannot ask. Go ahead: the four gates
+ *   in AGENTS.md "Deleting is four gates" are what they were before this
+ *   step existed, and a host without forms keeps exactly that behaviour.
+ * - **A verified state** — round 2. It must name this tool and this profile
+ *   id, and the user's answer must be the name, or nothing is deleted.
+ *
+ * The comparison accepts the same spellings `confirm_name` does and trims
+ * the typed value only (see `readTypedName`). A decline or a dismissal is an
+ * answer, not a failure, so it is not an `isError`, and its text tells the
+ * model not to try again on its own.
+ */
+async function confirmDeletion(
+  interaction: ToolInteraction,
+  machineProfileId: string,
+  displayName: string,
+  accepted: readonly string[],
+): Promise<
+  | { inputRequired: InputRequiredResult; text: string }
+  | { isError: true; logOutcome: string; text: string }
+  | { logOutcome: string; text: string }
+  | undefined
+> {
+  const pending = interaction.pending;
+  if (pending === undefined) {
+    if (!interaction.formElicitation) return undefined;
+    return {
+      inputRequired: await interaction.askTypedName({
+        key: CONFIRM_DELETE_KEY,
+        message: `Delete the brew profile '${displayName}' (machine profile id ${machineProfileId}) from the machine? This cannot be undone. To confirm, type the profile name exactly as shown.`,
+        name: displayName,
+        pending: { profileId: machineProfileId, tool: "delete_profile" },
+      }),
+      text: `Waiting for the user to confirm deleting '${displayName}' (machine profile id ${machineProfileId}).`,
+    };
+  }
+
+  if (
+    pending.tool !== "delete_profile" ||
+    pending.profileId !== machineProfileId
+  ) {
+    return {
+      isError: true,
+      logOutcome: "confirmation_mismatch",
+      text: `Refusing to delete '${displayName}': the confirmation the user answered was for a different request, not for machine profile id ${machineProfileId}. Nothing was deleted. Call delete_profile again for the profile the user asked about.`,
+    };
+  }
+
+  const answer = interaction.typedName(CONFIRM_DELETE_KEY);
+  switch (answer.kind) {
+    case "typed":
+      if (accepted.includes(answer.value)) return undefined;
+      return {
+        isError: true,
+        logOutcome: "confirmation_mismatch",
+        text: `Refusing to delete '${displayName}': the name the user typed did not match it exactly. Nothing was deleted. Ask the user whether they still want this profile deleted before calling delete_profile again.`,
+      };
+    case "declined":
+      return {
+        logOutcome: "declined",
+        text: `Not deleted: the user declined to delete '${displayName}'. Nothing was changed on the machine. Do not call delete_profile for this profile again unless the user asks for it.`,
+      };
+    case "cancelled":
+      return {
+        logOutcome: "cancelled",
+        text: `Not deleted: the user dismissed the confirmation for '${displayName}' without answering. Nothing was changed on the machine. Do not call delete_profile for this profile again unless the user asks for it.`,
+      };
+    case "missing":
+      return {
+        isError: true,
+        logOutcome: "confirmation_missing",
+        text: `Refusing to delete '${displayName}': the call came back without the user's answer to the confirmation form. Nothing was deleted. Ask the user whether they still want this profile deleted.`,
+      };
+  }
 }
 
 /**
@@ -1436,7 +1551,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     annotations: DELETES_ON_MACHINE,
     description:
       "Permanently delete a brew profile from the machine. There is no undo and this server cannot restore a deleted profile, so only call this when the user has asked for this specific profile to be deleted, in this conversation, by name. Never delete a profile on your own initiative — not to tidy up, not to remove a duplicate you created, not as a step in some other task. Requires the profile's exact name in confirm_name as well as its id, so the deletion cannot be an off-by-one: read the name from list_profiles and pass it back exactly as reported. Refuses to delete the profile the machine currently has selected, and refuses unless this server has an authorization server configured.",
-    handler: async (input) => {
+    handler: async (input, interaction) => {
       const denied = writeToolDisabled("Profile deletion");
       if (denied) return denied;
 
@@ -1510,6 +1625,18 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           text: `Refusing to delete '${entry.name}': it is the profile the machine currently has selected. Nothing was deleted. Ask the user to select a different profile first — with select_profile, or on the machine itself — and then delete this one.`,
         };
       }
+
+      // The last gate, and the only one the user answers rather than the model:
+      // on a host with form elicitation, the user types the name. It runs after
+      // every gate above, so round 2 has re-checked all of them against the
+      // machine as it is now, not as it was when the form went out.
+      const confirmed = await confirmDeletion(
+        interaction,
+        entry.machineProfileId,
+        entry.machineName ?? entry.name,
+        accepted,
+      );
+      if (confirmed !== undefined) return confirmed;
 
       try {
         await getClient().deleteProfileFromMachine(entry.machineProfileId);
