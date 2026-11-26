@@ -1025,7 +1025,10 @@ async function confirmDeletion(
   | { logOutcome: string; text: string }
   | undefined
 > {
-  const pending = interaction.pending;
+  // A `pick` state means the user has just chosen which copy; the typed-name
+  // question has not been asked yet, so that round is this step's round 1.
+  const pending =
+    interaction.pending?.kind === "confirm" ? interaction.pending : undefined;
   if (pending === undefined) {
     if (!interaction.formElicitation) return undefined;
     return {
@@ -1033,7 +1036,11 @@ async function confirmDeletion(
         key: CONFIRM_DELETE_KEY,
         message: `Delete the brew profile '${displayName}' (machine profile id ${machineProfileId}) from the machine? This cannot be undone. To confirm, type the profile name exactly as shown.`,
         name: displayName,
-        pending: { profileId: machineProfileId, tool: "delete_profile" },
+        pending: {
+          kind: "confirm",
+          profileId: machineProfileId,
+          tool: "delete_profile",
+        },
       }),
       text: `Waiting for the user to confirm deleting '${displayName}' (machine profile id ${machineProfileId}).`,
     };
@@ -1111,6 +1118,142 @@ function resolveOne(
     };
   }
   return { catalog: lookup.catalog, entry: lookup.entry };
+}
+
+/** Key of the which-copy form in `inputRequests` and `inputResponses`. */
+const PICK_PROFILE_KEY = "pick_profile";
+
+type ResolveReply = ErrorReply | InputRequiredReply;
+
+/**
+ * Resolve the profile a call is about, asking the user which copy they mean
+ * when the lookup is ambiguous and the host can show a form.
+ *
+ * `resolveOne`'s refusal of an ambiguous lookup stays the answer on a host
+ * without forms. With one, the model is a poor middleman: the copies share a
+ * name, so it can only describe them by id, which the user cannot see on the
+ * machine's screen. So the server asks the user directly, with one option per
+ * copy, and continues the same call with the copy they picked.
+ *
+ * Three rounds can pass through here, in this order:
+ *
+ * - **No signed state.** Ambiguous and form-capable: ask, signed for this
+ *   tool, this query and these candidate ids. Otherwise `resolveOne`.
+ * - **A `pick` state for this tool and query.** Read the answer. A decline or
+ *   dismissal refuses, so nothing happens. An answer that is not one of the
+ *   signed candidates, or not one the machine still holds, refuses too: the
+ *   client chose the value and the list may have changed since the form went
+ *   out. Otherwise continue with that copy — an exact `machineProfileId` is the
+ *   one key the machine keeps unique, so the lookup is re-run with it.
+ * - **A `confirm` state** (only `delete_profile` mints one). The client
+ *   repeats the original arguments on every round, so `profile_id` is still
+ *   ambiguous on the round that answers the typed-name form. The profile the
+ *   user picked a round earlier is the one the signed state names, so it
+ *   resolves the ambiguity; `confirmDeletion` then checks the same id again.
+ *
+ * Only copies the machine holds are offered. A candidate with no
+ * `machineProfileId` is documentation, not a copy, and has nothing to pick.
+ */
+async function resolveProfile(
+  tool: string,
+  profileId: string,
+  interaction: ToolInteraction,
+  outcome?: string,
+): Promise<
+  { catalog: ProfileCatalog; entry: CatalogEntry } | { reply: ResolveReply }
+> {
+  const nothingHappened = outcome ? ` ${outcome}` : "";
+  const pending = interaction.pending;
+
+  if (
+    pending?.kind === "pick" &&
+    pending.tool === tool &&
+    pending.query === profileId
+  ) {
+    const answer = interaction.choice(PICK_PROFILE_KEY);
+    if (answer.kind === "declined" || answer.kind === "cancelled") {
+      return {
+        reply: {
+          isError: true,
+          logOutcome: answer.kind,
+          text: `The user did not choose which of the profiles matching '${profileId}' they meant.${nothingHappened} Do not ask again unless the user brings it up.`,
+        },
+      };
+    }
+    const chosen = answer.kind === "chosen" ? answer.value : undefined;
+    if (chosen === undefined || !pending.candidates.includes(chosen)) {
+      return {
+        reply: {
+          isError: true,
+          logOutcome:
+            chosen === undefined ? "choice_missing" : "choice_invalid",
+          text: `'${profileId}' matches more than one profile, and the call came back without a choice between the ones offered.${nothingHappened} Ask the user which one they meant.`,
+        },
+      };
+    }
+    const picked = await findCatalogEntry(chosen);
+    if (picked.kind !== "found" || picked.entry.machineProfileId !== chosen) {
+      return {
+        reply: {
+          isError: true,
+          logOutcome: "choice_gone",
+          text: `The profile the user picked (machine profile id ${chosen}) is no longer on the machine; its profile list changed while the question was open.${nothingHappened} Call list_profiles and ask the user again.`,
+        },
+      };
+    }
+    return { catalog: picked.catalog, entry: picked.entry };
+  }
+
+  const lookup = await findCatalogEntry(profileId);
+  if (lookup.kind !== "ambiguous")
+    return refusalAsReply(resolveOne(lookup, profileId, outcome));
+
+  const copies = lookup.candidates.flatMap((candidate) =>
+    candidate.machineProfileId === null
+      ? []
+      : [{ entry: candidate, id: candidate.machineProfileId }],
+  );
+  if (copies.length !== lookup.candidates.length) {
+    return refusalAsReply(resolveOne(lookup, profileId, outcome));
+  }
+
+  if (pending?.kind === "confirm" && pending.tool === tool) {
+    const signed = lookup.candidates.find(
+      (candidate) => candidate.machineProfileId === pending.profileId,
+    );
+    if (signed) return { catalog: lookup.catalog, entry: signed };
+  }
+
+  if (!interaction.formElicitation) {
+    return refusalAsReply(resolveOne(lookup, profileId, outcome));
+  }
+
+  return {
+    reply: {
+      inputRequired: await interaction.askChoice({
+        key: PICK_PROFILE_KEY,
+        message: `The machine holds ${lookup.candidates.length} profiles matching '${profileId}'. Which one do you mean?`,
+        options: copies.map(({ entry, id }) => ({
+          title: `'${entry.machineName ?? entry.name}', machine profile id ${id}`,
+          value: id,
+        })),
+        pending: {
+          candidates: copies.map(({ id }) => id),
+          kind: "pick",
+          query: profileId,
+          tool,
+        },
+      }),
+      text: `Waiting for the user to choose which of ${lookup.candidates.length} profiles matching '${profileId}' they meant.`,
+    },
+  };
+}
+
+/** `resolveOne`'s answer in `resolveProfile`'s shape. */
+function refusalAsReply(
+  resolved: ReturnType<typeof resolveOne>,
+): { catalog: ProfileCatalog; entry: CatalogEntry } | { reply: ResolveReply } {
+  return "refusal" in resolved ? { reply: resolved.refusal } : resolved;
 }
 
 /**
@@ -1345,16 +1488,17 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     annotations: READS_MACHINE,
     description:
       "Get everything known about one brew profile: the machine's own definition of it — brew temperature, the phases it runs with their targets and stop conditions, and the recipe it was written around — plus this server's prose documentation when it has any, whether the profile is on the machine, and the id select_profile takes. This is the right tool for 'what does this profile actually do', including a profile the user built themselves. The definition comes back in the machine's own wire format, so it can be edited and handed to upload_profile. Accepts a documented id, a machine profile id, or the profile's name. Call list_profiles first if you do not already have one. Firmware that predates the machine's per-profile export answers with the documentation alone and says so.",
-    handler: async (input) => {
+    handler: async (input, interaction) => {
       // Ambiguity is refused here too, although this tool changes nothing. Its
       // definition is the start of the edit-and-upload workflow, and serving
       // the original's definition to a model that asked for the copy is how
       // the copy gets edited from the wrong base.
-      const resolved = resolveOne(
-        await findCatalogEntry(input.profile_id),
+      const resolved = await resolveProfile(
+        "get_profile_info",
         input.profile_id,
+        interaction,
       );
-      if ("refusal" in resolved) return resolved.refusal;
+      if ("reply" in resolved) return resolved.reply;
       const { catalog, entry } = resolved;
       const definition = await loadProfileDefinition(entry, catalog);
       const lines = [`# ${entry.name}`, ""];
@@ -1469,16 +1613,17 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     annotations: WRITES_MACHINE,
     description:
       "Switch the machine to a different brew profile. This changes the machine, so confirm the profile with the user before calling it — do not select one on your own initiative from dial-in advice. Takes the id from list_profiles (either the documented id or the machineProfileId). The profile must already be on the machine; this cannot create one. Refuses unless this server has an authorization server configured, since an unauthenticated server exposed over a tunnel would let anyone reach it.",
-    handler: async (input) => {
+    handler: async (input, interaction) => {
       const denied = writeToolDisabled("Profile selection");
       if (denied) return denied;
 
-      const resolved = resolveOne(
-        await findCatalogEntry(input.profile_id),
+      const resolved = await resolveProfile(
+        "select_profile",
         input.profile_id,
+        interaction,
         "Nothing was selected.",
       );
-      if ("refusal" in resolved) return resolved.refusal;
+      if ("reply" in resolved) return resolved.reply;
       const { catalog, entry } = resolved;
       if (entry.machineProfileId === null) {
         return {
@@ -1557,12 +1702,13 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
 
       // Before the name gate, not after it: two copies share their name, so
       // the echo would pass for both and cannot be what separates them.
-      const resolved = resolveOne(
-        await findCatalogEntry(input.profile_id),
+      const resolved = await resolveProfile(
+        "delete_profile",
         input.profile_id,
+        interaction,
         "Nothing was deleted.",
       );
-      if ("refusal" in resolved) return resolved.refusal;
+      if ("reply" in resolved) return resolved.reply;
       const { catalog, entry } = resolved;
       if (entry.machineProfileId === null) {
         return {

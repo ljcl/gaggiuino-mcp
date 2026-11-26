@@ -30,6 +30,10 @@ import { z } from "zod";
  * with no state, a forged state, or a state minted for another profile never
  * reaches the action.
  *
+ * Two questions use it: the typed-name confirmation before a delete, and the
+ * single-select "which of these copies" asked when a profile name matches more
+ * than one profile (see `PendingStateSchema`).
+ *
  * **The key is random per process**, on purpose. One process serves every
  * round of a flow here, so no key has to be shared or configured, and
  * nothing depends on `MCP_OAUTH_SECRET` (#279 may remove it). A restart drops
@@ -38,18 +42,41 @@ import { z } from "zod";
  * action, expiring is the correct failure.
  */
 
-/** What a pending confirmation carries between the two rounds. */
-const PendingConfirmationSchema = z.object({
-  profileId: z.string(),
-  tool: z.string(),
-});
+/**
+ * What a signed state carries between rounds. Two kinds, because a call can
+ * ask two different questions:
+ *
+ * - `confirm` — "type this profile's name": the typed-name step before a
+ *   delete. Names the one profile the answer is about.
+ * - `pick` — "which of these did you mean": asked when a profile id or name
+ *   matches more than one profile. Names the query it answers and the
+ *   candidates it offered, so an answer outside them is refused.
+ *
+ * Both name the tool, so a state minted for one tool is never spent on
+ * another.
+ */
+const PendingStateSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("confirm"),
+    profileId: z.string(),
+    tool: z.string(),
+  }),
+  z.object({
+    candidates: z.array(z.string()),
+    kind: z.literal("pick"),
+    query: z.string(),
+    tool: z.string(),
+  }),
+]);
 
-export type PendingConfirmation = z.infer<typeof PendingConfirmationSchema>;
+export type PendingState = z.infer<typeof PendingStateSchema>;
+export type PendingConfirmation = Extract<PendingState, { kind: "confirm" }>;
+export type PendingPick = Extract<PendingState, { kind: "pick" }>;
 
 /** How long a form may stay unanswered: ten minutes, the SDK's default. */
 export const CONFIRMATION_TTL_SECONDS = 600;
 
-const codec = createRequestStateCodec<PendingConfirmation>({
+const codec = createRequestStateCodec<PendingState>({
   key: randomBytes(32),
   ttlSeconds: CONFIRMATION_TTL_SECONDS,
   // Domain separation by method, so state minted for a `tools/call` cannot be
@@ -81,22 +108,46 @@ export interface TypedNameQuestion {
   pending: PendingConfirmation;
 }
 
-/** What the user did with a typed-name form. */
-export type TypedNameAnswer =
-  | { kind: "typed"; value: string }
+/** The form field a single-select question asks for. */
+const CHOICE_FIELD = "choice";
+
+/** One question that asks the user to pick one of a few options. */
+export interface ChoiceQuestion {
+  /** Key of the request in `inputRequests`, and of the answer in `inputResponses`. */
+  key: string;
+  /** What the form says; the host shows it to the user verbatim. */
+  message: string;
+  /** The options, by the value sent back and the label the user sees. */
+  options: ReadonlyArray<{ title: string; value: string }>;
+  /** What round 2 has to match before it may act. */
+  pending: PendingPick;
+}
+
+/** What the user did with a form: the outcomes every form shares. */
+type FormRefusal =
   | { kind: "declined" }
   | { kind: "cancelled" }
   | { kind: "missing" };
 
+/** What the user did with a typed-name form. */
+export type TypedNameAnswer = { kind: "typed"; value: string } | FormRefusal;
+
+/** What the user did with a single-select form. */
+export type ChoiceAnswer = { kind: "chosen"; value: string } | FormRefusal;
+
 /** What a tool handler can do with the user, for this one request. */
 export interface ToolInteraction {
-  /** Ask the user to type a name; returns the round-1 answer to send. */
+  /** Ask the user to pick one option; returns the answer to send this round. */
+  askChoice(question: ChoiceQuestion): Promise<InputRequiredResult>;
+  /** Ask the user to type a name; returns the answer to send this round. */
   askTypedName(question: TypedNameQuestion): Promise<InputRequiredResult>;
+  /** Read the user's answer to a single-select form sent last round. */
+  choice(key: string): ChoiceAnswer;
   /** Whether this request's client declared form-mode elicitation. */
   formElicitation: boolean;
-  /** The verified state of an earlier round, or `undefined` on round 1. */
-  pending: PendingConfirmation | undefined;
-  /** Read the user's answer to a typed-name form sent on round 1. */
+  /** The verified state of the previous round, or `undefined` on the first. */
+  pending: PendingState | undefined;
+  /** Read the user's answer to a typed-name form sent last round. */
   typedName(key: string): TypedNameAnswer;
 }
 
@@ -107,8 +158,11 @@ export interface ToolInteraction {
  * without checking `formElicitation` first is a bug.
  */
 export const NO_INTERACTION: ToolInteraction = {
+  askChoice: () =>
+    Promise.reject(new Error("this call cannot ask the user anything")),
   askTypedName: () =>
     Promise.reject(new Error("this call cannot ask the user anything")),
+  choice: () => ({ kind: "missing" }),
   formElicitation: false,
   pending: undefined,
   typedName: () => ({ kind: "missing" }),
@@ -136,11 +190,34 @@ export function declaresFormElicitation(envelope: unknown): boolean {
 
 /** The interaction for one `tools/call`, read off its handler context. */
 export function interactionFor(ctx: ServerContext): ToolInteraction {
-  const state = PendingConfirmationSchema.safeParse(
+  const state = PendingStateSchema.safeParse(
     ctx.mcpReq.requestState<unknown>(),
   );
   const responses = ctx.mcpReq.inputResponses;
   return {
+    askChoice: async (question) =>
+      inputRequired({
+        inputRequests: {
+          [question.key]: inputRequired.elicit({
+            message: question.message,
+            requestedSchema: {
+              properties: {
+                [CHOICE_FIELD]: {
+                  oneOf: question.options.map(({ title, value }) => ({
+                    const: value,
+                    title,
+                  })),
+                  title: "Profile",
+                  type: "string",
+                },
+              },
+              required: [CHOICE_FIELD],
+              type: "object",
+            },
+          }),
+        },
+        requestState: await codec.mint(question.pending, ctx),
+      }),
     askTypedName: async (question) =>
       inputRequired({
         inputRequests: {
@@ -161,6 +238,7 @@ export function interactionFor(ctx: ServerContext): ToolInteraction {
         },
         requestState: await codec.mint(question.pending, ctx),
       }),
+    choice: (key) => readChoice(responses, key),
     formElicitation: declaresFormElicitation(ctx.mcpReq.envelope),
     pending: state.success ? state.data : undefined,
     typedName: (key) => readTypedName(responses, key),
@@ -179,11 +257,36 @@ export function readTypedName(
   responses: Record<string, unknown> | undefined,
   key: string,
 ): TypedNameAnswer {
+  const field = readField(responses, key, TYPED_NAME_FIELD);
+  if (field.kind !== "value") return field;
+  return { kind: "typed", value: field.value.trim() };
+}
+
+/**
+ * The user's answer to a single-select form. The value is whatever the client
+ * sent, so the caller must check it is one of the options it offered; this
+ * only guarantees it is a string.
+ */
+export function readChoice(
+  responses: Record<string, unknown> | undefined,
+  key: string,
+): ChoiceAnswer {
+  const field = readField(responses, key, CHOICE_FIELD);
+  if (field.kind !== "value") return field;
+  return { kind: "chosen", value: field.value };
+}
+
+/** One string field of an accepted form, or the reason there is none. */
+function readField(
+  responses: Record<string, unknown> | undefined,
+  key: string,
+  name: string,
+): { kind: "value"; value: string } | FormRefusal {
   const response = inputResponse(responses, key);
   if (response.kind !== "elicit") return { kind: "missing" };
   if (response.action === "decline") return { kind: "declined" };
   if (response.action === "cancel") return { kind: "cancelled" };
-  const value = response.content?.[TYPED_NAME_FIELD];
+  const value = response.content?.[name];
   if (typeof value !== "string") return { kind: "missing" };
-  return { kind: "typed", value: value.trim() };
+  return { kind: "value", value };
 }
