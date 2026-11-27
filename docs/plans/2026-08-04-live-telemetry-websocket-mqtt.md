@@ -11,6 +11,12 @@ over which transport?** It is a decision document, not a survey. Code is out of
 scope; the outcome is a decision plus a short list of REST-only work that came
 out of reading the two documents side by side.
 
+> **Re-run 2026-11-27 (#306) against MCP Tasks:** see
+> `2026-11-27-tasks-and-live-telemetry.md`. The transport decision below stands.
+> Tasks removes the objection to a tool that waits for a shot (Candidate 1,
+> shape 1), so one REST-only feature (`wait_for_shot`, #307) is now worth
+> building, subject to two live checks named there.
+>
 > **Amended 2026-08-09 (#139).** Two of this note's supporting cost arguments
 > were written from documents rather than from a working implementation, and
 > both were wrong on the facts: the protobuf-binding cost is overstated, and the
