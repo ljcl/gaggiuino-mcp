@@ -20,7 +20,7 @@ A Remote [MCP](https://modelcontextprotocol.io) server for integrating a [Gaggiu
 - `get_machine_settings` - Boiler, steam, and scale configuration as the machine reports it
 - `get_maintenance_status` - Descale and backflush history the machine tracks itself, with shots since each
 - `get_dial_in_guidance` - Expert guidance for analyzing espresso shots
-- `select_profile` - Switch the active profile (changes the machine; requires an authenticated server)
+- `select_profile` - Switch the active profile (changes the machine; requires an authenticated server). If two profiles on the machine share a name, a host with elicitation forms asks you which one you mean; `get_profile_info` and `delete_profile` do the same
 - `upload_profile` - Save a new brew profile to the machine (changes the machine; requires an authenticated server). Creates only — it never updates, and the machine assigns a fresh id every time, so uploading twice leaves two profiles
 - `delete_profile` - Delete a profile from the machine (destructive and irreversible; requires an authenticated server). It demands the profile's exact name back as confirmation, refuses to delete the currently selected profile, and always prompts for approval in the host — even under a stored "always allow". On a host that supports MCP elicitation forms, it then asks *you* to type the profile's name before anything is deleted; declining or dismissing the form deletes nothing
 

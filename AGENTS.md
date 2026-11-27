@@ -399,7 +399,9 @@ it is deliberate at four independent points, and no two of them fail together:
   for either copy. `findCatalogEntry` therefore returns a `CatalogLookup` with
   `ambiguous` as a first-class answer rather than the first match, and
   `resolveOne` in `tools.ts` refuses it — naming each candidate's
-  `machineProfileId` and sending nothing — before this gate runs. An exact
+  `machineProfileId` and sending nothing — before this gate runs. On a host
+  with form elicitation, `resolveProfile` asks the user which copy instead (see
+  "On a host with forms" below); without one, the refusal is unchanged. An exact
   `machineProfileId` match wins over every other match: it is the one key the
   machine keeps unique, so it is how a caller steps out of the ambiguity, and a
   user-made profile *named* "25" must not shadow it. `select_profile` and
@@ -492,6 +494,37 @@ failure, so it is not an `isError`. Its text tells the model not to try again on
 its own. The `tool.call` record says `input_required` for the form and
 `declined`, `cancelled`, `confirmation_mismatch` or `confirmation_missing` for the
 answer, via a reply's `logOutcome`, because ok/error would mislabel all five.
+
+**The same round trip picks between same-named copies.** When a lookup is
+ambiguous and the host has forms, `select_profile`, `get_profile_info` and
+`delete_profile` ask the user which copy they mean — one single-select option
+per `machineProfileId` — instead of refusing and leaving the model to describe
+copies by an id the user cannot see on the machine's screen. `resolveProfile`
+in `tools.ts` is the step, and four things about it are load-bearing:
+
+- **The signed state is a second kind.** `confirmation.ts`'s state is a
+  discriminated union: `confirm` (the typed name, one profile id) and `pick`
+  (the tool, the query, and the candidate ids it offered). An answer outside the
+  signed candidates is refused, even when it names a real profile, and a pick
+  minted for one tool never answers another tool's question.
+- **The pick is re-checked against the machine.** The chosen id is looked up
+  again, so a copy deleted while the form was open is refused rather than
+  replaced by whichever copy is left.
+- **A delete takes three rounds, and the third resolves from the `confirm`
+  state.** The client repeats the original arguments on every round, so
+  `profile_id: "zer0"` is still ambiguous when the typed-name answer arrives.
+  The signed `confirm` state names the copy the user picked a round earlier,
+  and `confirmDeletion` checks the same id again. A pick never leads straight to
+  the DELETE: it leads to the typed-name form.
+- **Only copies are offered.** A candidate with no `machineProfileId` is
+  documentation with nothing to pick, so a lookup that includes one keeps the
+  plain refusal.
+
+A declined or dismissed pick is an `isError` refusal, not a plain answer,
+unlike the typed-name form: `get_profile_info` has an output schema, so a reply
+without `structuredContent` must be an error there, and the three tools answer
+the same way. The `tool.call` record names `declined`, `cancelled`,
+`choice_missing`, `choice_invalid` or `choice_gone`.
 
 ### The machine is also the authority on what a profile *does*
 
