@@ -1,5 +1,19 @@
 # Changelog
 
+## [6.1.0](https://github.com/ljcl/gaggiuino-mcp/compare/v6.0.0...v6.1.0) (2026-11-27)
+
+
+### Features
+
+* **server:** ask the user to type the profile name before delete_profile deletes it ([#313](https://github.com/ljcl/gaggiuino-mcp/issues/313)) ([ea228bc](https://github.com/ljcl/gaggiuino-mcp/commit/ea228bc19399ef1d9d6b05c485f6048b42b9a586))
+* **server:** let the user pick between same-named profiles instead of refusing ([#314](https://github.com/ljcl/gaggiuino-mcp/issues/314)) ([f918a28](https://github.com/ljcl/gaggiuino-mcp/commit/f918a28cb30b26b75a2df1066251851f8605e06b))
+* **server:** serve the dial-in guidance as an MCP skill ([#312](https://github.com/ljcl/gaggiuino-mcp/issues/312)) ([28d4f22](https://github.com/ljcl/gaggiuino-mcp/commit/28d4f224076fbaa7d20d1651c998bcca25be74cb))
+
+
+### Bug Fixes
+
+* **deps:** bump @modelcontextprotocol/server and core from 2.0.0 to 2.4.0 ([#310](https://github.com/ljcl/gaggiuino-mcp/issues/310)) ([7023949](https://github.com/ljcl/gaggiuino-mcp/commit/70239491dba43947d42598c0b2fbd1436ff0bced))
+
 ## [6.0.0](https://github.com/ljcl/gaggiuino-mcp/compare/v5.0.1...v6.0.0) (2026-09-27)
 
 
